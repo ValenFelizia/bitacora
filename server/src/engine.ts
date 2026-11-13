@@ -37,6 +37,8 @@ export type EngineEvent =
       detail: string;
     };
 
+export type EngineFile = { path: string; mime: string };
+
 export interface Engine {
   start(): Promise<void>;
   retry(): Promise<void>;
@@ -46,7 +48,7 @@ export interface Engine {
   account(): Promise<Account>;
   createWork(): Promise<{ conversationId: string; title?: string }>;
   resumeWork(conversationId: string): Promise<void>;
-  send(conversationId: string, text: string): Promise<void>;
+  send(conversationId: string, text: string, files?: EngineFile[]): Promise<void>;
   interrupt(conversationId: string): Promise<void>;
   subscribe(listener: (event: EngineEvent) => void): () => void;
   close(): Promise<void>;

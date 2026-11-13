@@ -5,7 +5,7 @@ import {
   type ChildProcessWithoutNullStreams,
 } from "node:child_process";
 import { promisify } from "node:util";
-import { join } from "node:path";
+import { join, relative, basename } from "node:path";
 import { codexBinary, codexVersion } from "../../../scripts/codex-runtime.mjs";
 import { createInterface } from "node:readline";
 import { mkdir } from "node:fs/promises";
@@ -590,7 +590,7 @@ export class CodexEngine implements Engine {
       ...this.settings(),
     });
   }
-  async send(conversationId: string, text: string) {
+  async send(conversationId: string, text: string, files: import("../engine").EngineFile[] = []) {
     if (!this.available || !this.safety.allowed)
       throw new EngineFailure("other", this.safety.detail);
     this.interrupted.delete(conversationId);
@@ -599,7 +599,11 @@ export class CodexEngine implements Engine {
     try {
       const { turn } = await this.rpc("turn/start", {
         threadId: conversationId,
-        input: [{ type: "text", text, text_elements: [] }],
+        input: [
+          { type: "text", text, text_elements: [] },
+          ...files.filter(f => !f.mime.startsWith("image/")).map(f => ({ type: "mention" as const, name: basename(f.path), path: relative(this.options.workspace, f.path) })),
+          ...files.filter(f => f.mime.startsWith("image/")).map(f => ({ type: "localImage" as const, path: f.path })),
+        ],
         cwd: this.options.workspace,
         approvalPolicy: "never",
         sandboxPolicy: {

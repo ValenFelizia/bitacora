@@ -1,5 +1,7 @@
 import type { Account, ExecutionSafety } from "./engine";
-export type Message = { id: string; role: "user" | "assistant"; text: string };
+export type Upload = { name: string; data: string };
+export type FileRef = { id: string; path: string; name: string; mime: string; createdAt: string };
+export type Message = { id: string; role: "user" | "assistant"; text: string; attachments?: FileRef[]; results?: FileRef[] };
 export type Work = {
   id: string;
   title: string;
@@ -16,12 +18,13 @@ export type Snapshot = {
   works: Work[];
   engine: { available: boolean; exhausted?: boolean; safety: ExecutionSafety };
   notice?: string;
+  fileToken?: string;
 };
 export type ClientCommand =
   | { type: "connect" }
   | { type: "retry" }
   | { type: "prepareProtection" }
-  | { type: "send"; workId?: string; text: string }
+  | { type: "send"; workId?: string; text: string; attachments?: Upload[] }
   | { type: "interrupt"; workId: string };
 export type ServerMessage =
   | { type: "snapshot"; state: Snapshot }
