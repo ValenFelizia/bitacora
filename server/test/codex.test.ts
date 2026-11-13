@@ -355,3 +355,17 @@ for (const scenario of ["success", "failure", "restart", "mxc"] as const) {
     }
   });
 }
+
+
+test("generic files become local images and quoted document paths at the adapter boundary", async () => {
+  const f = await fixture();
+  try {
+    await f.engine.send("thread-1", "Describí", [
+      { path: "C:/agencia/adjuntos/foto con ñ.png", mime: "image/png" },
+      { path: "C:/agencia/adjuntos/cotización.pdf", mime: "application/pdf" },
+    ]);
+    const call = (await f.records()).find(m => m.method === "turn/start");
+    assert.deepEqual(call.params.input[1], { type: "localImage", path: "C:/agencia/adjuntos/foto con ñ.png" });
+    assert.ok(call.params.input[0].text.includes('Archivo adjunto: "C:/agencia/adjuntos/cotización.pdf"'));
+  } finally { await f.close(); }
+});

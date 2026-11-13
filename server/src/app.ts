@@ -1,12 +1,15 @@
 import { mkdir, readFile, writeFile, rename, copyFile } from "node:fs/promises";
+import { WorkspaceFiles } from "./workspace-files";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Engine, EngineEvent } from "./engine";
 import { problemText, EngineFailure, activityText } from "./engine";
 import type { Work, Snapshot, ClientCommand, ServerMessage } from "./contracts";
 
-type SavedWork = Work & { conversationId: string };
+type SavedWork = Work & { conversationId: string; pendingFiles?: { messageId: string; before: Record<string, string> } };
 export class App {
+  private scanning = new Set<string>();
+  private scans = new Set<Promise<void>>();
   private notice?: string;
   private available = false;
   private exhausted = false;
@@ -23,9 +26,11 @@ export class App {
     private data: string,
     private publish: (message: ServerMessage) => void,
     private files = { rename, copyFile },
+    private workspace?: WorkspaceFiles,
   ) {}
   async start() {
     await mkdir(this.data, { recursive: true });
+    await this.workspace?.initialize();
     try {
       const saved = JSON.parse(
         await readFile(join(this.data, "works.json"), "utf8"),
@@ -67,6 +72,7 @@ export class App {
       } else if ((error as NodeJS.ErrnoException).code !== "ENOENT")
         throw error;
     }
+    for (const work of this.works) if (work.pendingFiles) { await this.collectResults(work); this.dirty = true; }
     this.unsubscribe = this.engine.subscribe((event) => this.event(event));
     await this.engine.start();
     this.available = true;
@@ -81,7 +87,7 @@ export class App {
         safety: this.engine.executionSafety(),
       },
       notice: this.notice,
-      works: this.works.map(({ conversationId: _, ...work }) => work),
+      works: this.works.map(({ conversationId: _, pendingFiles: __, ...work }) => work),
     };
   }
   private async renameWithRetry(source: string, target: string) {
@@ -112,6 +118,29 @@ export class App {
     );
     this.publish({ type: "snapshot", state: this.snapshot() });
   }
+  file(id: string) {
+    return this.works.flatMap(w => w.messages.flatMap(m => [...(m.attachments || []), ...(m.results || [])])).find(f => f.id === id);
+  }
+  private async collectResults(work: SavedWork) {
+    const pending = work.pendingFiles;
+    if (!pending || !this.workspace) return;
+    try {
+      const after = await this.workspace.scan();
+      const message = work.messages.find(m => m.id === pending.messageId);
+      if (message) message.results = Object.keys(after).filter(p => after[p] !== pending.before[p]).map(p => this.workspace!.result(p));
+      delete work.pendingFiles;
+    } catch (error) {
+      work.problem = "No pude revisar los resultados. Volvé a abrir la app para reintentar.";
+      work.details += String(error) + "\n";
+    }
+  }
+  private finishFiles(work: SavedWork) {
+    if (!work.pendingFiles || !this.workspace || this.scanning.has(work.id)) return;
+    work.busy = true;
+    this.scanning.add(work.id);
+    const scan = this.collectResults(work).finally(() => { work.busy = false; this.changed(); this.scans.delete(scan); this.scanning.delete(work.id); });
+    this.scans.add(scan);
+  }
   private event(event: EngineEvent) {
     if (event.type === "protection") {
       this.publish({ type: "snapshot", state: this.snapshot() });
@@ -130,6 +159,7 @@ export class App {
               "El motor se detuvo. Podés continuar cuando vuelva.";
           }
       }
+      if (!event.available) for (const work of this.works) this.finishFiles(work);
       this.changed();
       return;
     }
@@ -181,6 +211,7 @@ export class App {
         break;
       case "finished":
         work.busy = false;
+        this.finishFiles(work);
         if (event.status === "completed") work.problem = undefined;
         work.progress =
           event.status === "interrupted"
@@ -260,6 +291,12 @@ export class App {
       });
       return;
     }
+    if (this.works.some(w => w.pendingFiles)) {
+      reply({ type: "problem", text: "Todavía no pude revisar los resultados del pedido anterior. Volvé a abrir la app para reintentar." });
+      return;
+    }
+    const uploads = this.workspace?.validate(command.attachments);
+    if (command.attachments?.length && !this.workspace) throw new Error("Attachments unavailable");
     this.submitting = true;
     let work: SavedWork | undefined;
     try {
@@ -295,8 +332,13 @@ export class App {
         this.works.unshift(work);
         this.resumed.add(work.id);
       }
+      const attachments = await this.workspace?.attach(work.id, uploads || []);
+      const messageId = randomUUID();
+      const before = await this.workspace?.scan();
+      if (before) work.pendingFiles = { messageId, before };
       work.messages.push({
-        id: randomUUID(),
+        id: messageId,
+        attachments,
         role: "user",
         text: command.text.trim(),
       });
@@ -306,7 +348,7 @@ export class App {
       this.changed();
       await this.writes;
       reply({ type: "selected", workId: work.id });
-      await this.engine.send(work.conversationId, command.text.trim());
+      await this.engine.send(work.conversationId, command.text.trim(), await Promise.all((attachments || []).map(async f => ({ path: await this.workspace!.safePath(f.path), mime: f.mime }))));
     } catch (error) {
       if (error instanceof EngineFailure && error.kind === "disconnected")
         this.accountState = { connected: false };
@@ -318,6 +360,7 @@ export class App {
         work.progress =
           "El pedido se detuvo. Revisá el detalle antes de volver a enviarlo.";
         work.details += String(error) + "\n";
+        this.finishFiles(work);
         this.changed();
       }
       throw error;
@@ -329,6 +372,7 @@ export class App {
     clearTimeout(this.flushTimer);
     await this.engine.close();
     this.unsubscribe?.();
+    await Promise.all(this.scans);
     clearTimeout(this.flushTimer);
     if (this.dirty) this.changed();
     await this.writes;
