@@ -1,0 +1,16 @@
+{
+  "requests": 2,
+  "connected": true,
+  "protected": true,
+  "imageReply": [
+    "La imagen muestra la pantalla de inicio de Bitácora, con un menú lateral y un formulario para enviar un pedido que incluye una propuesta de viaje y un archivo adjunto."
+  ],
+  "firstProblem": null,
+  "results": [
+    {
+      "name": "issue5-prueba-verde.png",
+      "mime": "image/png"
+    }
+  ],
+  "secondProblem": null
+}

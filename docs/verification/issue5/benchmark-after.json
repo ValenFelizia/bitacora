@@ -1,0 +1,16 @@
+{
+  "files": 2008,
+  "bytes": 138313728,
+  "scansMs": [
+    2777,
+    242,
+    180
+  ],
+  "hashedBytes": [
+    138313728,
+    0,
+    2049
+  ],
+  "maxTimerGapMs": 11,
+  "serializedSnapshotBytes": 325137
+}

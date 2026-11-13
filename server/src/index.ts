@@ -11,6 +11,7 @@ const server = await serve(
   locations.data,
   Number(process.env.BITACORA_PORT || 4317),
   process.env.BITACORA_WEB_ORIGIN,
+  locations.workspace,
 );
 console.log(`Bitácora lista en 127.0.0.1:${server.port}`);
 let closing = false;
