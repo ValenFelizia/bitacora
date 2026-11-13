@@ -1,11 +1,14 @@
 import { lstat, mkdir, realpath, open, rename, unlink, link, stat, type FileHandle } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { resolve, relative, isAbsolute, dirname, join } from 'node:path';
+import { lockDirectory, lockTemporaryFile } from './directory-lock';
+
+type WriteStage = 'beforeDirectoryCreate' | 'beforeTempOpen' | 'afterTempOpen' | 'afterTempWrite';
 
 // Reject links, junctions and Windows alternate streams, including existing ancestors.
 export class AgencyFiles {
   private canonicalRoot?: Promise<string>;
-  constructor(readonly root: string) {}
+  constructor(readonly root: string, private writeProbe?: (stage: WriteStage, path: string) => Promise<void>) {}
   async path(input: string): Promise<string> {
     if (!input || input.includes(':') || isAbsolute(input) || input.includes('\0')) throw new Error('Usá una ruta relativa dentro de la agencia.');
     const root = await (this.canonicalRoot ??= realpath(this.root));
@@ -29,27 +32,58 @@ export class AgencyFiles {
   }
   async write(input: string, data: string | Buffer, exclusive = true) {
     const target = await this.path(input);
-    await mkdir(dirname(target), { recursive: true });
-    await this.path(input);
-    const tempInput = relative(await realpath(this.root), join(dirname(target), `.kit-${randomUUID()}.tmp`));
-    const temp = await this.path(tempInput);
-    const handle = await open(temp, 'wx');
+    const root = await realpath(this.root);
+    const releases: (()=>void)[] = [];
+    let temp: string | undefined;
+    let handle: FileHandle | undefined;
+    let releaseTemp: (()=>void) | undefined;
+    let ownedTemp = false;
     try {
+      releases.push(lockDirectory(root));
+      await this.path(input);
+      let current = root;
+      for (const part of relative(root, dirname(target)).split(/[\\/]/).filter(Boolean)) {
+        current = join(current, part);
+        try { releases.push(lockDirectory(current)); }
+        catch {
+          await this.writeProbe?.('beforeDirectoryCreate', current);
+          try { await mkdir(current); } catch(e) { if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e; }
+          releases.push(lockDirectory(current));
+        }
+      }
+      await this.path(input);
+      const tempInput = relative(root, join(dirname(target), `.kit-${randomUUID()}.tmp`));
+      temp = await this.path(tempInput);
+      await this.writeProbe?.('beforeTempOpen',temp);
+      handle = await open(temp, 'wx');
+      ownedTemp = true;
+      releaseTemp = lockTemporaryFile(temp);
+      await this.writeProbe?.('afterTempOpen',temp);
       await this.verifyOpen(tempInput, handle);
       await handle.writeFile(data, {encoding:'utf8'});
       await handle.sync();
+      await this.writeProbe?.('afterTempWrite',temp);
       await this.verifyOpen(tempInput, handle);
-    } finally { await handle.close(); }
-    try {
+      await handle.close(); handle = undefined;
       await this.path(input); await this.path(tempInput);
+      releaseTemp(); releaseTemp = undefined;
       // Atomic no-replace publication for new files. rename is used for replacement.
       if (exclusive) { await link(temp, target); await unlink(temp); }
       else await rename(temp, target);
+      temp = undefined;
       const final = await open(target, 'r');
       try { await this.verifyOpen(input, final); } finally { await final.close(); }
     } finally {
-      // Never follow an altered parent to clean up a temporary file.
-      try { await this.path(tempInput); await unlink(temp); } catch(e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
+      // Directory handles still prevent replacement while we close/unlink the temp.
+      try {
+        if (handle) await handle.close();
+        releaseTemp?.();
+        if (temp && ownedTemp) try { await unlink(temp); } catch(e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
+      } finally {
+        let failure: unknown;
+        for (const release of releases.reverse()) try { release(); } catch(e) { failure ??= e; }
+        if (failure) throw failure;
+      }
     }
   }
   private async verifyOpen(input: string, handle: FileHandle) {
