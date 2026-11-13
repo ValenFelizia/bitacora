@@ -7,6 +7,10 @@ import type {
 } from "../../server/src/contracts";
 import "./style.css";
 
+const buttonBase = "touch-manipulation cursor-pointer rounded-lg border px-[15px] py-[10px] text-center disabled:opacity-50 disabled:cursor-default focus-visible:outline-3 focus-visible:outline-[#94733c] focus-visible:outline-offset-3 max-[460px]:text-xs max-[460px]:p-[9px]";
+const buttonSecondary = `${buttonBase} border-[#c6d0c9] hover:bg-[#e4ebe5]`;
+const buttonPrimary = `${buttonBase} text-white bg-[#31594d] border-[#31594d] hover:bg-[#22483e]`;
+
 function App() {
   const [state, setState] = useState<Snapshot>({
     account: { connected: false },
@@ -112,7 +116,7 @@ function App() {
           </h1>
         </header>
         <button
-          className="touch-manipulation cursor-pointer rounded-lg border border-[#c6d0c9] px-[15px] py-[10px] text-center hover:bg-[#e4ebe5] disabled:opacity-50 disabled:cursor-default focus-visible:outline-3 focus-visible:outline-[#94733c] focus-visible:outline-offset-3 max-[460px]:text-xs max-[460px]:p-[9px] text-white bg-[#31594d] border-[#31594d] hover:bg-[#22483e] w-full"
+          className={`${buttonPrimary} w-full`}
           onClick={() => {
             setSelected(undefined);
             setText("");
@@ -130,7 +134,7 @@ function App() {
             {state.works.map((w) => (
               <li key={w.id}>
                 <button
-                  className={`touch-manipulation cursor-pointer rounded-lg border border-[#c6d0c9] px-[15px] py-[10px] text-center hover:bg-[#e4ebe5] disabled:opacity-50 disabled:cursor-default focus-visible:outline-3 focus-visible:outline-[#94733c] focus-visible:outline-offset-3 max-[460px]:text-xs max-[460px]:p-[9px] block border-transparent w-full text-left mb-2 p-3 [&>span]:block [&>span]:[overflow-wrap:anywhere] [&>span]:text-sm [&>span]:font-[550] ${selected === w.id ? "bg-[#fffefa] border-[#d9ddd2]" : ""}`}
+                  className={`${buttonBase} hover:bg-[#e4ebe5] block w-full text-left mb-2 p-3 [&>span]:block [&>span]:[overflow-wrap:anywhere] [&>span]:text-sm [&>span]:font-[550] ${selected === w.id ? "bg-[#fffefa] border-[#d9ddd2]" : "border-transparent"}`}
                   aria-current={selected === w.id ? "page" : undefined}
                   onClick={() => {
                     setSelected(w.id);
@@ -180,7 +184,7 @@ function App() {
           )}
           {!state.account.connected && (
             <button
-              className="touch-manipulation cursor-pointer rounded-lg border border-[#c6d0c9] px-[15px] py-[10px] text-center hover:bg-[#e4ebe5] disabled:opacity-50 disabled:cursor-default focus-visible:outline-3 focus-visible:outline-[#94733c] focus-visible:outline-offset-3 max-[460px]:text-xs max-[460px]:p-[9px]"
+              className={buttonSecondary}
               disabled={!online || !state.engine.available}
               onClick={() => {
                 loginWindow.current = window.open("about:blank", "_blank");
@@ -246,7 +250,8 @@ function App() {
           )}
           {online && !state.engine.available && (
             <p role="status" className="text-sm text-[#913d2c]">
-              El motor se detuvo. Estoy intentando volver a conectarlo.
+              {state.engine.exhausted ? "No pude volver a conectar el motor. Tocá Reintentar para volver a arrancarlo." : "El motor se detuvo. Estoy intentando volver a conectarlo."}
+              {state.engine.exhausted && <button className={buttonSecondary} onClick={() => send({ type: "retry" })}>Reintentar</button>}
             </p>
           )}
           {online && state.engine.available && !state.engine.safety.allowed && (
@@ -255,14 +260,14 @@ function App() {
               pedidos hasta completar la preparación de Windows.
             </p>
           )}
-          <details className="mb-3 text-xs text-[#596b5e]">
+          {online && (!state.engine.available || !state.engine.safety.allowed) && <details className="mb-3 text-xs text-[#596b5e]">
             <summary className="cursor-pointer focus-visible:outline-3 focus-visible:outline-[#94733c] focus-visible:outline-offset-3">
               Detalle del motor
             </summary>
             <pre className="whitespace-pre-wrap [overflow-wrap:anywhere] max-h-[220px] overflow-auto p-3 bg-[#efefe7]">
               {state.engine.safety.detail}
             </pre>
-          </details>
+          </details>}
           <p
             className="text-[13px] min-h-5 text-[#4b6556] mb-[10px]"
             role="status"
@@ -330,7 +335,7 @@ function App() {
               </span>
               {busy ? (
                 <button
-                  className="touch-manipulation cursor-pointer rounded-lg border border-[#c6d0c9] px-[15px] py-[10px] text-center hover:bg-[#e4ebe5] disabled:opacity-50 disabled:cursor-default focus-visible:outline-3 focus-visible:outline-[#94733c] focus-visible:outline-offset-3 max-[460px]:text-xs max-[460px]:p-[9px]"
+                  className={buttonSecondary}
                   type="button"
                   onClick={() => {
                     const active = state.works.find((w) => w.busy);
@@ -341,7 +346,7 @@ function App() {
                 </button>
               ) : (
                 <button
-                  className="touch-manipulation cursor-pointer rounded-lg border border-[#c6d0c9] px-[15px] py-[10px] text-center hover:bg-[#e4ebe5] disabled:opacity-50 disabled:cursor-default focus-visible:outline-3 focus-visible:outline-[#94733c] focus-visible:outline-offset-3 max-[460px]:text-xs max-[460px]:p-[9px] text-white bg-[#31594d] border-[#31594d] hover:bg-[#22483e]"
+                  className={buttonPrimary}
                   disabled={
                     !online ||
                     !state.engine.available ||

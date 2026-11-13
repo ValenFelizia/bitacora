@@ -14,7 +14,7 @@ const server = await serve(
 );
 console.log(`Bitácora lista en 127.0.0.1:${server.port}`);
 let closing = false;
-for (const signal of ["SIGINT", "SIGTERM"] as const)
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const)
   process.on(signal, () => {
     if (!closing) {
       closing = true;

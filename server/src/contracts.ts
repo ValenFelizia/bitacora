@@ -14,11 +14,12 @@ export type Work = {
 export type Snapshot = {
   account: Account;
   works: Work[];
-  engine: { available: boolean; safety: { allowed: boolean; detail: string } };
+  engine: { available: boolean; exhausted?: boolean; safety: { allowed: boolean; detail: string } };
   notice?: string;
 };
 export type ClientCommand =
   | { type: "connect" }
+  | { type: "retry" }
   | { type: "send"; workId?: string; text: string }
   | { type: "interrupt"; workId: string };
 export type ServerMessage =

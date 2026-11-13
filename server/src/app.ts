@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile, rename } from "node:fs/promises";
+import { mkdir, readFile, writeFile, rename, copyFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Engine, EngineEvent } from "./engine";
@@ -9,6 +9,7 @@ type SavedWork = Work & { conversationId: string };
 export class App {
   private notice?: string;
   private available = false;
+  private exhausted = false;
   private flushTimer?: NodeJS.Timeout;
   private dirty = false;
   private works: SavedWork[] = [];
@@ -21,6 +22,7 @@ export class App {
     private engine: Engine,
     private data: string,
     private publish: (message: ServerMessage) => void,
+    private files = { rename, copyFile },
   ) {}
   async start() {
     await mkdir(this.data, { recursive: true });
@@ -50,16 +52,18 @@ export class App {
         }
     } catch (error) {
       if (error instanceof SyntaxError) {
-        await rename(
-          join(this.data, "works.json"),
-          join(
-            this.data,
-            `works.corrupt-${new Date().toISOString().replace(/[:.]/g, "-")}.json`,
-          ),
-        );
+        const source = join(this.data, "works.json");
+        const target = join(this.data, `works.corrupt-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
+        let preserved = true;
+        try { await this.renameWithRetry(source, target); }
+        catch {
+          try { await this.files.copyFile(source, target); }
+          catch { preserved = false; }
+        }
         this.works = [];
-        this.notice =
-          "No pude leer los trabajos guardados. Conservé el archivo dañado por separado y abrí una lista vacía.";
+        this.notice = preserved
+          ? "No pude leer los trabajos guardados. Conservé el archivo dañado por separado y abrí una lista vacía."
+          : "No pude leer los trabajos guardados ni conservar una copia aparte. Abrí una lista vacía.";
       } else if ((error as NodeJS.ErrnoException).code !== "ENOENT")
         throw error;
     }
@@ -73,11 +77,21 @@ export class App {
       account: this.available ? this.accountState : { connected: false },
       engine: {
         available: this.available,
+        exhausted: this.exhausted,
         safety: this.engine.executionSafety(),
       },
       notice: this.notice,
       works: this.works.map(({ conversationId: _, ...work }) => work),
     };
+  }
+  private async renameWithRetry(source: string, target: string) {
+    for (let attempt = 0; ; attempt++) {
+      try { await this.files.rename(source, target); return; }
+      catch (error) {
+        if (attempt >= 3 || !["EPERM", "EBUSY"].includes((error as NodeJS.ErrnoException).code || "")) throw error;
+        await new Promise(resolve => setTimeout(resolve, 30 * (attempt + 1)));
+      }
+    }
   }
   private changed() {
     this.dirty = false;
@@ -86,26 +100,7 @@ export class App {
       .catch(() => {})
       .then(async () => {
         await writeFile(join(this.data, "works.json.tmp"), content, "utf8");
-        for (let attempt = 0; ; attempt++) {
-          try {
-            await rename(
-              join(this.data, "works.json.tmp"),
-              join(this.data, "works.json"),
-            );
-            break;
-          } catch (error) {
-            if (
-              attempt >= 3 ||
-              !["EPERM", "EBUSY"].includes(
-                (error as NodeJS.ErrnoException).code || "",
-              )
-            )
-              throw error;
-            await new Promise((resolve) =>
-              setTimeout(resolve, 30 * (attempt + 1)),
-            );
-          }
-        }
+        await this.renameWithRetry(join(this.data, "works.json.tmp"), join(this.data, "works.json"));
       });
     // Report each failure while allowing the next write to recover.
     void this.writes.catch((error) =>
@@ -120,6 +115,7 @@ export class App {
   private event(event: EngineEvent) {
     if (event.type === "availability") {
       this.available = event.available;
+      this.exhausted = event.exhausted ?? false;
       this.resumed.clear();
       if (!event.available) {
         this.accountState = { connected: false };
@@ -146,7 +142,7 @@ export class App {
       if (event.type === "problem")
         this.publish({
           type: "problem",
-          text: problemText(event.kind),
+          text: !this.available ? "El motor se detuvo. Tus trabajos siguen guardados." : problemText(event.kind),
           detail: event.detail,
         });
       return;
@@ -218,6 +214,10 @@ export class App {
     command: ClientCommand,
     reply: (message: ServerMessage) => void,
   ) {
+    if (command.type === "retry") {
+      await this.engine.retry();
+      return;
+    }
     if (command.type === "connect") {
       reply({ type: "login", ...(await this.engine.connectAccount()) });
       return;
@@ -318,9 +318,10 @@ export class App {
   }
   async close() {
     clearTimeout(this.flushTimer);
-    if (this.dirty) this.changed();
     await this.engine.close();
     this.unsubscribe?.();
+    clearTimeout(this.flushTimer);
+    if (this.dirty) this.changed();
     await this.writes;
   }
 }

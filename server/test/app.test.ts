@@ -7,6 +7,8 @@ import {
   readFile,
   readdir,
   mkdir,
+  rename,
+  copyFile,
 } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { App } from "../src/app";
@@ -306,4 +308,136 @@ test("an ambiguous send failure stays saved, clears busy state and is never retr
     await f.app.close();
     await rm(f.dir, { recursive: true });
   }
+});
+
+test("app rejects unsafe sends even when the fake engine would accept them", async () => {
+
+  const f = await fixture();
+
+  try {
+
+    f.engine.safe = false;
+
+    await f.app.command({ type: "send", text: "Blocked" }, f.reply);
+
+    assert.equal(f.engine.sent.length, 0);
+
+    assert.equal(f.engine.count, 0);
+
+    assert.equal(f.app.snapshot().works.length, 0);
+
+    assert.ok(f.messages.some(m => m.type === "problem" && m.text.includes("No puedo enviar pedidos")));
+
+  } finally { await f.app.close(); await rm(f.dir, { recursive: true }); }
+
+});
+
+
+
+test("persistence retries EPERM once or twice before succeeding", async () => {
+
+  for (const failures of [1, 2]) {
+
+    const f = await fixture();
+
+    await f.app.close();
+
+    let calls = 0;
+
+    const app = new App(f.engine, f.dir, f.reply, { copyFile, rename: async (from, to) => {
+
+      if (++calls <= failures) throw Object.assign(new Error("busy"), { code: "EPERM" });
+
+      await rename(from, to);
+
+    } });
+
+    try {
+
+      await app.start();
+
+      await app.command({ type: "send", text: "Saved after retry" }, f.reply);
+
+      assert.equal(calls, failures + 1);
+
+      assert.match(await readFile(join(f.dir, "works.json"), "utf8"), /Saved after retry/);
+
+    } finally { await app.close(); await rm(f.dir, { recursive: true }); }
+
+  }
+
+});
+
+
+
+test("corrupt quarantine retries then copies, and still starts if copying also fails", async () => {
+
+  for (const copyFails of [false, true]) {
+
+    const f = await fixture();
+
+    await f.app.close();
+
+    await writeFile(join(f.dir, "works.json"), "broken");
+
+    let calls = 0;
+
+    const app = new App(f.engine, f.dir, f.reply, {
+
+      rename: async () => { calls++; throw Object.assign(new Error("locked"), { code: "EBUSY" }); },
+
+      copyFile: async (from, to) => { if (copyFails) throw new Error("locked"); await copyFile(from, to); },
+
+    });
+
+    try {
+
+      await app.start();
+
+      assert.equal(calls, 4);
+
+      assert.equal(app.snapshot().works.length, 0);
+
+      assert.ok(app.snapshot().notice);
+
+      if (!copyFails) {
+
+        const name = (await readdir(f.dir)).find(n => n.startsWith("works.corrupt-"))!;
+
+        assert.equal(await readFile(join(f.dir, name), "utf8"), "broken");
+
+      }
+
+    } finally { await app.close(); await rm(f.dir, { recursive: true }); }
+
+  }
+
+});
+
+
+
+test("final flush includes events delivered during engine shutdown", async () => {
+
+  const f = await fixture();
+
+  try {
+
+    await f.app.command({ type: "send", text: "Start" }, f.reply);
+
+    f.engine.close = async () => {
+
+      await new Promise(resolve => setTimeout(resolve, 10));
+
+      f.engine.emit({ type: "message", conversationId: "conversation-1", id: "last", text: "Last fragment", delta: true });
+
+    };
+
+    await f.app.close();
+
+    assert.match(await readFile(join(f.dir, "works.json"), "utf8"), /Last fragment/);
+
+    assert.equal(f.engine.listeners.size, 0);
+
+  } finally { await f.app.close(); await rm(f.dir, { recursive: true }); }
+
 });
