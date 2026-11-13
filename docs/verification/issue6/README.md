@@ -1,5 +1,10 @@
 # Verificación del kit de turismo
 
+La ronda de retrabajo y sus resultados actuales están en [review.md](review.md).
+Incluye descarga pública real, lista de links escritos por la usuaria y las
+tres nuevas corridas de 43 pruebas. Los registros de 37 pruebas más abajo
+corresponden a la primera entrega.
+
 Ejecutada en Windows con el Codex 0.168.0 fijado por npm y Edge del sistema.
 
 - `pieza-1.png`: PNG real de 1080 × 1920, escala 1, con Arial cargada desde

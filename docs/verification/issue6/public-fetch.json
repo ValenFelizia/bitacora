@@ -1,0 +1,103 @@
+{
+  "date": "2026-11-13T18:48:12.984Z",
+  "node": "v24.15.0",
+  "url": "https://www.google.com/",
+  "resolved": [
+    {
+      "host": "www.google.com",
+      "addresses": [
+        {
+          "address": "142.251.154.119",
+          "family": 4
+        },
+        {
+          "address": "142.251.155.119",
+          "family": 4
+        },
+        {
+          "address": "142.251.152.119",
+          "family": 4
+        },
+        {
+          "address": "142.251.153.119",
+          "family": 4
+        },
+        {
+          "address": "142.251.156.119",
+          "family": 4
+        },
+        {
+          "address": "142.251.150.119",
+          "family": 4
+        },
+        {
+          "address": "142.251.157.119",
+          "family": 4
+        },
+        {
+          "address": "142.251.151.119",
+          "family": 4
+        }
+      ]
+    },
+    {
+      "host": "www.google.com",
+      "addresses": [
+        {
+          "address": "142.251.154.119",
+          "family": 4
+        },
+        {
+          "address": "142.251.155.119",
+          "family": 4
+        },
+        {
+          "address": "142.251.152.119",
+          "family": 4
+        },
+        {
+          "address": "142.251.153.119",
+          "family": 4
+        },
+        {
+          "address": "142.251.156.119",
+          "family": 4
+        },
+        {
+          "address": "142.251.150.119",
+          "family": 4
+        },
+        {
+          "address": "142.251.157.119",
+          "family": 4
+        },
+        {
+          "address": "142.251.151.119",
+          "family": 4
+        }
+      ]
+    }
+  ],
+  "result": {
+    "source": "oferta/fuente.md",
+    "lines": 13,
+    "photos": [
+      "oferta/fotos/operador-1.png"
+    ],
+    "warnings": [],
+    "preview": [
+      "Gmail",
+      "Imágenes",
+      "Acceder",
+      "|",
+      "| Búsqueda avanzada |",
+      "PublicidadSoluciones EmpresarialesTodo acerca de GoogleGoogle.com.ar",
+      "© 2026 - Privacidad - Condiciones",
+      "Apps de Google"
+    ]
+  },
+  "sourceBytes": 244,
+  "sourceSha256": "e6a200d91aae004b9c7d442edd7f50a5f868e460f0528b333cbd0b91b579221b",
+  "excerpt": "# Fuente\nURL: https://www.google.com/\nConsultada: 2026-11-13T18:48:12.824Z\n\nGmail\nImágenes\nAcceder\n|\n| Búsqueda avanzada |\nPublicidadSoluciones EmpresarialesTodo acerca de GoogleGoogle.com.ar\n© 2026 - Privacidad - Condiciones\nApps de Google\n",
+  "modelRequests": 0
+}
