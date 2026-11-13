@@ -10,7 +10,6 @@ import { codexBinary, codexVersion } from "../../../scripts/codex-runtime.mjs";
 import { createInterface } from "node:readline";
 import { mkdir } from "node:fs/promises";
 import { registerKit } from './kit';
-import { initializeKit } from '../tools/kit';
 import type { Engine, EngineEvent, Account, ExecutionSafety } from "../engine";
 import { EngineFailure } from "../engine";
 import type { ClientRequest } from "./generated/ClientRequest";
@@ -107,7 +106,6 @@ export class CodexEngine implements Engine {
     await mkdir(this.options.home, { recursive: true });
     await mkdir(this.options.workspace, { recursive: true });
     if (!this.options.args) {
-      await initializeKit(this.options.workspace);
       await registerKit(this.options.home, this.options.workspace);
     }
     const binary = this.options.binary || codexBinary();

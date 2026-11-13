@@ -1,7 +1,9 @@
 import { paths } from "./paths";
 import { CodexEngine } from "./codex/engine";
 import { serve } from "./server";
+import { initializeKit } from './tools/kit';
 const locations = paths();
+await initializeKit(locations.workspace);
 const server = await serve(
   new CodexEngine({
     home: locations.codexHome,
