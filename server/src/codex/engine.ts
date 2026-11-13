@@ -48,6 +48,9 @@ export class CodexEngine implements Engine {
   private available = false;
   private restartTimer?: NodeJS.Timeout;
   private attempts = 0;
+  private stableTimer?: NodeJS.Timeout;
+  private exhausted = false;
+  private interrupted = new Set<string>();
   private starting = new Map<
     string,
     { completed: boolean; interrupt: boolean }
@@ -77,6 +80,7 @@ export class CodexEngine implements Engine {
       binary?: string;
       args?: string[];
       restartDelayMs?: number;
+      stableAfterMs?: number;
     },
   ) {}
   subscribe(listener: (event: EngineEvent) => void) {
@@ -98,8 +102,8 @@ export class CodexEngine implements Engine {
     };
     for (const key of Object.keys(env)) {
       if (
-        /^CODEX_/i.test(key) ||
-        /(?:API_KEY|API_TOKEN|ACCESS_TOKEN|AUTH_TOKEN)$/i.test(key)
+        /^(CODEX_|OPENAI_|ANTHROPIC_)/i.test(key) ||
+        /TOKEN|SECRET|PASSWORD|API_KEY|ACCESS_KEY|CREDENTIAL/i.test(key)
       )
         delete env[key];
     }
@@ -176,6 +180,9 @@ export class CodexEngine implements Engine {
       if (this.child !== child)
         throw new Error("Engine stopped during initialization");
       this.available = true;
+      this.exhausted = false;
+      clearTimeout(this.stableTimer);
+      this.stableTimer = setTimeout(() => { this.attempts = 0; }, this.options.stableAfterMs ?? 60_000);
       const account = await this.account();
       if (this.child !== child)
         throw new Error("Engine stopped during account read");
@@ -226,11 +233,13 @@ export class CodexEngine implements Engine {
     }
     this.pending.clear();
     this.available = false;
+    clearTimeout(this.stableTimer);
     if (!this.stopping) {
       this.emit({
         type: "availability",
         available: false,
         safety: this.safety,
+        exhausted: this.attempts >= 5,
       });
       for (const conversationId of this.turns.keys()) {
         this.emit({
@@ -244,14 +253,15 @@ export class CodexEngine implements Engine {
       this.turns.clear();
       this.starting.clear();
       this.loginId = undefined;
-      this.emit({ type: "problem", kind: "other", detail: error.message });
+      this.exhausted = this.attempts >= 5;
       if (!this.restartTimer && this.attempts < 5) {
         const delay =
           (this.options.restartDelayMs ?? 500) * 2 ** this.attempts++;
         this.restartTimer = setTimeout(() => {
           this.restartTimer = undefined;
           void this.start().catch((error) => {
-            if (!this.restartTimer) this.fail(error);
+            if (this.child) return;
+            if (!this.restartTimer && !this.exhausted) this.fail(error);
           });
         }, delay);
       }
@@ -321,6 +331,8 @@ export class CodexEngine implements Engine {
         break;
       case "turn/started":
         this.turns.set(n.params.threadId, n.params.turn.id);
+        if (this.starting.get(n.params.threadId)?.interrupt)
+          void this.interrupt(n.params.threadId).catch(error => this.emit({ type: "detail", conversationId: n.params.threadId, text: String(error) }));
         this.emit({
           type: "progress",
           conversationId: n.params.threadId,
@@ -402,6 +414,7 @@ export class CodexEngine implements Engine {
       case "turn/completed": {
         const { threadId: conversationId, turn } = n.params;
         this.turns.delete(conversationId);
+        this.interrupted.delete(conversationId);
         const starting = this.starting.get(conversationId);
         if (starting) starting.completed = true;
         if (turn.error)
@@ -456,6 +469,7 @@ export class CodexEngine implements Engine {
   async send(conversationId: string, text: string) {
     if (!this.available || !this.safety.allowed)
       throw new EngineFailure("other", this.safety.detail);
+    this.interrupted.delete(conversationId);
     const state = { completed: false, interrupt: false };
     this.starting.set(conversationId, state);
     try {
@@ -484,12 +498,22 @@ export class CodexEngine implements Engine {
     const starting = this.starting.get(conversationId);
     if (starting) starting.interrupt = true;
     const turnId = this.turns.get(conversationId);
-    if (turnId)
+    if (turnId && !this.interrupted.has(conversationId)) {
+      this.interrupted.add(conversationId);
       await this.rpc("turn/interrupt", { threadId: conversationId, turnId });
+    }
+  }
+  async retry() {
+    if (this.available || !this.exhausted || this.stopping) return;
+    this.attempts = 0;
+    this.exhausted = false;
+    this.emit({ type: "availability", available: false, exhausted: false, safety: this.safety });
+    await this.start();
   }
   async close() {
     this.stopping = true;
     clearTimeout(this.restartTimer);
+    clearTimeout(this.stableTimer);
     const child = this.child;
     if (!child) return;
     await new Promise<void>((resolve) => {

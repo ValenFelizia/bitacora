@@ -5,8 +5,10 @@ export class FakeEngine implements Engine {
   resumed: string[] = [];
   sent: string[] = [];
   count = 0;
+  safe = true;
+  async retry() {}
   executionSafety() {
-    return { allowed: true, detail: "fake restricted execution" };
+    return { allowed: this.safe, detail: "fake restricted execution" };
   }
   async start() {}
   async connectAccount() {

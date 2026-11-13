@@ -4,6 +4,8 @@ import { appendFileSync } from "node:fs";
 const send = (m) => process.stdout.write(JSON.stringify(m) + "\n");
 const notify = (method, params) => send({ method, params });
 const threadId = "thread-1";
+let interrupts = 0;
+let crashScheduled = false;
 const turn = (status = "inProgress") => ({ id: "turn-1", status, error: null });
 createInterface({ input: process.stdin })
   .on("line", (line) => {
@@ -23,6 +25,10 @@ createInterface({ input: process.stdin })
         reply({ config: { windows: { sandbox: "unelevated" } } });
         break;
       case "account/read":
+        if (process.env.BITACORA_FAKE_IDLE_CRASH && !crashScheduled) {
+          crashScheduled = true;
+          setTimeout(() => process.exit(3), 2000);
+        }
       reply({ account: process.env.BITACORA_FAKE_DISCONNECTED ? null : { type: "chatgpt", email: "fake@example.test" } });
         break;
       case "account/login/start":
@@ -39,8 +45,8 @@ createInterface({ input: process.stdin })
         reply({ thread: { id: threadId } });
         break;
       case "turn/interrupt":
-        reply({});
-        notify("turn/completed", { threadId, turn: turn("interrupted") });
+        if (++interrupts > 1) send({ id: m.id, error: { message: "already interrupted" } });
+        else { reply({}); setTimeout(() => notify("turn/completed", { threadId, turn: turn("interrupted") }), 140); }
         break;
       case "turn/start": {
         const scenario = m.params.input[0].text;
@@ -82,7 +88,8 @@ createInterface({ input: process.stdin })
         }
         if (scenario === "race")
           notify("turn/completed", { threadId, turn: turn("completed") });
-        if (scenario === "pause") setTimeout(() => reply({ turn: turn() }), 80);
+        if (scenario === "pause-started") notify("turn/started", { threadId, turn: turn() });
+        if (scenario === "pause" || scenario === "pause-started") setTimeout(() => reply({ turn: turn() }), 80);
         else reply({ turn: turn() });
         break;
       }

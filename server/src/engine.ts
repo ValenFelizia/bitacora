@@ -9,7 +9,7 @@ export type Activity =
   | "responding"
   | "retrying";
 export type EngineEvent =
-  | { type: "availability"; available: boolean; safety: ExecutionSafety }
+  | { type: "availability"; available: boolean; exhausted?: boolean; safety: ExecutionSafety }
   | { type: "account"; account: Account }
   | { type: "title"; conversationId: string; title: string }
   | { type: "progress"; conversationId: string; activity: Activity }
@@ -36,6 +36,7 @@ export type EngineEvent =
 
 export interface Engine {
   start(): Promise<void>;
+  retry(): Promise<void>;
   executionSafety(): ExecutionSafety;
   connectAccount(): Promise<{ url: string }>;
   account(): Promise<Account>;
