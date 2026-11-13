@@ -1,4 +1,4 @@
-import { mkdir, realpath, readdir, lstat, writeFile, readFile } from 'node:fs/promises';
+import { mkdir, realpath, opendir, lstat, unlink, open } from 'node:fs/promises';
 import { createReadStream } from 'node:fs';
 import { join, relative, isAbsolute, extname, basename } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
@@ -8,9 +8,14 @@ export const MAX_FILE = 20 * 1024 * 1024;
 export const MAX_REQUEST = 40 * 1024 * 1024;
 const media: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.pdf': 'application/pdf' };
 const textTypes: Record<string, string> = { '.txt': 'text/plain', '.md': 'text/plain', '.csv': 'text/plain', '.json': 'text/plain' };
+export const MAX_RESULT = 100 * 1024 * 1024;
+export const SCAN_LIMITS = { entries: 20000, files: 5000, bytes: 512 * 1024 * 1024, depth: 64 };
+type Fingerprint = { size: number; mtimeMs: number; ctimeMs: number; hash: string };
+export type FileScan = { entries: Record<string, Fingerprint>; warnings: string[]; hashedBytes: number; visited: number };
 export class FileProblem extends Error {}
 export class WorkspaceFiles {
-  constructor(readonly root: string) {}
+  private cache?: FileScan;
+  constructor(readonly root: string, private limits = SCAN_LIMITS, private attachmentIO = { open }) {}
   async initialize() { await mkdir(this.root, { recursive: true }); }
   async safePath(path: string) {
     if (!path || isAbsolute(path) || path.split(/[\\/]/).some(p => p === '..' || p.startsWith('.') || p === 'node_modules') || path.includes(':')) throw new Error('Invalid file path');
@@ -45,7 +50,9 @@ export class WorkspaceFiles {
         'application/pdf': bytes.toString('ascii', 0, 5) === '%PDF-',
       };
       if (mime !== 'text/plain' && !signatures[mime]) throw new FileProblem('El contenido no coincide con el tipo de archivo. Elegilo de nuevo.');
-      const name = basename(u.name.replace(/\\/g, '/')).normalize('NFC').replace(/[<>:"/\\|?*\x00-\x1f]/g, '-').replace(/[. ]+$/g, '').slice(0, 140);
+      const cleaned = basename(u.name.replace(/\\/g, '/')).normalize('NFC').replace(/[<>:"/\\|?*\x00-\x1f]/g, '-');
+      const stem = cleaned.slice(0, -extension.length).slice(0, 140 - extension.length).replace(/[. ]+$/g, '');
+      const name = `${stem || 'archivo'}${extension}`;
       return { name: name || `archivo${extension}`, mime, bytes, extension };
     });
   }
@@ -67,35 +74,92 @@ export class WorkspaceFiles {
     const rel = relative(root, parent);
     if (!rel || rel.startsWith('..') || isAbsolute(rel)) throw new FileProblem('No pude guardar los adjuntos en la carpeta de la agencia.');
     const refs: FileRef[] = [];
-    for (const u of uploads) {
-      const id = randomUUID();
-      const path = join(folder, `${id}-${u.name}`);
-      await writeFile(join(this.root, path), u.bytes, { flag: 'wx' });
-      refs.push({ id, path, name: u.name, mime: u.mime, createdAt: new Date().toISOString() });
-    }
-    return refs;
+    try {
+      for (const u of uploads) {
+        const id = randomUUID();
+        const path = join(folder, `${id}-${u.name}`);
+        const handle = await this.attachmentIO.open(join(this.root, path), 'wx');
+        refs.push({ id, path, name: u.name, mime: u.mime, createdAt: new Date().toISOString() });
+        try { await handle.writeFile(u.bytes); } finally { await handle.close(); }
+      }
+      return refs;
+    } catch (error) { await this.removeAttachments(refs); throw error; }
   }
-  async scan(): Promise<Record<string, string>> {
-    const found: Record<string, string> = {};
-    const walk = async (folder: string) => {
-      for (const entry of await readdir(join(this.root, folder), { withFileTypes: true })) {
-        if (entry.name.startsWith('.') || ['adjuntos', 'node_modules'].includes(entry.name) || entry.isSymbolicLink()) continue;
-        const path = join(folder, entry.name);
-        if (entry.isDirectory()) await walk(path);
-        else if (entry.isFile() && media[extname(entry.name).toLowerCase()]) {
-          try {
-            const hash = createHash('sha256');
-            for await (const chunk of createReadStream(await this.safePath(path))) hash.update(chunk);
-            found[path] = hash.digest('hex');
-          } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  async removeAttachments(refs: FileRef[]) {
+    for (const ref of refs) {
+      try { await this.safePath(ref.path); await unlink(join(this.root, ref.path)); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+    }
+  }
+  async scan(previous = this.cache): Promise<FileScan> {
+    const found: FileScan = { entries: {}, warnings: [], hashedBytes: 0, visited: 0 };
+    const root = await realpath(this.root);
+    let files = 0;
+    const warn = (path: string, error: unknown) => {
+      if (found.warnings.length < 100) found.warnings.push(`${path || '.'}: ${String(error)}`);
+    };
+    const walk = async (folder: string, depth: number) => {
+      if (depth > this.limits.depth) { warn(folder, 'depth limit'); return; }
+      try {
+        const target = await realpath(join(root, folder));
+        const rel = relative(root, target);
+        if (rel.startsWith('..') || isAbsolute(rel)) throw new Error('directory outside workspace');
+        for await (const entry of await opendir(target)) {
+          if (++found.visited > this.limits.entries) { warn(folder, 'entry limit'); break; }
+          if (entry.name.startsWith('.') || ['adjuntos', 'node_modules'].includes(entry.name)) continue;
+          const path = join(folder, entry.name);
+          if (entry.isSymbolicLink()) { warn(path, 'link skipped'); continue; }
+          if (entry.isDirectory()) await walk(path, depth + 1);
+          else if (entry.isFile() && media[extname(entry.name).toLowerCase()]) {
+            if (++files > this.limits.files) { warn(path, 'file limit'); break; }
+            try {
+              const stat = await lstat(join(root, path));
+              if (!stat.isFile()) { warn(path, 'not a regular file'); continue; }
+              if (stat.size > MAX_RESULT) { warn(path, 'file size limit'); continue; }
+              const old = previous?.entries[path];
+              let hash = old?.hash;
+              if (!old || old.size !== stat.size || old.mtimeMs !== stat.mtimeMs || old.ctimeMs !== stat.ctimeMs) {
+                if (found.hashedBytes + stat.size > this.limits.bytes) { warn(path, 'hash byte limit'); continue; }
+                const digest = createHash('sha256');
+                let bytes = 0;
+                for await (const chunk of createReadStream(await this.safePath(path))) {
+                  bytes += chunk.length;
+                  found.hashedBytes += chunk.length;
+                  if (bytes > MAX_RESULT || found.hashedBytes > this.limits.bytes) throw new Error('growing file size limit');
+                  digest.update(chunk);
+                }
+                const after = await lstat(join(root, path));
+                if (after.size !== stat.size || after.mtimeMs !== stat.mtimeMs || after.ctimeMs !== stat.ctimeMs) throw new Error('file changed while reading');
+                hash = digest.digest('hex');
+              }
+              found.entries[path] = { size: stat.size, mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs, hash: hash! };
+            } catch (error) { warn(path, error); }
+          }
+          if (found.visited >= this.limits.entries || files >= this.limits.files) { warn(folder, 'scan count limit reached'); break; }
         }
+      } catch (error) {
+        if (!folder) throw error;
+        warn(folder, error);
       }
     };
-    await walk('');
+    await walk('', 0);
+    this.cache = found;
     return found;
+  }
+  async openResult(ref: FileRef) {
+    const handle = await open(await this.safePath(ref.path), 'r');
+    try {
+      const stat = await handle.stat();
+      if (!stat.isFile()) throw new Error('Not a regular file');
+      if (stat.size > MAX_RESULT) throw new FileProblem('El archivo supera los 100 MB.');
+      return { handle, size: stat.size };
+    } catch (error) { await handle.close(); throw error; }
   }
   result(path: string): FileRef {
     return { id: randomUUID(), path, name: basename(path), mime: media[extname(path).toLowerCase()], createdAt: new Date().toISOString() };
   }
-  async read(ref: FileRef) { return readFile(await this.safePath(ref.path)); }
+  async read(ref: FileRef) {
+    const { handle } = await this.openResult(ref);
+    try { return await handle.readFile(); } finally { await handle.close(); }
+  }
 }

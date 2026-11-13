@@ -1,12 +1,12 @@
-import { mkdir, readFile, writeFile, rename, copyFile } from "node:fs/promises";
-import { WorkspaceFiles } from "./workspace-files";
+import { mkdir, readFile, writeFile, rename, copyFile, rm } from "node:fs/promises";
+import { WorkspaceFiles, type FileScan } from "./workspace-files";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Engine, EngineEvent } from "./engine";
 import { problemText, EngineFailure, activityText } from "./engine";
-import type { Work, Snapshot, ClientCommand, ServerMessage } from "./contracts";
+import type { FileRef, Work, Snapshot, ClientCommand, ServerMessage } from "./contracts";
 
-type SavedWork = Work & { conversationId: string; pendingFiles?: { messageId: string; before: Record<string, string> } };
+type SavedWork = Work & { conversationId: string; pendingFiles?: { messageId: string; before?: Record<string, string> } };
 export class App {
   private scanning = new Set<string>();
   private scans = new Set<Promise<void>>();
@@ -121,17 +121,31 @@ export class App {
   file(id: string) {
     return this.works.flatMap(w => w.messages.flatMap(m => [...(m.attachments || []), ...(m.results || [])])).find(f => f.id === id);
   }
+  private scanDetail(work: SavedWork, scan: FileScan) {
+    if (scan.warnings.length) work.details = (work.details + scan.warnings.join("\n") + "\n").slice(-100000);
+  }
+  private pendingPath(work: SavedWork) {
+    if (!/^[a-zA-Z0-9-]+$/.test(work.id)) throw new Error('Invalid work identity');
+    return join(this.data, 'pending-files', `${work.id}.json`);
+  }
   private async collectResults(work: SavedWork) {
     const pending = work.pendingFiles;
     if (!pending || !this.workspace) return;
     try {
-      const after = await this.workspace.scan();
+      const before = pending.before
+        ? { entries: Object.fromEntries(Object.entries(pending.before).map(([p, hash]) => [p, { hash }])) } as FileScan
+        : JSON.parse(await readFile(this.pendingPath(work), 'utf8')) as FileScan;
+      const after = await this.workspace.scan(before);
+      this.scanDetail(work, after);
       const message = work.messages.find(m => m.id === pending.messageId);
-      if (message) message.results = Object.keys(after).filter(p => after[p] !== pending.before[p]).map(p => this.workspace!.result(p));
-      delete work.pendingFiles;
+      if (message) message.results = Object.keys(after.entries).filter(p => after.entries[p].hash !== before.entries[p]?.hash).map(p => this.workspace!.result(p));
     } catch (error) {
-      work.problem = "No pude revisar los resultados. Volvé a abrir la app para reintentar.";
-      work.details += String(error) + "\n";
+      work.problem = "No pude revisar los resultados de ese pedido. Podés seguir trabajando.";
+      work.details = (work.details + String(error) + "\n").slice(-100000);
+    } finally {
+      delete work.pendingFiles;
+      try { await rm(this.pendingPath(work), { force: true }); }
+      catch (error) { work.details = (work.details + String(error) + "\n").slice(-100000); }
     }
   }
   private finishFiles(work: SavedWork) {
@@ -291,14 +305,13 @@ export class App {
       });
       return;
     }
-    if (this.works.some(w => w.pendingFiles)) {
-      reply({ type: "problem", text: "Todavía no pude revisar los resultados del pedido anterior. Volvé a abrir la app para reintentar." });
-      return;
-    }
     const uploads = this.workspace?.validate(command.attachments);
     if (command.attachments?.length && !this.workspace) throw new Error("Attachments unavailable");
     this.submitting = true;
     let work: SavedWork | undefined;
+    let attachments: FileRef[] = [];
+    let committed = false;
+    let newWork = false;
     try {
       this.accountState = await this.engine.account();
       this.publish({ type: "snapshot", state: this.snapshot() });
@@ -329,13 +342,19 @@ export class App {
           busy: false,
           progress: "",
         };
-        this.works.unshift(work);
-        this.resumed.add(work.id);
+        newWork = true;
       }
-      const attachments = await this.workspace?.attach(work.id, uploads || []);
+      attachments = await this.workspace?.attach(work.id, uploads || []) || [];
       const messageId = randomUUID();
       const before = await this.workspace?.scan();
-      if (before) work.pendingFiles = { messageId, before };
+      if (before) {
+        this.scanDetail(work, before);
+        await mkdir(join(this.data, 'pending-files'), { recursive: true });
+        await writeFile(this.pendingPath(work), JSON.stringify(before), 'utf8');
+        work.pendingFiles = { messageId };
+      }
+      if (newWork) { this.works.unshift(work); this.resumed.add(work.id); }
+      committed = true;
       work.messages.push({
         id: messageId,
         attachments,
@@ -352,7 +371,14 @@ export class App {
     } catch (error) {
       if (error instanceof EngineFailure && error.kind === "disconnected")
         this.accountState = { connected: false };
-      if (work) {
+      if (!committed) {
+        await this.workspace?.removeAttachments(attachments);
+        if (work) {
+          delete work.pendingFiles;
+          await rm(this.pendingPath(work), { force: true });
+        }
+      }
+      if (work && committed) {
         work.busy = false;
         work.problem = problemText(
           error instanceof EngineFailure ? error.kind : "other",
