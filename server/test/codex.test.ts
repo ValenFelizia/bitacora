@@ -357,15 +357,18 @@ for (const scenario of ["success", "failure", "restart", "mxc"] as const) {
 }
 
 
-test("generic files become local images and quoted document paths at the adapter boundary", async () => {
+test("generic files become local images and named relative document mentions", async () => {
   const f = await fixture();
+  const image = join(f.dir, 'workspace', 'adjuntos', 'foto con ñ.png');
+  const pdf = join(f.dir, 'workspace', 'adjuntos', 'cotización.pdf');
   try {
     await f.engine.send("thread-1", "Describí", [
-      { path: "C:/agencia/adjuntos/foto con ñ.png", mime: "image/png" },
-      { path: "C:/agencia/adjuntos/cotización.pdf", mime: "application/pdf" },
+      { path: image, mime: "image/png" },
+      { path: pdf, mime: "application/pdf" },
     ]);
     const call = (await f.records()).find(m => m.method === "turn/start");
-    assert.deepEqual(call.params.input[1], { type: "localImage", path: "C:/agencia/adjuntos/foto con ñ.png" });
-    assert.ok(call.params.input[0].text.includes('Archivo adjunto: "C:/agencia/adjuntos/cotización.pdf"'));
+    assert.equal(call.params.input[0].text, 'Describí');
+    assert.deepEqual(call.params.input[1], { type: 'mention', name: 'cotización.pdf', path: join('adjuntos', 'cotización.pdf') });
+    assert.deepEqual(call.params.input[2], { type: "localImage", path: image });
   } finally { await f.close(); }
 });

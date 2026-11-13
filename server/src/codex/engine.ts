@@ -5,7 +5,7 @@ import {
   type ChildProcessWithoutNullStreams,
 } from "node:child_process";
 import { promisify } from "node:util";
-import { join } from "node:path";
+import { join, relative, basename } from "node:path";
 import { codexBinary, codexVersion } from "../../../scripts/codex-runtime.mjs";
 import { createInterface } from "node:readline";
 import { mkdir } from "node:fs/promises";
@@ -596,7 +596,8 @@ export class CodexEngine implements Engine {
       const { turn } = await this.rpc("turn/start", {
         threadId: conversationId,
         input: [
-          { type: "text", text: text + files.filter(f => !f.mime.startsWith("image/")).map(f => `\nArchivo adjunto: ${JSON.stringify(f.path)}`).join(""), text_elements: [] },
+          { type: "text", text, text_elements: [] },
+          ...files.filter(f => !f.mime.startsWith("image/")).map(f => ({ type: "mention" as const, name: basename(f.path), path: relative(this.options.workspace, f.path) })),
           ...files.filter(f => f.mime.startsWith("image/")).map(f => ({ type: "localImage" as const, path: f.path })),
         ],
         cwd: this.options.workspace,
