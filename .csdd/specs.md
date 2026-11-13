@@ -30,8 +30,10 @@ sin ayuda de Valentín.
 - **R3. Conversación sin ruido técnico.** El progreso se muestra en castellano
   simple, en una línea. Comandos, diffs y errores quedan plegados.
 - **R4. Sin carteles de permiso.** El agente trabaja libre dentro de la carpeta de
-  la agencia y no puede salir de ella. La app guarda copias automáticas y ofrece
-  deshacer.
+  la agencia y no puede modificar ni borrar nada fuera de ella. La app guarda
+  copias automáticas y ofrece deshacer. Impedirle también leer fuera de la
+  carpeta no es requisito del MVP: depende de una función beta de Codex y se suma
+  solo si la prueba del issue #4 en Windows 11 sale bien.
 - **R5. Archivos y resultados a la vista.** La usuaria adjunta logo, fotos y
   links. Las imágenes y PDFs que produce el agente aparecen en la conversación,
   con copiar y guardar, y en una galería con todo lo producido.
