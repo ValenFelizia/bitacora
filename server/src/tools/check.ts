@@ -2,20 +2,26 @@ import { AgencyFiles } from './paths';
 import { withPage, visibleTexts } from './page';
 
 export const numbers = (s: string) => s.match(/\d+(?:[.,]\d+)*/g) || [];
-export const normalizeNumber = (s: string) => s.replace(/\.(?=\d{3}(?:\D|$))/g, '').replace(',', '.');
+export const normalizeNumber = (s: string) => {
+  if (/^\d{1,3}([.,]\d{3})+$/.test(s)) return s.replace(/[.,]/g, '');
+  return s.replace(/[.,](?=\d{3}(?:[.,]|$))/g, '').replace(',', '.');
+};
 export type Rules = { operatorNames?: string[]; noEmoji?: boolean; warnExperience?: boolean };
 export async function controlar(files: AgencyFiles, input: { html: string; source: string; report: string; rules?: string }) {
   const source = (await files.read(input.source)).split(/\r?\n/);
   const rules: Rules = input.rules ? JSON.parse((await files.read(input.rules)).replace(/^\uFEFF/, '')) : {};
-  const texts = await withPage(files, input.html, visibleTexts);
+  const {texts,whole} = await withPage(files, input.html, async page => ({texts:await visibleTexts(page),whole:await page.evaluate(() => document.body.innerText)}));
   const errors: string[] = [], warnings: string[] = [];
   const rows: string[] = [];
-  for (const {text, where, cites} of texts) {
-    if (rules.operatorNames?.some(name => name && text.toLocaleLowerCase().includes(name.toLocaleLowerCase()))) errors.push(`${where}: nombra al operador.`);
+  const cited = new Map<string,string>(), used = new Set<string>();
+  if (rules.operatorNames?.some(name => name && whole.toLocaleLowerCase().replace(/\s+/g,'').includes(name.toLocaleLowerCase().replace(/\s+/g,'')))) errors.push('La pieza nombra al operador.');
+  for (const {text, where, cites, citationId} of texts) {
+    for (const number of Object.keys(cites || {})) cited.set(`${citationId}:${number}`, `${where}: sobra la cita de ${number} (línea ${cites[number]}).`);
     if (rules.noEmoji && /\p{Extended_Pictographic}/u.test(text)) errors.push(`${where}: tiene emojis.`);
-    if (rules.warnExperience && /\b(estuve|visit[eé]|conoc[ií]|me hosped[eé])\b/i.test(text)) warnings.push(`${where}: confirmá con la usuaria si estuvo en ese lugar.`);
+    if (rules.warnExperience && /(?<!\p{L})(estuve|visit[eé]|conoc[ií]|me hosped[eé])(?!\p{L})/iu.test(text)) warnings.push(`${where}: confirmá con la usuaria si estuvo en ese lugar.`);
     for (const number of numbers(text)) {
       const line = cites?.[number];
+      used.add(`${citationId}:${number}`);
       const quoted = Number.isInteger(line) && line > 0 ? source[line - 1] : undefined;
       const ok = !!quoted && numbers(quoted).some(n => normalizeNumber(n) === normalizeNumber(number));
       if (!ok) errors.push(`${where}: ${number} no está respaldado por la línea citada (${line ?? 'sin cita'}).`);
@@ -23,6 +29,7 @@ export async function controlar(files: AgencyFiles, input: { html: string; sourc
       rows.push(`| ${number} | ${esc(where)} | ${line ?? 'sin cita'} | ${esc(quoted ?? 'No encontrada')} | ${ok ? 'Sí' : 'No'} |`);
     }
   }
+  for (const [key,message] of cited) if (!used.has(key)) warnings.push(message);
   await files.write(input.report, ['# Control de los números', '', `Fuente: ${input.source}`, '', '| Número | Dónde se ve | Línea | Texto de la fuente | Respaldado |', '| --- | --- | --- | --- | --- |', ...rows, '', '## Errores', ...errors.map(s => `- ${s}`), '', '## Avisos', ...warnings.map(s => `- ${s}`)].join('\n'), false);
   return { ok: errors.length === 0, checked: rows.length, errors, warnings, report: input.report };
 }
