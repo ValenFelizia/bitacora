@@ -33,6 +33,22 @@ accepted direction from implementation alone.
 - Rejected: Sign in with ChatGPT más un agente propio sobre la API. Es mucho más
   trabajo y esa vía no ofrece ejecución de código.
 
+## DEC-008 — Codex se maneja por app-server sobre stdio, con versión fijada
+
+- Status: accepted (2026-11-13)
+- Context: investigación del issue #1, hecha contra Codex CLI 0.168.0 y la
+  documentación oficial.
+- Decision: el servidor lanza `codex app-server` como proceso hijo y le habla
+  por stdio. La versión de Codex queda fijada y los tipos del protocolo se
+  generan desde esa misma versión. Bitácora usa un `CODEX_HOME` propio, separado
+  del Codex personal de quien la usa.
+- Rationale: app-server expone login, conversaciones retomables, eventos y
+  solicitudes bidireccionales, que el SDK y `codex exec` no dan juntos. El CLI lo
+  marca experimental, por eso se fija la versión.
+- Consequences: actualizar Codex es un cambio deliberado, con prueba de
+  compatibilidad. Deshacer cambios en disco es responsabilidad de Bitácora:
+  Codex retoma conversaciones pero no revierte archivos.
+
 ## DEC-003 — Servidor local en TypeScript, UI web y cáscara Tauri mínima
 
 - Status: accepted (2026-11-13)
