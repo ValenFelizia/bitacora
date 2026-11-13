@@ -76,8 +76,39 @@ y el siguiente guardado puede recuperarse.
 
 El aislamiento
 estricto de lecturas, las copias y deshacer corresponden al issue #4 y no
-están implementados. Tampoco hay adjuntos, galería, kit ni instalador.
+están implementados. Todavía no hay kit ni instalador.
 
 - Qué tiene que hacer el MVP: [`.csdd/specs.md`](.csdd/specs.md)
 - Por qué está armado así: [`.csdd/decisions.md`](.csdd/decisions.md)
 - Qué falta: los issues del milestone **MVP**
+
+
+## Adjuntos y resultados
+
+Podés elegir **Adjuntar archivos** o arrastrarlos al pedido: imágenes PNG, JPG,
+JPEG y WebP, PDF y texto UTF-8 (TXT, MD, CSV y JSON). Hasta 10 archivos, 20 MB
+por archivo y 40 MB entre todos. Los links se pegan en el pedido y quedan como
+enlaces. Los adjuntos se copian a `adjuntos/<trabajo>/` dentro de la agencia,
+con nombres únicos para conservar los anteriores.
+
+Al terminar cada pedido aparecen las imágenes y PDFs nuevos o modificados.
+**Copiar** lleva la imagen al portapapeles para pegar en WhatsApp Web;
+**Guardar** la descarga con su nombre. Los PDFs tienen **Abrir** y **Guardar**.
+En **Galería** están agrupados por trabajo, con los resultados más nuevos
+primero y **Ir al trabajo** para continuar. Si borraste un archivo, se muestra
+un aviso. La asociación sobrevive al cierre de la app; si un resultado se
+modifica más adelante, las tarjetas muestran el archivo actual, no una copia
+histórica (copias y deshacer pertenecen al issue #4).
+
+La detección compara contenido antes y después del pedido; no depende de los
+avisos del motor. Excluye `adjuntos/`, carpetas ocultas, enlaces simbólicos y
+`node_modules`. No identifica quién hizo un cambio concurrente en esa carpeta.
+Los adjuntos viajan por la conexión local autenticada; las lecturas requieren
+un token impredecible por arranque que sólo entrega esa conexión. Sólo se
+sirven archivos registrados, comprobando su ruta real dentro de la agencia.
+
+`npx tsx scripts/verify-files-browser.ts` levanta una instancia falsa y Edge,
+prueba adjuntos, portapapeles, descarga, galería y archivos borrados; guarda
+capturas en `docs/verification/issue5/` y limpia sus datos y procesos al terminar.
+Requiere libres los puertos 5173 y 4317. La evidencia y los límites están en
+[la verificación del issue #5](docs/verification/issue5/verification.md).
