@@ -1,0 +1,181 @@
+{
+  "binary": "C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\bitacora\\node_modules\\@openai\\codex-win32-x64\\vendor\\x86_64-pc-windows-msvc\\bin\\codex.exe",
+  "version": "codex-cli 0.168.0",
+  "home": "C:\\Users\\Valen\\AppData\\Local\\Bitacora-dev\\pr13\\protocol\\data\\codex",
+  "workspace": "C:\\Users\\Valen\\AppData\\Local\\Bitacora-dev\\pr13\\protocol\\workspace",
+  "events": [
+    {
+      "type": "protection",
+      "safety": {
+        "allowed": false,
+        "status": "needed",
+        "needsPermission": false,
+        "detail": "windowsSandbox/readiness=notConfigured; windows.sandbox=disabled; workspace-write"
+      }
+    },
+    {
+      "type": "availability",
+      "available": true,
+      "safety": {
+        "allowed": false,
+        "status": "needed",
+        "needsPermission": false,
+        "detail": "windowsSandbox/readiness=notConfigured; windows.sandbox=disabled; workspace-write"
+      }
+    },
+    {
+      "type": "account",
+      "account": {
+        "connected": false
+      }
+    },
+    {
+      "type": "protection",
+      "safety": {
+        "allowed": false,
+        "status": "preparing",
+        "needsPermission": false,
+        "detail": "windowsSandbox/readiness=notConfigured; windows.sandbox=disabled; workspace-write"
+      }
+    },
+    {
+      "type": "availability",
+      "available": false,
+      "safety": {
+        "allowed": false,
+        "status": "preparing",
+        "needsPermission": false,
+        "detail": "windowsSandbox/readiness=notConfigured; windows.sandbox=disabled; workspace-write"
+      }
+    },
+    {
+      "type": "protection",
+      "safety": {
+        "allowed": true,
+        "status": "ready",
+        "detail": "windowsSandbox/readiness=ready; windows.sandbox=mxc; workspace-write"
+      }
+    },
+    {
+      "type": "availability",
+      "available": true,
+      "safety": {
+        "allowed": true,
+        "status": "ready",
+        "detail": "windowsSandbox/readiness=ready; windows.sandbox=mxc; workspace-write"
+      }
+    },
+    {
+      "type": "account",
+      "account": {
+        "connected": false
+      }
+    }
+  ],
+  "configFile": "[windows]\nsandbox = \"mxc\"\n",
+  "effectiveWindowsConfig": {
+    "sandbox": "mxc",
+    "allow_mxc": null
+  },
+  "policy": {
+    "type": "workspaceWrite",
+    "writableRoots": [
+      "C:\\Users\\Valen\\AppData\\Local\\Bitacora-dev\\pr13\\protocol\\workspace"
+    ],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": true,
+    "excludeSlashTmp": true
+  },
+  "records": [
+    {
+      "name": "inside",
+      "method": "command/exec",
+      "params": {
+        "command": [
+          "powershell.exe",
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "Set-Content -LiteralPath 'C:\\Users\\Valen\\AppData\\Local\\Bitacora-dev\\pr13\\protocol\\workspace\\inside.txt' -Value CREATED -ErrorAction Stop; Add-Content -LiteralPath 'C:\\Users\\Valen\\AppData\\Local\\Bitacora-dev\\pr13\\protocol\\workspace\\inside.txt' -Value MODIFIED -ErrorAction Stop; Get-Content -LiteralPath 'C:\\Users\\Valen\\AppData\\Local\\Bitacora-dev\\pr13\\protocol\\workspace\\inside.txt'"
+        ],
+        "cwd": "C:\\Users\\Valen\\AppData\\Local\\Bitacora-dev\\pr13\\protocol\\workspace",
+        "sandboxPolicy": {
+          "type": "workspaceWrite",
+          "writableRoots": [
+            "C:\\Users\\Valen\\AppData\\Local\\Bitacora-dev\\pr13\\protocol\\workspace"
+          ],
+          "networkAccess": false,
+          "excludeTmpdirEnvVar": true,
+          "excludeSlashTmp": true
+        },
+        "timeoutMs": 10000
+      },
+      "result": {
+        "exitCode": 0,
+        "stdout": "CREATED\r\nMODIFIED\r\n",
+        "stderr": ""
+      }
+    },
+    {
+      "name": "modify-outside",
+      "method": "command/exec",
+      "params": {
+        "command": [
+          "powershell.exe",
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "Set-Content -LiteralPath 'C:\\Users\\Valen\\AppData\\Local\\Bitacora-dev\\pr13\\protocol\\outside-witness.txt' -Value CHANGED -ErrorAction Stop"
+        ],
+        "cwd": "C:\\Users\\Valen\\AppData\\Local\\Bitacora-dev\\pr13\\protocol\\workspace",
+        "sandboxPolicy": {
+          "type": "workspaceWrite",
+          "writableRoots": [
+            "C:\\Users\\Valen\\AppData\\Local\\Bitacora-dev\\pr13\\protocol\\workspace"
+          ],
+          "networkAccess": false,
+          "excludeTmpdirEnvVar": true,
+          "excludeSlashTmp": true
+        },
+        "timeoutMs": 10000
+      },
+      "result": {
+        "exitCode": 1,
+        "stdout": "",
+        "stderr": "Set-Content : Access to the path 'C:\\Users\\Valen\\AppData\\Local\\Bitacora-dev\\pr13\\protocol\\outside-witness.txt' is \r\ndenied.\r\nAt line:1 char:1\r\n+ Set-Content -LiteralPath 'C:\\Users\\Valen\\AppData\\Local\\Bitacora-dev\\p ...\r\n+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\r\n    + CategoryInfo          : NotSpecified: (:) [Set-Content], UnauthorizedAccessException\r\n    + FullyQualifiedErrorId : System.UnauthorizedAccessException,Microsoft.PowerShell.Commands.SetContentCommand\r\n \r\n"
+      }
+    },
+    {
+      "name": "delete-outside",
+      "method": "command/exec",
+      "params": {
+        "command": [
+          "powershell.exe",
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "Remove-Item -LiteralPath 'C:\\Users\\Valen\\AppData\\Local\\Bitacora-dev\\pr13\\protocol\\outside-witness.txt' -ErrorAction Stop"
+        ],
+        "cwd": "C:\\Users\\Valen\\AppData\\Local\\Bitacora-dev\\pr13\\protocol\\workspace",
+        "sandboxPolicy": {
+          "type": "workspaceWrite",
+          "writableRoots": [
+            "C:\\Users\\Valen\\AppData\\Local\\Bitacora-dev\\pr13\\protocol\\workspace"
+          ],
+          "networkAccess": false,
+          "excludeTmpdirEnvVar": true,
+          "excludeSlashTmp": true
+        },
+        "timeoutMs": 10000
+      },
+      "result": {
+        "exitCode": 1,
+        "stdout": "",
+        "stderr": "Remove-Item : Cannot remove item C:\\Users\\Valen\\AppData\\Local\\Bitacora-dev\\pr13\\protocol\\outside-witness.txt: Access \r\nto the path 'C:\\Users\\Valen\\AppData\\Local\\Bitacora-dev\\pr13\\protocol\\outside-witness.txt' is denied.\r\nAt line:1 char:1\r\n+ Remove-Item -LiteralPath 'C:\\Users\\Valen\\AppData\\Local\\Bitacora-dev\\p ...\r\n+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\r\n    + CategoryInfo          : PermissionDenied: (C:\\Users\\Valen\\...ide-witness.txt:FileInfo) [Remove-Item], Unauthoriz \r\n   edAccessException\r\n    + FullyQualifiedErrorId : RemoveFileSystemItemUnAuthorizedAccess,Microsoft.PowerShell.Commands.RemoveItemCommand\r\n"
+      }
+    }
+  ],
+  "inside": "CREATED\r\nMODIFIED\r\n",
+  "witness": "UNCHANGED_PR13",
+  "modelTurns": 0
+}

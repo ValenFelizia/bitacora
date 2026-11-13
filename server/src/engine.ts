@@ -1,5 +1,5 @@
 export type Account = { connected: boolean; email?: string };
-export type ExecutionSafety = { allowed: boolean; detail: string };
+export type ExecutionSafety = { allowed: boolean; detail: string; status?: "needed" | "preparing" | "ready" | "failed"; needsPermission?: boolean; issue?: "check" | "setup" | "uncertain" | "interrupted" | "restart" };
 export type Activity =
   | "preparing"
   | "reading"
@@ -10,6 +10,7 @@ export type Activity =
   | "retrying";
 export type EngineEvent =
   | { type: "availability"; available: boolean; exhausted?: boolean; safety: ExecutionSafety }
+  | { type: "protection"; safety: ExecutionSafety }
   | { type: "account"; account: Account }
   | { type: "title"; conversationId: string; title: string }
   | { type: "progress"; conversationId: string; activity: Activity }
@@ -38,6 +39,7 @@ export interface Engine {
   start(): Promise<void>;
   retry(): Promise<void>;
   executionSafety(): ExecutionSafety;
+  prepareProtection(): Promise<void>;
   connectAccount(): Promise<{ url: string }>;
   account(): Promise<Account>;
   createWork(): Promise<{ conversationId: string; title?: string }>;

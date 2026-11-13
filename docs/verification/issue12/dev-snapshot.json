@@ -1,0 +1,1 @@
+{"type":"snapshot","state":{"account":{"connected":false},"engine":{"available":true,"exhausted":false,"safety":{"allowed":true,"status":"ready","detail":"windowsSandbox/readiness=ready; windows.sandbox=mxc; workspace-write"}},"works":[]}}

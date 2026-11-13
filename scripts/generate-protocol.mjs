@@ -1,3 +1,4 @@
+import { codexBinary, codexVersion } from "./codex-runtime.mjs";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -8,9 +9,9 @@ const options = {
   encoding: "utf8",
   windowsHide: true,
 };
-const binary = process.env.BITACORA_CODEX_BIN || "codex";
+const binary = process.env.BITACORA_CODEX_BIN || codexBinary();
 const version = execFileSync(binary, ["--version"], options).trim();
-if (version !== "codex-cli 0.168.0")
+if (version !== codexVersion)
   throw new Error(`Se requiere codex-cli 0.168.0; instalado: ${version}`);
 execFileSync(
   binary,

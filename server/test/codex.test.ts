@@ -1,12 +1,127 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { CodexEngine } from "../src/codex/engine";
 import type { EngineEvent } from "../src/engine";
 
-async function fixture(stableAfterMs = 60_000) {
+test("ready unelevated remains blocked", async () => {
+  process.env.BITACORA_FAKE_MODE = "unelevated";
+  const f = await fixture();
+  try {
+    assert.equal(f.engine.executionSafety().allowed, false);
+    await assert.rejects(f.engine.send("thread-1", "race"));
+    assert.equal((await f.records()).filter(m => m.method === "turn/start").length, 0);
+  } finally { delete process.env.BITACORA_FAKE_MODE; await f.close(); }
+});
+
+test("read and probe failures retry checks without administrative preparation", async () => {
+  for (const failure of ["read", "probe"]) {
+    process.env.BITACORA_FAKE_SAFETY = "notConfigured";
+    if (failure === "read") process.env.BITACORA_FAKE_READ_FAIL = "1";
+    let probes = 0;
+    const f = await fixture(60000, { probeProtection: async () => {
+      probes++; throw new Error("probe timed out");
+    } });
+    try {
+      assert.equal(f.engine.executionSafety().issue, "check");
+      await f.engine.prepareProtection();
+      assert.equal(f.engine.executionSafety().issue, "check");
+      const records = await f.records();
+      assert.equal(records.filter(m => m.method === "windowsSandbox/setupStart").length, 0);
+      assert.equal(records.filter(m => m.method === "windowsSandbox/readiness").length, 2);
+      if (failure === "probe") assert.equal(probes, 2);
+    } finally {
+      delete process.env.BITACORA_FAKE_READ_FAIL;
+      delete process.env.BITACORA_FAKE_SAFETY;
+      await f.close();
+    }
+  }
+});
+
+test("saved MXC is probed again by each new engine; unavailable is not ready", async () => {
+  process.env.BITACORA_FAKE_MODE = "mxc";
+  let probes = 0;
+  const f = await fixture(60000, { probeProtection: async () => { probes++; return false; } });
+  try {
+    assert.equal(probes, 1);
+    assert.equal(f.engine.executionSafety().allowed, false);
+    assert.equal(f.engine.executionSafety().needsPermission, true);
+  } finally { delete process.env.BITACORA_FAKE_MODE; await f.close(); }
+});
+
+test("automatic MXC setup caches the successful probe across reload", async () => {
+  process.env.BITACORA_FAKE_SAFETY = "notConfigured";
+  let probes = 0;
+  const f = await fixture(60000, { probeProtection: async () => { probes++; return true; } });
+  try {
+    await until(() => f.engine.executionSafety().allowed);
+    assert.equal(probes, 1);
+    assert.equal((await f.records()).filter(m => m.method === "windowsSandbox/setupStart").length, 0);
+  } finally { delete process.env.BITACORA_FAKE_SAFETY; await f.close(); }
+});
+
+test("interrupted preparation remains retryable", async () => {
+  process.env.BITACORA_FAKE_SAFETY = "notConfigured";
+  process.env.BITACORA_FAKE_SETUP_INTERRUPTED = "1";
+  const f = await fixture();
+  try {
+    await f.engine.prepareProtection();
+    await until(() => f.engine.executionSafety().issue === "interrupted");
+    assert.equal(f.engine.executionSafety().allowed, false);
+    delete process.env.BITACORA_FAKE_SETUP_INTERRUPTED;
+    await f.engine.prepareProtection();
+    await until(() => f.engine.executionSafety().allowed);
+  } finally {
+    delete process.env.BITACORA_FAKE_SETUP_INTERRUPTED;
+    delete process.env.BITACORA_FAKE_SAFETY;
+    await f.close();
+  }
+});
+
+test("setupStart timeout unlocks retry as a read, not another UAC", async () => {
+  process.env.BITACORA_FAKE_SAFETY = "notConfigured";
+  process.env.BITACORA_FAKE_SETUP_TIMEOUT = "1";
+  const f = await fixture(60000, { requestTimeoutMs: 200 });
+  try {
+    await f.engine.prepareProtection();
+    assert.equal(f.engine.executionSafety().status, "failed");
+    assert.equal(f.engine.executionSafety().issue, "uncertain");
+    await f.engine.prepareProtection();
+    assert.equal((await f.records()).filter(m => m.method === "windowsSandbox/setupStart").length, 1);
+    assert.equal((await f.records()).filter(m => m.method === "windowsSandbox/readiness").length, 2);
+  } finally {
+    delete process.env.BITACORA_FAKE_SETUP_TIMEOUT;
+    delete process.env.BITACORA_FAKE_SAFETY;
+    await f.close();
+  }
+});
+
+test("reload cancels pending RPC and start failure goes through restart/retry", async () => {
+  process.env.BITACORA_FAKE_SAFETY = "notConfigured";
+  const f = await fixture();
+  const originalStart = f.engine.start.bind(f.engine);
+  try {
+    await writeFile(join(f.dir, "home/fake-protection.hang"), "1");
+    const pending = assert.rejects(f.engine.account(), /reloading protection/);
+    f.engine.start = async () => { throw new Error("version mismatch during reload"); };
+    await f.engine.prepareProtection();
+    await pending;
+    await until(() => f.events.some(e => e.type === "availability" && e.exhausted === true));
+    assert.equal(f.engine.executionSafety().issue, "restart");
+    await rm(join(f.dir, "home/fake-protection.hang"));
+    f.engine.start = originalStart;
+    await f.engine.retry();
+    assert.equal(f.engine.executionSafety().allowed, true);
+  } finally {
+    delete process.env.BITACORA_FAKE_ACCOUNT_HANG;
+    delete process.env.BITACORA_FAKE_SAFETY;
+    await f.close();
+  }
+});
+
+async function fixture(stableAfterMs = 60_000, options: Partial<ConstructorParameters<typeof CodexEngine>[0]> = {}) {
   await mkdir(".local", { recursive: true });
   const dir = await mkdtemp(resolve(".local/adapter-"));
   const log = join(dir, "protocol.jsonl");
@@ -18,6 +133,8 @@ async function fixture(stableAfterMs = 60_000) {
     args: [resolve("server/test/stdio-server.mjs")],
     restartDelayMs: 30,
     stableAfterMs,
+    probeProtection: async () => process.env.BITACORA_FAKE_MXC === "1",
+    ...options,
   });
   const events: EngineEvent[] = [];
   engine.subscribe((e) => events.push(e));
@@ -201,3 +318,40 @@ test("started notification before start reply delivers only one pause", async ()
     assert.ok(!f.events.some(e => e.type === "problem"));
   } finally { await f.close(); }
 });
+
+for (const scenario of ["success", "failure", "restart", "mxc"] as const) {
+  test(`protection setup: ${scenario}, sends stay blocked until readiness`, async () => {
+    process.env.BITACORA_FAKE_SAFETY = "notConfigured";
+    if (scenario === "failure") process.env.BITACORA_FAKE_SETUP_FAIL = "1";
+    if (scenario === "restart") process.env.BITACORA_FAKE_SETUP_CRASH = "1";
+    if (scenario === "mxc") process.env.BITACORA_FAKE_MXC = "1";
+    const f = await fixture();
+    try {
+      if (scenario !== "mxc") {
+      assert.equal(f.engine.executionSafety().allowed, false);
+      await assert.rejects(f.engine.send("thread-1", "race"));
+      const preparing = f.engine.prepareProtection();
+      await assert.rejects(f.engine.send("thread-1", "race"));
+      await preparing;
+      }
+      if (scenario === "failure") {
+        await until(() => f.engine.executionSafety().status === "failed");
+        assert.match(f.engine.executionSafety().detail, /UAC cancelled/);
+        await assert.rejects(f.engine.send("thread-1", "race"));
+        await f.engine.prepareProtection();
+        assert.equal(f.engine.executionSafety().status, "preparing");
+        await until(() => f.engine.executionSafety().status === "failed");
+      } else {
+        await until(() => f.engine.executionSafety().allowed);
+        await f.engine.send("thread-1", "race");
+      }
+      const records = await f.records();
+      assert.equal(records.filter(m => m.method === "windowsSandbox/setupStart").length, scenario === "mxc" ? 0 : scenario === "failure" ? 2 : 1);
+      assert.equal(records.filter(m => m.method === "turn/start").length, scenario === "failure" ? 0 : 1);
+      assert.ok(f.events.some(e => e.type === "protection" && e.safety.status === "preparing"));
+    } finally {
+      for (const key of ["BITACORA_FAKE_SAFETY", "BITACORA_FAKE_SETUP_FAIL", "BITACORA_FAKE_SETUP_CRASH", "BITACORA_FAKE_MXC"]) delete process.env[key];
+      await f.close();
+    }
+  });
+}

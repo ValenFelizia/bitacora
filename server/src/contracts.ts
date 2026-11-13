@@ -1,4 +1,4 @@
-import type { Account } from "./engine";
+import type { Account, ExecutionSafety } from "./engine";
 export type Message = { id: string; role: "user" | "assistant"; text: string };
 export type Work = {
   id: string;
@@ -14,12 +14,13 @@ export type Work = {
 export type Snapshot = {
   account: Account;
   works: Work[];
-  engine: { available: boolean; exhausted?: boolean; safety: { allowed: boolean; detail: string } };
+  engine: { available: boolean; exhausted?: boolean; safety: ExecutionSafety };
   notice?: string;
 };
 export type ClientCommand =
   | { type: "connect" }
   | { type: "retry" }
+  | { type: "prepareProtection" }
   | { type: "send"; workId?: string; text: string }
   | { type: "interrupt"; workId: string };
 export type ServerMessage =
