@@ -14,11 +14,11 @@
     "generate:protocol": "node scripts/generate-protocol.mjs"
   },
   "devDependencies": {
-    "typescript": "^5.9.3",
-    "tsx": "^4.20.6",
-    "concurrently": "^9.2.1",
     "@types/node": "^22.19.0",
     "@types/ws": "^8.18.1",
-    "@playwright/test": "^1.56.1"
+    "concurrently": "^9.2.1",
+    "playwright-core": "^1.65.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
   }
 }
