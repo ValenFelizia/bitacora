@@ -1,9 +1,24 @@
 {
-  "name": "bitacora", "private": true, "type": "module", "workspaces": ["server", "web"],
+  "name": "bitacora",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "server",
+    "web"
+  ],
   "scripts": {
     "dev": "concurrently -k -n server,web \"npm run dev -w server\" \"npm run dev -w web\"",
-    "typecheck": "tsc --noEmit", "test": "tsx --test server/test/*.test.ts",
-    "build": "npm run build -w web", "generate:protocol": "node scripts/generate-protocol.mjs"
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test server/test/*.test.ts",
+    "build": "npm run build -w web",
+    "generate:protocol": "node scripts/generate-protocol.mjs"
   },
-  "devDependencies": { "typescript": "^5.9.3", "tsx": "^4.20.6", "concurrently": "^9.2.1", "@types/node": "^22.19.0", "@types/ws": "^8.18.1", "@playwright/test": "^1.56.1" }
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "tsx": "^4.20.6",
+    "concurrently": "^9.2.1",
+    "@types/node": "^22.19.0",
+    "@types/ws": "^8.18.1",
+    "@playwright/test": "^1.56.1"
+  }
 }
