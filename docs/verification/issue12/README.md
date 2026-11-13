@@ -1,5 +1,94 @@
 # Verificación del issue #12
 
+## Revisión del PR #13 y prueba posterior (2026-11-13)
+
+Esta sección actualiza las conclusiones de la primera verificación que se
+conserva abajo como antecedente.
+
+- `npm run typecheck`: PASS.
+- `npm test`, tres corridas finales: **33/33** en cada una, PASS.
+- `npm run build`: PASS.
+- `npx tsx scripts/verify-protection.ts`: PASS con proceso falso y Edge.
+  Se abrieron e inspeccionaron las capturas: `needed.png`, `preparing.png`,
+  `failed.png`, `ready.png`, `ready-mobile.png`, `markdown.png`,
+  `automatic-preparing.png` y `automatic-ready.png`. Preparación automática sin
+  botón ni explicación; permiso anunciado antes del botón; falla recuperable;
+  negrita, itálica, lista, código en línea y bloque, enlace en pestaña nueva y
+  HTML crudo descartado. Sin errores de página. El navegador compartido abrió
+  la app, pero dos capturas fallaron con `Preview automation snapshot timed out
+  after 15000ms`; las verificaciones y capturas se hicieron con Edge local.
+
+### Política por app-server, sin inferencia
+
+Comando reproducible: `npx tsx scripts/verify-app-server.ts` con una carpeta
+`%LOCALAPPDATA%\Bitacora-dev\pr13\protocol` nueva. No hace login ni crea turnos.
+El auxiliar accede al RPC del motor solo para la prueba; no agrega un endpoint
+de comandos a la app. Usa el ejecutable nativo de la dependencia 0.168.0.
+
+[`app-server-pr13.json`](app-server-pr13.json) guarda los estados emitidos por
+la app, la configuración escrita, la selección efectiva leída **después del
+relanzamiento**, cada `command/exec`, sus parámetros, salidas y códigos:
+
+- La app seleccionó MXC automáticamente y escribió `[windows] sandbox = "mxc"`.
+  Tras relanzar, `config/read` devuelve `windows.sandbox=mxc` y readiness listo.
+- La política de `command/exec` coincide con `turn/start`: `workspaceWrite`,
+  raíz de escritura igual a la carpeta de trabajo, red deshabilitada y ambas
+  exclusiones de temporales activas. No hay aprobación ni modo de acceso total.
+- Crear y modificar adentro: código **0**, contenido `CREATED\r\nMODIFIED\r\n`.
+- Modificar afuera: código **1**, `System.UnauthorizedAccessException`.
+- Borrar afuera: código **1**, `RemoveFileSystemItemUnAuthorizedAccess`.
+- El testigo se leyó desde el verificador después de cada intento y siguió
+  conteniendo exactamente `UNCHANGED_PR13`.
+
+Esto demuestra ejecución de comandos por app-server con la política de los
+pedidos y la configuración recargada. **No verifica `apply_patch`**, una decisión
+del modelo ni todas las herramientas de un turno. No se simulan esas pruebas.
+No se ejecutó preparación `elevated`, ni permisos de administrador.
+
+### Prueba con una persona (relato suministrado por el dueño)
+
+En esta máquina tocó “Preparar la protección”; quedó `mxc` y Windows no pidió
+nada. Conectó ChatGPT y un pedido creó `hola.txt` dentro de la carpeta mediante
+un comando real. Funcionó. En un segundo pedido, escribir en el Escritorio,
+el modelo se negó sin intentar ejecutar el comando: **ese pedido no prueba
+el bloqueo del sistema**. Es evidencia informada por el dueño, no repetida en
+esta sesión. Esta sesión hizo **cero pedidos** y no usó login.
+
+### Arranque y cierre
+
+`npm install` agregó `@openai/codex` **exacta 0.168.0** y `react-markdown`.
+`npm run dev` arrancó sin `BITACORA_CODEX_BIN`, con datos y trabajo bajo
+`%LOCALAPPDATA%\Bitacora-dev\pr13\dev`, mientras `codex --version` fuera de npm
+seguía devolviendo `codex-cli 0.169.0`.
+[`dev-process.json`](dev-process.json) registra el proceso nativo seleccionado
+desde `node_modules/@openai/codex-win32-x64`; [`dev-snapshot.json`](dev-snapshot.json)
+registra protección lista y cuenta desconectada. Se cerró con Ctrl+C.
+
+Los verificadores cerraron servidor, Vite, proceso falso y Edge; se comprobó
+que 4317, 5173, 4318 y 5174 no tenían escuchas ni quedaba el app-server del paquete.
+La revisión automática de permisos rechazó el borrado de las rutas verificadas
+`%LOCALAPPDATA%\Bitacora-dev\pr13` y `%LOCALAPPDATA%\Bitacora-dev\issue12`:
+**quedan pendientes de borrar**. No se eludió el rechazo. No se tocó `prueba`,
+el home personal de Codex ni `.csdd/`.
+
+### Cobertura de la revisión
+
+Los puntos 1–3 y 5–8 se confirmaron y corrigieron: fallas de recarga pasan por
+`fail()`, reintentar una consulta o resultado incierto solo consulta, MXC solo
+selecciona alternativa administrativa ante el diagnóstico exacto de indisponibilidad
+de Codex 0.168.0, prueba exitosa cacheada por instancia, timeout recuperable,
+RPC pendientes cancelados y textos visibles fuera del adaptador.
+El punto 4 tenía ya un test independiente del bloqueo del lado de la app;
+se conservó y se agregaron los otros casos pedidos. El punto 9 usa un resolvedor
+común para el binario nativo del paquete, tanto en la app como en el generador.
+La versión se controla contra `server/src/codex/VERSION`.
+
+El diagnóstico reconocido de MXC se contrastó en el código oficial
+[`windows.rs`, tag 0.168.0](https://github.com/openai/codex/blob/rust-v0.168.0/codex-rs/mxc-sandbox/src/windows.rs).
+Timeouts, errores desconocidos y salida inesperada fallan con reintento, sin UAC.
+
+---
+
 Fecha: 2026-11-13. Windows 11 Pro, build 26300.9974. Codex 0.168.0 en una
 copia temporal separada; no se usó el home personal de Codex.
 
