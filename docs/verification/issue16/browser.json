@@ -1,0 +1,13 @@
+{
+  "browser": "157.0.4341.46",
+  "entry": true,
+  "reload": true,
+  "secondTab": true,
+  "restartInvalidated": true,
+  "reentered": true,
+  "httpOnly": true,
+  "sessionCookie": true,
+  "storageEmpty": true,
+  "errors": [],
+  "modelTurns": 0
+}

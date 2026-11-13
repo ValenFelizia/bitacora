@@ -1,0 +1,108 @@
+{
+  "binary": "C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\bitacora\\node_modules\\@openai\\codex-win32-x64\\vendor\\x86_64-pc-windows-msvc\\bin\\codex.exe",
+  "version": "codex-cli 0.168.0",
+  "windows": {
+    "sandbox": "mxc",
+    "allow_mxc": null
+  },
+  "policy": {
+    "type": "workspaceWrite",
+    "writableRoots": [
+      "C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\bitacora\\.local\\issue16-loopback\\workspace"
+    ],
+    "networkAccess": false,
+    "excludeTmpdirEnvVar": true,
+    "excludeSlashTmp": true
+  },
+  "records": [
+    {
+      "host": "127.0.0.1",
+      "params": {
+        "command": [
+          "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "$ErrorActionPreference='Stop'; $c=New-Object System.Net.Sockets.TcpClient; try { $t=$c.ConnectAsync('127.0.0.1',63890); if(-not $t.Wait(4000)){throw 'TIMEOUT'}; $t.GetAwaiter().GetResult(); $r=New-Object System.IO.StreamReader($c.GetStream()); $r.ReadToEnd() } catch { $_.Exception.ToString(); exit 1 } finally { $c.Dispose() }"
+        ],
+        "cwd": "C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\bitacora\\.local\\issue16-loopback\\workspace",
+        "sandboxPolicy": {
+          "type": "workspaceWrite",
+          "writableRoots": [
+            "C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\bitacora\\.local\\issue16-loopback\\workspace"
+          ],
+          "networkAccess": false,
+          "excludeTmpdirEnvVar": true,
+          "excludeSlashTmp": true
+        },
+        "timeoutMs": 10000
+      },
+      "result": {
+        "exitCode": 1,
+        "stdout": "System.Management.Automation.MethodInvocationException: Exception calling \"Wait\" with \"1\" argument(s): \"One or more errors occurred.\" ---> System.AggregateException: One or more errors occurred. ---> System.Net.Sockets.SocketException: An attempt was made to access a socket in a way forbidden by its access permissions 127.0.0.1:63890\r\n   at System.Net.Sockets.Socket.InternalEndConnect(IAsyncResult asyncResult)\r\n   at System.Net.Sockets.Socket.EndConnect(IAsyncResult asyncResult)\r\n   at System.Net.Sockets.TcpClient.EndConnect(IAsyncResult asyncResult)\r\n   at System.Threading.Tasks.TaskFactory`1.FromAsyncCoreLogic(IAsyncResult iar, Func`2 endFunction, Action`1 endAction, Task`1 promise, Boolean requiresSynchronization)\r\n   --- End of inner exception stack trace ---\r\n   at System.Threading.Tasks.Task.ThrowIfExceptional(Boolean includeTaskCanceledExceptions)\r\n   at System.Threading.Tasks.Task.Wait(Int32 millisecondsTimeout, CancellationToken cancellationToken)\r\n   at CallSite.Target(Closure , CallSite , Object , Int32 )\r\n   --- End of inner exception stack trace ---\r\n   at System.Management.Automation.ExceptionHandlingOps.CheckActionPreference(FunctionContext funcContext, Exception exception)\r\n   at System.Management.Automation.Interpreter.ActionCallInstruction`2.Run(InterpretedFrame frame)\r\n   at System.Management.Automation.Interpreter.EnterTryCatchFinallyInstruction.Run(InterpretedFrame frame)\r\n   at System.Management.Automation.Interpreter.EnterTryCatchFinallyInstruction.Run(InterpretedFrame frame)\r\n",
+        "stderr": ""
+      }
+    },
+    {
+      "host": "localhost",
+      "params": {
+        "command": [
+          "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "$ErrorActionPreference='Stop'; $c=New-Object System.Net.Sockets.TcpClient; try { $t=$c.ConnectAsync('localhost',63890); if(-not $t.Wait(4000)){throw 'TIMEOUT'}; $t.GetAwaiter().GetResult(); $r=New-Object System.IO.StreamReader($c.GetStream()); $r.ReadToEnd() } catch { $_.Exception.ToString(); exit 1 } finally { $c.Dispose() }"
+        ],
+        "cwd": "C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\bitacora\\.local\\issue16-loopback\\workspace",
+        "sandboxPolicy": {
+          "type": "workspaceWrite",
+          "writableRoots": [
+            "C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\bitacora\\.local\\issue16-loopback\\workspace"
+          ],
+          "networkAccess": false,
+          "excludeTmpdirEnvVar": true,
+          "excludeSlashTmp": true
+        },
+        "timeoutMs": 10000
+      },
+      "result": {
+        "exitCode": 1,
+        "stdout": "System.Management.Automation.MethodInvocationException: Exception calling \"Wait\" with \"1\" argument(s): \"One or more errors occurred.\" ---> System.AggregateException: One or more errors occurred. ---> System.Net.Sockets.SocketException: An attempt was made to access a socket in a way forbidden by its access permissions 127.0.0.1:63890\r\n   at System.Net.Sockets.Socket.InternalEndConnect(IAsyncResult asyncResult)\r\n   at System.Net.Sockets.Socket.EndConnect(IAsyncResult asyncResult)\r\n   at System.Net.Sockets.TcpClient.EndConnect(IAsyncResult asyncResult)\r\n   at System.Threading.Tasks.TaskFactory`1.FromAsyncCoreLogic(IAsyncResult iar, Func`2 endFunction, Action`1 endAction, Task`1 promise, Boolean requiresSynchronization)\r\n   --- End of inner exception stack trace ---\r\n   at System.Threading.Tasks.Task.ThrowIfExceptional(Boolean includeTaskCanceledExceptions)\r\n   at System.Threading.Tasks.Task.Wait(Int32 millisecondsTimeout, CancellationToken cancellationToken)\r\n   at CallSite.Target(Closure , CallSite , Object , Int32 )\r\n   --- End of inner exception stack trace ---\r\n   at System.Management.Automation.ExceptionHandlingOps.CheckActionPreference(FunctionContext funcContext, Exception exception)\r\n   at System.Management.Automation.Interpreter.ActionCallInstruction`2.Run(InterpretedFrame frame)\r\n   at System.Management.Automation.Interpreter.EnterTryCatchFinallyInstruction.Run(InterpretedFrame frame)\r\n   at System.Management.Automation.Interpreter.EnterTryCatchFinallyInstruction.Run(InterpretedFrame frame)\r\n",
+        "stderr": ""
+      }
+    },
+    {
+      "host": "::1",
+      "params": {
+        "command": [
+          "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "$ErrorActionPreference='Stop'; $c=New-Object System.Net.Sockets.TcpClient -ArgumentList ([System.Net.Sockets.AddressFamily]::InterNetworkV6); try { $t=$c.ConnectAsync('::1',63890); if(-not $t.Wait(4000)){throw 'TIMEOUT'}; $t.GetAwaiter().GetResult(); $r=New-Object System.IO.StreamReader($c.GetStream()); $r.ReadToEnd() } catch { $_.Exception.ToString(); exit 1 } finally { $c.Dispose() }"
+        ],
+        "cwd": "C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\bitacora\\.local\\issue16-loopback\\workspace",
+        "sandboxPolicy": {
+          "type": "workspaceWrite",
+          "writableRoots": [
+            "C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\bitacora\\.local\\issue16-loopback\\workspace"
+          ],
+          "networkAccess": false,
+          "excludeTmpdirEnvVar": true,
+          "excludeSlashTmp": true
+        },
+        "timeoutMs": 10000
+      },
+      "result": {
+        "exitCode": 1,
+        "stdout": "System.Management.Automation.MethodInvocationException: Exception calling \"Wait\" with \"1\" argument(s): \"One or more errors occurred.\" ---> System.AggregateException: One or more errors occurred. ---> System.Net.Sockets.SocketException: An attempt was made to access a socket in a way forbidden by its access permissions [::1]:63890\r\n   at System.Net.Sockets.Socket.InternalEndConnect(IAsyncResult asyncResult)\r\n   at System.Net.Sockets.Socket.EndConnect(IAsyncResult asyncResult)\r\n   at System.Net.Sockets.TcpClient.EndConnect(IAsyncResult asyncResult)\r\n   at System.Threading.Tasks.TaskFactory`1.FromAsyncCoreLogic(IAsyncResult iar, Func`2 endFunction, Action`1 endAction, Task`1 promise, Boolean requiresSynchronization)\r\n   --- End of inner exception stack trace ---\r\n   at System.Threading.Tasks.Task.ThrowIfExceptional(Boolean includeTaskCanceledExceptions)\r\n   at System.Threading.Tasks.Task.Wait(Int32 millisecondsTimeout, CancellationToken cancellationToken)\r\n   at CallSite.Target(Closure , CallSite , Object , Int32 )\r\n   --- End of inner exception stack trace ---\r\n   at System.Management.Automation.ExceptionHandlingOps.CheckActionPreference(FunctionContext funcContext, Exception exception)\r\n   at System.Management.Automation.Interpreter.ActionCallInstruction`2.Run(InterpretedFrame frame)\r\n   at System.Management.Automation.Interpreter.EnterTryCatchFinallyInstruction.Run(InterpretedFrame frame)\r\n   at System.Management.Automation.Interpreter.EnterTryCatchFinallyInstruction.Run(InterpretedFrame frame)\r\n",
+        "stderr": ""
+      }
+    }
+  ],
+  "accepted": [
+    0,
+    0
+  ],
+  "modelTurns": 0
+}

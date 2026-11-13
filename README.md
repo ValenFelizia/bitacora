@@ -18,7 +18,12 @@ npm install
 npm run dev
 ```
 
-Abrí http://127.0.0.1:5173 o http://localhost:5173, tocá **Conectar ChatGPT** y completá el acceso
+Abrí la dirección de entrada que imprime `npm run dev` (empieza con
+`http://127.0.0.1:5173/entry#`). Sirve una sola vez y vence en dos minutos.
+Después podés recargar y abrir otra pestaña en `http://127.0.0.1:5173`.
+Usá siempre ese mismo nombre: `localhost` tiene otras cookies. Si vence antes
+de entrar, reiniciá el servidor para obtener otra dirección.
+Tocá **Conectar ChatGPT** y completá el acceso
 oficial. Si el navegador bloquea la ventana, usá **Continuar en el navegador**.
 Bitácora prepara MXC automáticamente cuando está disponible, sin pedir permisos.
 Si hace falta un permiso de administrador, muestra **Antes de empezar** y explica
@@ -53,7 +58,7 @@ Las pruebas automáticas usan un motor falso y un proceso que simula el protocol
 por stdio, sin consumir ChatGPT. Con Vite levantado (`npm run dev -w web`),
 `npx tsx scripts/verify-browser.ts` comprueba la pantalla con Edge, la caída del
 motor, la reconexión, los dos nombres locales y el acceso en una ventana nueva.
-Usa datos de prueba en `%LOCALAPPDATA%\Bitacora-dev\pr11-browser` y capturas en `.local/`.
+Usa datos desechables en `.local/issue16-verify-browser` y capturas en `.local/`.
 Los tipos
 de Codex están generados y versionados en `server/src/codex/generated`, con
 la versión en `server/src/codex/VERSION`. El generador y el servidor rechazan
@@ -110,7 +115,7 @@ por revisión y 100 MB por resultado. Los límites alcanzados quedan en el detal
 El estado previo se guarda aparte de los trabajos, en `pending-files/` dentro de
 la carpeta de datos, y se elimina al terminar la revisión. No identifica quién hizo un cambio concurrente en esa carpeta.
 Los adjuntos viajan por la conexión local autenticada; las lecturas requieren
-un token impredecible por arranque que sólo entrega esa conexión. Al abrir un PDF
+la misma cookie de sesión que la pantalla, sin otro token de archivos. Al abrir un PDF
 se usa una dirección temporal sin ese token. Sólo se
 sirven archivos registrados, comprobando su ruta real dentro de la agencia.
 
@@ -119,3 +124,51 @@ prueba adjuntos, portapapeles, descarga, galería y archivos borrados; guarda
 capturas en `docs/verification/issue5/` y limpia sus datos y procesos al terminar.
 Requiere libres los puertos 5173 y 4317. La evidencia y los límites están en
 [la verificación del issue #5](docs/verification/issue5/verification.md).
+
+## Acceso local y límites de protección (issue #16)
+
+El servidor genera un secreto aleatorio de 256 bits por arranque, sólo en memoria.
+No lo imprime ni lo agrega a trabajos, archivos de datos, respuestas de la
+pantalla o direcciones. La entrada impresa contiene otro código aleatorio:
+sirve una sola vez durante dos minutos. Va en el fragmento `#`, que no viaja
+en el pedido HTTP; la página lo borra con `history.replaceState` antes de
+canjearlo por POST y vuelve a la pantalla con `location.replace`.
+Las respuestas de entrada, sesión y archivos indican `no-store` y `no-referrer`.
+No se usa almacenamiento persistente desde JavaScript.
+
+El canje entrega una cookie `HttpOnly; SameSite=Strict; Path=/`, sin Domain,
+Expires ni Max-Age. No lleva Secure porque este desarrollo usa HTTP local.
+WebSocket, estado de sesión y archivos exigen esa misma cookie, además de los
+controles actuales de Host y Origin. Los secretos y códigos se comparan en
+tiempo constante con entradas de tamaño fijo. JavaScript no recibe el secreto.
+Dos pestañas del mismo navegador y nombre local comparten la sesión. Al
+reiniciar cambia el secreto: las pestañas dejan de reintentar cuando el servidor
+vuelve y muestran «Volvé a entrar a Bitácora». Hay que abrir la nueva entrada.
+
+**Garantía actual:** un proceso local que sólo falsifica Host/Origin no puede
+operar la app ni conseguir archivos. Tampoco puede recuperar el secreto de
+`works.json` o del estado de Bitácora. Esto no es una frontera completa frente
+a un agente que lee cualquier archivo del usuario: el navegador puede guardar
+incluso cookies de sesión en su base, restauración de sesiones, copias o volcados.
+HttpOnly impide leer desde JavaScript, no desde disco. No se confía en que esa
+base esté cifrada o cerrada. El fragmento se reemplaza en el historial normal,
+pero un navegador, extensión o sincronización puede registrar la URL antes.
+Si se filtra el código antes del canje, gana el primero que lo use, incluso
+un proceso local que falsifique Origin; los dos minutos sólo acotan la ventana.
+La terminal y su historial de salida también deben considerarse sensibles
+hasta el canje o vencimiento. Otros servicios del mismo host comparten cookies
+por nombre, no por puerto. No se promete aislamiento frente a esos servicios,
+a extensiones, a inyección de código o a lectura de memoria del proceso.
+
+**App empaquetada (#9):** la cáscara Tauri podría entregar una credencial en
+memoria por un canal privado a la pantalla, sin cookie persistible ni URL de
+entrada. Eso permitiría separar la credencial de los archivos que lee el agente;
+requiere implementar y verificar ese canal y el aislamiento de procesos. No
+está implementado acá y no protege por sí solo contra lectura de memoria.
+
+La prueba real de MXC, sin login ni inferencia, y las capturas de entrada,
+recarga, segunda pestaña y reinicio están en
+[la verificación del issue #16](docs/verification/issue16/verification.md).
+Para repetirla: `npx tsx scripts/verify-loopback.ts` y
+`npx tsx scripts/verify-session-browser.ts`. Usan datos desechables dentro de
+`.local/`, el Codex fijado y Edge instalado; no usan la cuenta personal.

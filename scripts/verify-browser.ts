@@ -2,10 +2,10 @@ import { chromium } from 'playwright-core';
 import { serve } from '../server/src/server';
 import { CodexEngine } from '../server/src/codex/engine';
 import { resolve, join } from 'node:path';
-import { mkdir, writeFile } from 'node:fs/promises';
-const base = join(process.env.LOCALAPPDATA!, 'Bitacora-dev', 'pr11-browser');
+import { mkdir, writeFile, rm } from 'node:fs/promises';
+const base = resolve('.local/issue16-verify-browser');
 await mkdir(base, { recursive: true });
-const make = () => serve(new CodexEngine({ home: join(base,'codex'), workspace: join(base,'workspace'), binary: process.execPath, args: [resolve('server/test/stdio-server.mjs')], restartDelayMs: 2000 }), join(base,'data'));
+const make = () => serve(new CodexEngine({ home: join(base,'codex'), workspace: join(base,'workspace'), binary: process.execPath, args: [resolve('server/test/stdio-server.mjs')], probeProtection: async () => false, restartDelayMs: 2000 }), join(base,'data'));
 const b = await chromium.launch({ channel: 'msedge' });
 let server: Awaited<ReturnType<typeof serve>> | undefined;
 try {
@@ -15,6 +15,8 @@ try {
   await p.goto('http://127.0.0.1:5173');
   await p.screenshot({ path: '.local/after-offline.png' });
   server = await make();
+  await p.goto(server.entryUrl);
+  await p.waitForURL('http://127.0.0.1:5173/');
   await p.getByText('ChatGPT conectado', { exact: true }).waitFor();
   await p.screenshot({ path: '.local/after.png' });
   await p.getByLabel('Tu pedido', { exact: true }).fill('crash');
@@ -27,8 +29,12 @@ try {
   await p.getByText('Reconectando…', { exact: true }).first().waitFor();
   await p.screenshot({ path: '.local/reconnecting.png' });
   server = await make();
+  await p.goto(server.entryUrl);
+  await p.waitForURL('http://127.0.0.1:5173/');
   await p.getByText('ChatGPT conectado', { exact: true }).waitFor();
   await p.goto('http://localhost:5173');
+  await p.getByRole('heading', {name:'Volvé a entrar a Bitácora'}).waitFor();
+  await p.goto('http://127.0.0.1:5173');
   await p.getByText('ChatGPT conectado', { exact: true }).waitFor();
   await p.setViewportSize({ width: 460, height: 800 });
   await p.screenshot({ path: '.local/mobile.png' });
@@ -37,6 +43,8 @@ try {
   process.env.BITACORA_FAKE_SAFETY = 'notConfigured';
   await writeFile(join(base, 'data', 'works.json'), 'bad json', 'utf8');
   server = await make();
+  await p.goto(server.entryUrl);
+  await p.waitForURL('http://127.0.0.1:5173/');
   await p.setViewportSize({ width: 1280, height: 800 });
   await p.reload();
   await p.getByRole('heading', { name: 'Antes de empezar' }).waitFor();
@@ -52,4 +60,4 @@ try {
   await popup.close();
   await p.screenshot({ path: '.local/protection-corrupt.png' });
   console.log(JSON.stringify({ engineCrash: 'PASS', serverReconnect: 'PASS', localhost: 'PASS', pageErrors: errors, base }));
-} finally { await server?.close(); await b.close(); }
+} finally { delete process.env.BITACORA_FAKE_DISCONNECTED; delete process.env.BITACORA_FAKE_SAFETY; await server?.close(); await b.close(); await rm(base, {recursive:true,force:true}); }

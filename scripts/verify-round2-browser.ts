@@ -5,7 +5,7 @@ import { CodexEngine } from '../server/src/codex/engine';
 import { resolve, join } from 'node:path';
 import { mkdir, rm } from 'node:fs/promises';
 
-const base = join(process.env.LOCALAPPDATA!, 'Bitacora-dev', 'pr11-browser');
+const base = resolve('.local/issue16-verify-round2-browser');
 await mkdir(base, { recursive: true });
 await mkdir('docs/verification/pr11', { recursive: true });
 process.env.BITACORA_FAKE_IDLE_CRASH = '1';
@@ -19,7 +19,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
   const errors: string[] = [];
   page.on('pageerror', e => errors.push(String(e)));
-  await page.goto('http://127.0.0.1:5173');
+  await page.goto(server.entryUrl);
   await page.getByText('ChatGPT conectado', { exact: true }).waitFor();
   assert.equal(await page.getByText('Detalle del motor', { exact: true }).count(), 0);
   const newWork = page.getByRole('button', { name: '+ Nuevo trabajo', exact: true });

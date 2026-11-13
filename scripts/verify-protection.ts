@@ -19,7 +19,7 @@ const engine = () => new CodexEngine({ home: join(base, 'home'), workspace: join
   binary: process.execPath, args: [resolve('server/test/stdio-server.mjs')], probeProtection: async () => false });
 let app: Awaited<ReturnType<typeof serve>> | undefined;
 const vite = await createServer({ configFile: resolve('web/vite.config.ts'), root: resolve('web'),
-  server: { port: 5174, proxy: { '/ws': { target: 'ws://127.0.0.1:4318', ws: true, changeOrigin: true } } } });
+  server: { port: 5174, proxy: { '/entry': {target:'http://127.0.0.1:4318',changeOrigin:true}, '/session': {target:'http://127.0.0.1:4318',changeOrigin:true}, '/ws': { target: 'ws://127.0.0.1:4318', ws: true, changeOrigin: true } } } });
 const browser = await chromium.launch({ channel: 'msedge' });
 try {
   app = await serve(engine(), join(base, 'data'), 4318, 'http://127.0.0.1:5174');
@@ -27,7 +27,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   const errors: string[] = [];
   page.on('pageerror', e => errors.push(String(e)));
-  await page.goto('http://127.0.0.1:5174');
+  await page.goto(app.entryUrl);
   const prepare = page.getByRole('button', { name: 'Preparar la protección', exact: true });
   await prepare.waitFor();
   await page.getByText(/Tocá «Sí»/).waitFor();
@@ -41,13 +41,13 @@ try {
   await app.close(); app = undefined;
   delete process.env.BITACORA_FAKE_SETUP_FAIL;
   app = await serve(engine(), join(base, 'data'), 4318, 'http://127.0.0.1:5174');
-  await page.reload();
+  await page.goto(app.entryUrl);
   await page.getByRole('button', { name: 'Preparar la protección', exact: true }).click();
   await page.getByText('Todo listo para empezar.', { exact: true }).waitFor();
   await page.screenshot({ path: join(output, 'ready.png') });
   await app.close(); app = undefined;
   app = await serve(engine(), join(base, 'data'), 4318, 'http://127.0.0.1:5174');
-  await page.reload();
+  await page.goto(app.entryUrl);
   await page.getByText('Todo listo para empezar.', { exact: true }).waitFor();
   assert.equal(await prepare.count(), 0);
   await page.getByLabel('Tu pedido', { exact: true }).fill('markdown');
@@ -74,7 +74,7 @@ try {
   release();
   app = await starting;
   await page.setViewportSize({ width: 1280, height: 900 });
-  await page.reload();
+  await page.goto(app.entryUrl);
   await page.getByText('Preparando todo…', { exact: true }).waitFor();
   assert.equal(await prepare.count(), 0);
   await page.screenshot({ path: join(output, 'automatic-preparing.png') });

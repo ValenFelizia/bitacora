@@ -46,7 +46,8 @@ page.on('request', request => { if (new URL(request.url()).pathname === '/files'
 const output = resolve('docs/verification/issue5');
 await mkdir(output, { recursive: true });
 try {
-  await page.goto('http://127.0.0.1:5173');
+  await page.goto(app.entryUrl);
+  await page.getByText('ChatGPT conectado', {exact:true}).waitFor();
   const image = await page.evaluate(() => {
     const canvas = document.createElement('canvas'); canvas.width = 600; canvas.height = 400;
     const c = canvas.getContext('2d')!; c.fillStyle = '#72949c'; c.fillRect(0, 0, 600, 400);

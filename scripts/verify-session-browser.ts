@@ -1,0 +1,51 @@
+// Synthetic browser acceptance: no Codex account or model turns.
+import { chromium } from 'playwright-core';
+import { createServer } from 'vite';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { resolve, join } from 'node:path';
+import assert from 'node:assert/strict';
+import { serve } from '../server/src/server';
+import { FakeEngine } from '../server/test/fake-engine';
+await mkdir('.local',{recursive:true});
+const base=await mkdtemp(resolve('.local/issue16-browser-'));
+const output=resolve('docs/verification/issue16'); await mkdir(output,{recursive:true});
+const vite=await createServer({configFile:resolve('web/vite.config.ts'),root:resolve('web')});
+let server:Awaited<ReturnType<typeof serve>>|undefined;
+const browser=await chromium.launch({channel:'msedge'});
+const errors:string[]=[];
+try {
+  await vite.listen();
+  server=await serve(new FakeEngine(),join(base,'data'),4317,undefined,join(base,'workspace'));
+  const context=await browser.newContext({viewport:{width:1280,height:800}});
+  const page=await context.newPage(); page.on('pageerror',e=>errors.push(String(e)));
+  await page.goto(server.entryUrl);
+  await page.getByText('ChatGPT conectado',{exact:true}).waitFor();
+  assert.equal(page.url(),'http://127.0.0.1:5173/');
+  assert.equal(await page.evaluate(()=>document.cookie),'');
+  assert.equal(await page.evaluate(()=>localStorage.length+sessionStorage.length),0);
+  const cookies=await context.cookies();
+  assert.equal(cookies.length,1); assert.equal(cookies[0].httpOnly,true);
+  assert.equal(cookies[0].sameSite,'Strict'); assert.equal(cookies[0].expires,-1);
+  await page.screenshot({path:join(output,'entry.png')});
+  await page.reload(); await page.getByText('ChatGPT conectado',{exact:true}).waitFor();
+  await page.screenshot({path:join(output,'reload.png')});
+  const second=await context.newPage(); await second.goto('http://127.0.0.1:5173');
+  await second.getByText('ChatGPT conectado',{exact:true}).waitFor();
+  await second.screenshot({path:join(output,'second-tab.png')});
+  const oldEntry=server.entryUrl;
+  await server.close(); server=undefined;
+  await page.getByText('Reconectando…',{exact:true}).first().waitFor();
+  server=await serve(new FakeEngine(),join(base,'data'),4317,undefined,join(base,'workspace'));
+  await page.getByRole('heading',{name:'Volvé a entrar a Bitácora'}).waitFor();
+  await second.getByRole('heading',{name:'Volvé a entrar a Bitácora'}).waitFor();
+  await page.screenshot({path:join(output,'restart.png')});
+  await second.goto(oldEntry);
+  await second.getByText(/Esta entrada ya no sirve/).waitFor();
+  await second.screenshot({path:join(output,'used-entry.png')});
+  await page.goto(server.entryUrl); await page.getByText('ChatGPT conectado',{exact:true}).waitFor();
+  await page.screenshot({path:join(output,'reentered.png')});
+  assert.deepEqual(errors,[]);
+  await writeFile(join(output,'browser.json'),JSON.stringify({browser:browser.version(),entry:true,reload:true,secondTab:true,restartInvalidated:true,reentered:true,httpOnly:true,sessionCookie:true,storageEmpty:true,errors,modelTurns:0},null,2));
+
+  console.log('PASS: entry, reload, second tab, restart, old entry rejected, reentry; no page errors');
+} finally { await browser.close(); await server?.close(); await vite.close(); await rm(base,{recursive:true,force:true,maxRetries:10,retryDelay:200}); }
