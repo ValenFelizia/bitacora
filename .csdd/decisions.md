@@ -90,3 +90,22 @@ accepted direction from implementation alone.
 - Status: accepted (2026-11-13)
 - Decision: los issues del repo, bajo el milestone "MVP", son la lista de
   trabajo. `.csdd/` guarda solo la verdad durable (requisitos y decisiones).
+
+## DEC-009 — Node como runtime incluido y dibujo con el Edge del sistema
+
+- Status: accepted (2026-11-13)
+- Context: investigación del issue #2, verificada contra la documentación
+  oficial y con una prueba en Windows 11 con Edge 157.
+- Decision: el instalador incluye `node.exe` para correr el servidor y los
+  scripts del agente. El dibujo a PNG y PDF usa `playwright-core` con
+  `channel: 'msedge'`, sin descargar un navegador.
+- Rationale: Node es lo más estable en Windows y ya es lo que usa el servidor.
+  `playwright-core` encuentra Edge solo, produce tamaño exacto y permite medir
+  desbordes; el modo de línea de comandos de Edge no puede inspeccionar la
+  página.
+- Consequences: la página a dibujar se carga desde un archivo, no con
+  `setContent`. Cargada con `setContent` no puede leer fuentes locales y dibuja
+  con una de reemplazo sin avisar. Después de esperar las fuentes hay que
+  comprobar que ninguna quedó en error, y fallar si alguna falló.
+- Rejected: Bun y Deno (sin ventaja que compense), Node SEA (no corre scripts
+  sueltos), `msedge --headless` por línea de comandos.
