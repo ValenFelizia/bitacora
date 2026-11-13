@@ -1,5 +1,8 @@
 # Verificación del kit de turismo
 
+El estado integrado con main y #14 está en [main-integration.md](main-integration.md),
+con capturas de conversación/galería y recorrido completo mediante MCP real.
+
 La tercera ronda y sus resultados actuales están en [final-review.md](final-review.md).
 La ronda anterior se conserva en [review.md](review.md).
 Incluye descarga pública real, lista de links escritos por la usuaria y las

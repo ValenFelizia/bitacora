@@ -14,7 +14,8 @@ No intentes instalar programas, usar la red ni lanzar un navegador desde comando
    conversación. No inventes URLs ni agregues consultas para enviar datos.
    La lista la guarda Bitácora fuera de la agencia; no intentes modificarla.
    Pasá `url` y una carpeta nueva en `destination`. Guarda `fuente.md`
-   y `fotos/`. Las líneas físicas del archivo (incluidos encabezados y blancos)
+   y `fotos/operador/`. Esa subcarpeta contiene material de entrada y no se muestra
+   como resultado producido. Las líneas físicas del archivo (incluidos encabezados y blancos)
    se cuentan desde 1. No reordenes ni reemplaces una fuente ya citada.
    Para sumar datos escritos por la usuaria, llamá sin `url`, con `destination`
    y `notes`: agrega un encabezado con fecha al final, sin cambiar líneas anteriores.
@@ -30,6 +31,7 @@ No intentes instalar programas, usar la red ni lanzar un navegador desde comando
    Cada texto visible, incluidos contactos y numeraciones, debe citar sus números.
    Evitá números generados por CSS: el control los rechaza sin cita.
 3. `controlar`: pasá `html`, `source`, `report` y `rules` (archivo JSON editable).
+   La fuente y el informe deben terminar en `.md`.
    Leé el informe y corregí errores antes de dibujar. El control comprueba que
    la línea citada contiene el número: vos además tenés que comprobar que habla
    del mismo hotel, fecha, unidad y base. No respalda cálculos ni relaciones semánticas.
@@ -38,6 +40,8 @@ No intentes instalar programas, usar la red ni lanzar un navegador desde comando
 4. `dibujar`: pasá `html`, una carpeta nueva en `destination`, `width` y `height`.
    Produce PNG por pieza, PDF y `todas.png`. Si algo desborda, corregilo y repetí
    con otra carpeta. Revisá las fotos chicas y mirá todas las piezas antes de entregar.
+   Guardá las salidas reales fuera de `ejemplo/` y `fotos/operador/`: ambas rutas
+   quedan excluidas de los resultados y la galería.
 
 ## Datos y fotos
 

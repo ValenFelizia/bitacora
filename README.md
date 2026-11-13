@@ -76,11 +76,12 @@ y el siguiente guardado puede recuperarse.
 
 El aislamiento
 estricto de lecturas, las copias y deshacer corresponden al issue #4 y no
-están implementados. Tampoco hay instalador. Los adjuntos y la galería se trabajan en #5.
+están implementados. Tampoco hay instalador. Los adjuntos y la galería del issue #5
+ya están integrados con el kit.
 
 ## Kit de turismo
 
-La capa de arranque de la app copia `kit/turismo/` a la carpeta de la agencia
+Al iniciar la app, antes del motor y del primer escaneo, se copia `kit/turismo/` a la carpeta de la agencia
 una sola vez, sin reemplazar archivos existentes, y deja la marca
 `kit-initialized-<identidad de la agencia>.json` en la carpeta de datos, fuera de
 la agencia. No repone archivos borrados aunque se vacíe toda la agencia.
@@ -96,6 +97,7 @@ El servidor MCP es un envoltorio de los módulos neutrales de `server/src/tools/
 
 - **Traer:** recibe `url` y `destination`. Guarda `fuente.md` y hasta 12 fotos
   (JPEG, PNG o WebP). Límite de página: 2 MB; por foto: 5 MB; operación: 45 s;
+  las fotos se guardan en `<destino>/fotos/operador/` como material de entrada.
   hasta 5 redirecciones. Valida cada destino y fija la dirección DNS validada
   al conectar (incluida la resolución de nombres en Node 24). Decodifica el
   charset de la cabecera o del meta HTML y decide el tipo de cada foto por sus
@@ -104,6 +106,7 @@ El servidor MCP es un envoltorio de los módulos neutrales de `server/src/tools/
   Rechaza redes privadas, locales y loopback. Sin `url`, `notes`
   agrega datos de la usuaria con fecha al final de la fuente existente.
 - **Controlar:** recibe `html`, `source`, `report` y opcionalmente `rules`.
+  Tanto `source` como `report` deben terminar en `.md`; otras extensiones se rechazan.
   Lee el texto del HTML en Edge y exige citas explícitas con el formato
   `data-cites='{"1.250":3}'`: el número visible debe aparecer en la línea
   física 3 de la fuente. Normaliza miles con punto y decimales con coma.
@@ -127,8 +130,10 @@ El servidor MCP es un envoltorio de los módulos neutrales de `server/src/tools/
   archivos dentro de la agencia. Usá una carpeta nueva para cada dibujo:
   las salidas existentes no se sobrescriben.
 
-La app extrae los links http/https escritos en cada pedido de la usuaria y los
+La app extrae los links http/https escritos en el texto de cada pedido de la usuaria y los
 guarda en `allowed-urls.json` en la carpeta de **datos**, fuera de la agencia.
+No extrae URLs de nombres ni contenido de adjuntos, ni de las menciones o textos
+que el adaptador agregue al convertir ese pedido a la entrada del motor.
 El MCP recibe esa ruta y solo la lee. `traer` requiere una coincidencia exacta
 tras normalizar con URL (esquema, host, puerto, ruta y consulta; fragmento ignorado).
 Cambiar la consulta, ruta, puerto o esquema no queda autorizado. Si falta el link,
@@ -164,6 +169,12 @@ registra resolución DNS, fuente y firma en `public-fetch-<host>.json`.
 `npx tsx scripts/verify-kit-mutations.ts` comprueba que quitar la protección de
 escritura o las dependencias de producción hace fallar sus respectivas pruebas;
 restaura los archivos originales al terminar.
+`npx tsx scripts/verify-kit-integration.ts` prueba la app con motor falso y un
+cliente MCP real por stdio: pedido con adjunto, página HTTP local, control,
+dibujo y resultados visibles en conversación y galería. Usa un puerto de servidor
+asignado por el sistema y la interfaz en 5326. Guarda capturas y salidas en
+`docs/verification/issue6/integration/`; no consume inferencia. Conserva sus
+carpetas de prueba en issue6 para que el operador las limpie.
 
 `controlar` protege contra errores honestos, no contra un agente que edite la
 fuente. Ni una cita ni un número coincidente prueban la veracidad de esa fuente.
@@ -200,7 +211,10 @@ histórica (copias y deshacer pertenecen al issue #4).
 
 La detección compara contenido antes y después del pedido; no depende de los
 avisos del motor. Excluye `adjuntos/`, carpetas ocultas, enlaces simbólicos y
-`node_modules`. Los elementos que no se pueden leer se saltean y se anotan en
+`node_modules`, la carpeta raíz `ejemplo/` del kit y las subcarpetas
+`fotos/operador/` en cualquier oferta. Estas últimas contienen fotos de entrada
+de traer, no piezas producidas. Los temporales y guardas `.kit-*` quedan excluidos
+por su nombre oculto. Los elementos que no se pueden leer se saltean y se anotan en
 el detalle. Si falla toda la revisión, se avisa y se puede seguir trabajando.
 El recorrido compara tamaño y fechas antes de calcular hashes y tiene topes:
 20.000 entradas, 5.000 imágenes/PDFs, 64 niveles, 512 MB de lectura de contenido
