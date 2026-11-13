@@ -36,14 +36,25 @@ export async function withPage<T>(files: AgencyFiles, html: string, run: (page: 
     page.setDefaultTimeout(15000);
     await page.goto(pathToFileURL(path).href, { waitUntil: 'load', timeout: 20000 });
     const forbidden = await page.evaluate(() => {
+      if (getComputedStyle(document.head).display !== 'none' || Array.from(document.querySelectorAll('title')).some(el=>getComputedStyle(el).display !== 'none')) return 'head/title visibles';
       if (Array.from(document.querySelectorAll('*')).some(el => el.shadowRoot)) return 'shadow DOM';
       if (document.querySelector('iframe,object,embed,input,textarea,select,button,form,output,meter,progress')) return 'paneles internos o formularios';
-      for (const el of document.querySelectorAll('*')) for (const pseudo of ['::before','::after','::marker']) {
+      for (const el of document.querySelectorAll('*')) {
+        if (getComputedStyle(el).display === 'list-item' && !['none','disc','circle','square'].includes(getComputedStyle(el).listStyleType)) return 'listas con numeración o texto generado (list-style-type)';
+        for (const pseudo of ['::before','::after','::marker']) {
         if (/counters?\s*\(/i.test(getComputedStyle(el,pseudo).content)) return 'content con counter o counters';
+        }
       }
       const pending = Array.from(document.styleSheets).flatMap(sheet => Array.from(sheet.cssRules));
       for (let i = 0; i < pending.length; i++) {
         const rule = pending[i];
+        if (/^@(?:page|counter-style)\b/i.test(rule.cssText)) return 'reglas @page o @counter-style';
+        if ('style' in rule) {
+          const style = (rule as CSSStyleRule).style;
+          if (style.listStyleType && !['none','disc','circle','square'].includes(style.listStyleType)) return 'list-style-type con numeración o texto generado';
+          if (style.display && style.display !== 'none' && document.head.matches((rule as CSSStyleRule).selectorText)) return 'reglas que muestran head/title';
+          if (style.display && style.display !== 'none' && Array.from(document.querySelectorAll('title')).some(el=>el.matches((rule as CSSStyleRule).selectorText))) return 'reglas que muestran head/title';
+        }
         if ('style' in rule && /counters?\s*\(/i.test((rule as CSSStyleRule).style.content)) return 'content con counter o counters';
         if ('cssRules' in rule) pending.push(...Array.from((rule as CSSGroupingRule).cssRules));
       }

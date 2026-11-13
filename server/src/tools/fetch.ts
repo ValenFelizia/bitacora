@@ -34,7 +34,10 @@ export async function download(url: URL, signal: AbortSignal, options: Pick<Fetc
     if (options.all) cb(null, [selected]); else cb(null, selected.address, selected.family);
   } } });
   try {
-    const response = await request(url, { dispatcher, signal, headersTimeout: 15000, bodyTimeout: 15000 });
+    const response = await request(url, { dispatcher, signal, headersTimeout: 15000, bodyTimeout: 15000, headers: {
+      'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Bitacora/0.1',
+      accept: 'text/html,application/xhtml+xml,image/avif,image/webp,image/png,image/jpeg,*/*;q=0.8',
+    } });
     if (response.statusCode >= 300 && response.statusCode < 400) {
       const next = response.headers.location;
       await response.body.dump();
@@ -94,8 +97,6 @@ export async function traer(files: AgencyFiles, input: { url?: string; destinati
     try {
       const photo = await follow(new URL(src, page.url), signal, options);
       const ext = photoExtension(photo.data);
-      const expected = ext === 'jpg' ? 'image/jpeg' : `image/${ext}`;
-      if (photo.type.split(';')[0].trim().toLowerCase() !== expected) throw new Error('El formato de la foto no coincide con su cabecera.');
       const path = `${input.destination}/fotos/operador-${i + 1}.${ext}`;
       await files.write(path, photo.data); saved.push(path);
     } catch (e) { warnings.push(`No se guardó la foto ${i + 1}: ${String(e)}`); }

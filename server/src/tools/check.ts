@@ -1,8 +1,14 @@
 import { AgencyFiles } from './paths';
 import { withPage, visibleTexts } from './page';
 
-export const numbers = (s: string) => s.match(/\d+(?:[.,]\d+)*/g) || [];
+export const numbers = (s: string) => s.match(/\p{Nd}+(?:[.,]\p{Nd}+)*/gu) || [];
 export const normalizeNumber = (s: string) => {
+  s = s.replace(/\p{Nd}/gu, digit => {
+    const cp = digit.codePointAt(0)!;
+    let zero = cp;
+    while (zero > 0 && /\p{Nd}/u.test(String.fromCodePoint(zero - 1))) zero--;
+    return String((cp - zero) % 10);
+  });
   if (/^\d{1,3}([.,]\d{3})+$/.test(s)) return s.replace(/[.,]/g, '');
   return s.replace(/[.,](?=\d{3}(?:[.,]|$))/g, '').replace(',', '.');
 };
@@ -14,7 +20,9 @@ export async function controlar(files: AgencyFiles, input: { html: string; sourc
   const errors: string[] = [], warnings: string[] = [];
   const rows: string[] = [];
   const cited = new Map<string,string>(), used = new Set<string>();
-  if (rules.operatorNames?.some(name => name && whole.toLocaleLowerCase().replace(/\s+/g,'').includes(name.toLocaleLowerCase().replace(/\s+/g,'')))) errors.push('La pieza nombra al operador.');
+  const operatorText = (s: string) => s.normalize('NFKC').toLocaleLowerCase().replace(/[\s\p{Cf}]/gu,'');
+  const visible = operatorText(whole + '\n' + texts.map(t=>t.text).join('\n'));
+  if (rules.operatorNames?.some(name => name && visible.includes(operatorText(name)))) errors.push('La pieza nombra al operador.');
   for (const {text, where, cites, citationId} of texts) {
     for (const number of Object.keys(cites || {})) cited.set(`${citationId}:${number}`, `${where}: sobra la cita de ${number} (línea ${cites[number]}).`);
     if (rules.noEmoji && /\p{Extended_Pictographic}/u.test(text)) errors.push(`${where}: tiene emojis.`);

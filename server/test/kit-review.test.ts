@@ -54,6 +54,9 @@ test('hostname DNS pinning, Windows-1252 headers/meta, byte signatures and trans
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jN1kAAAAASUVORK5CYII=','base64');
   const hosts: string[] = [];
   const server = createServer((req,res) => {
+    assert.match(req.headers['user-agent'] || '',/Mozilla/);
+    assert.match(req.headers.accept || '',/text\/html/);
+    assert.match(req.headers.accept || '',/image\//);
     hosts.push(req.headers.host!);
     switch(req.url) {
       case '/big': res.writeHead(200,{'content-type':'text/html'}).end(Buffer.alloc(2_000_001,65)); return;
@@ -62,8 +65,10 @@ test('hostname DNS pinning, Windows-1252 headers/meta, byte signatures and trans
       case '/big-photo': res.writeHead(200,{'content-type':'image/png'}).end(Buffer.alloc(5_000_001)); return;
       case '/fake-photo': res.writeHead(200,{'content-type':'image/png'}).end('<html>no es foto</html>'); return;
       case '/mismatch': res.writeHead(200,{'content-type':'image/jpeg'}).end(png); return;
+      case '/binary': res.writeHead(200,{'content-type':'application/octet-stream'}).end(png); return;
+      case '/jpg-alias': res.writeHead(200,{'content-type':'image/jpg'}).end(Buffer.from([255,216,255,224])); return;
       case '/photos': res.writeHead(200,{'content-type':'text/html'}).end(Array.from({length:14},(_,i)=>`<img src="/photo?${i}">`).join('')); return;
-      case '/bad-photos': res.writeHead(200,{'content-type':'text/html'}).end('<img src="/big-photo"><img src="/fake-photo"><img src="/mismatch">'); return;
+      case '/bad-photos': res.writeHead(200,{'content-type':'text/html'}).end('<img src="/big-photo"><img src="/fake-photo"><img src="/mismatch"><img src="/binary"><img src="/jpg-alias">'); return;
       case '/redirect': res.writeHead(302,{location:'/header'}).end(); return;
       case '/loop': res.writeHead(302,{location:'/loop'}).end(); return;
     }
@@ -90,8 +95,8 @@ test('hostname DNS pinning, Windows-1252 headers/meta, byte signatures and trans
     const photos = await traer(f.files,{url:origin+'/photos',destination:'photos'},options);
     assert.equal(photos.photos?.length,12); assert.match(photos.warnings!.join(' '),/máximo 12/);
     const bad = await traer(f.files,{url:origin+'/bad-photos',destination:'bad'},options);
-    assert.equal(bad.photos?.length,0); assert.equal(bad.warnings?.length,3);
-    assert.match(bad.warnings!.join(' '),/tamaño/); assert.match(bad.warnings!.join(' '),/bytes/); assert.match(bad.warnings!.join(' '),/cabecera/);
+    assert.equal(bad.photos?.length,3); assert.equal(bad.warnings?.length,2);
+    assert.match(bad.warnings!.join(' '),/tamaño/); assert.match(bad.warnings!.join(' '),/bytes/);
     await assert.rejects(traer(f.files,{url:origin+'/loop',destination:'loop'},options),/redirecciones/);
     assert.equal(photoExtension(png),'png');
     assert.equal(photoExtension(Buffer.from([255,216,255,224])),'jpg');
@@ -109,9 +114,9 @@ test('external junctions cannot read, write, or feed Edge; deleted kit files sta
     await assert.rejects(f.files.write('outside/new.txt','no'),/enlaces/);
     await assert.rejects(dibujar(f.files,{html:'outside/outside.html',destination:'salida',width:1080,height:1920}),/enlaces/);
     await assert.rejects(readFile(join(f.data,'new.txt')));
-    await initializeKit(f.root);
+    await initializeKit(f.root,f.data);
     await rm(join(f.root,'ejemplo'),{recursive:true});
-    await initializeKit(f.root);
+    await initializeKit(f.root,f.data);
     await assert.rejects(f.files.read('ejemplo/pieza.html'));
     await f.files.write('atomic.txt','old'); await f.files.write('atomic.txt','new',false);
     assert.equal(await f.files.read('atomic.txt'),'new');
