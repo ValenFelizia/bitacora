@@ -1,5 +1,8 @@
 # Verificación del issue #5
 
+Esta página registra la entrega inicial. La ronda posterior de correcciones,
+sus controles y límites están en [Arreglos de la revisión](review-fixes.md).
+
 Fecha: 2026-11-13. Base: `main` en `4ad9032`. Sin subagentes ni cambios en
 `.csdd/`, el Codex personal o el proyecto 787 Rumbos.
 

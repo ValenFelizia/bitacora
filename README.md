@@ -85,7 +85,7 @@ están implementados. Todavía no hay kit ni instalador.
 
 ## Adjuntos y resultados
 
-Podés elegir **Adjuntar archivos** o arrastrarlos al pedido: imágenes PNG, JPG,
+Podés elegir **Adjuntar archivos** o soltarlos en cualquier parte de la ventana: imágenes PNG, JPG,
 JPEG y WebP, PDF y texto UTF-8 (TXT, MD, CSV y JSON). Hasta 10 archivos, 20 MB
 por archivo y 40 MB entre todos. Los links se pegan en el pedido y quedan como
 enlaces. Los adjuntos se copian a `adjuntos/<trabajo>/` dentro de la agencia,
@@ -102,9 +102,16 @@ histórica (copias y deshacer pertenecen al issue #4).
 
 La detección compara contenido antes y después del pedido; no depende de los
 avisos del motor. Excluye `adjuntos/`, carpetas ocultas, enlaces simbólicos y
-`node_modules`. No identifica quién hizo un cambio concurrente en esa carpeta.
+`node_modules`. Los elementos que no se pueden leer se saltean y se anotan en
+el detalle. Si falla toda la revisión, se avisa y se puede seguir trabajando.
+El recorrido compara tamaño y fechas antes de calcular hashes y tiene topes:
+20.000 entradas, 5.000 imágenes/PDFs, 64 niveles, 512 MB de lectura de contenido
+por revisión y 100 MB por resultado. Los límites alcanzados quedan en el detalle.
+El estado previo se guarda aparte de los trabajos, en `pending-files/` dentro de
+la carpeta de datos, y se elimina al terminar la revisión. No identifica quién hizo un cambio concurrente en esa carpeta.
 Los adjuntos viajan por la conexión local autenticada; las lecturas requieren
-un token impredecible por arranque que sólo entrega esa conexión. Sólo se
+un token impredecible por arranque que sólo entrega esa conexión. Al abrir un PDF
+se usa una dirección temporal sin ese token. Sólo se
 sirven archivos registrados, comprobando su ruta real dentro de la agencia.
 
 `npx tsx scripts/verify-files-browser.ts` levanta una instancia falsa y Edge,
