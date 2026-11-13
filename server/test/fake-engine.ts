@@ -5,6 +5,9 @@ export class FakeEngine implements Engine {
   resumed: string[] = [];
   sent: string[] = [];
   count = 0;
+  executionSafety() {
+    return { allowed: true, detail: "fake restricted execution" };
+  }
   async start() {}
   async connectAccount() {
     this.connected = true;
@@ -25,7 +28,7 @@ export class FakeEngine implements Engine {
     this.emit({
       type: "progress",
       conversationId: id,
-      text: "Leyendo los archivos…",
+      activity: "reading",
     });
   }
   async interrupt(id: string) {

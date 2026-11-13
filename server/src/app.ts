@@ -2,11 +2,15 @@ import { mkdir, readFile, writeFile, rename } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { Engine, EngineEvent } from "./engine";
-import { problemText, EngineFailure } from "./engine";
+import { problemText, EngineFailure, activityText } from "./engine";
 import type { Work, Snapshot, ClientCommand, ServerMessage } from "./contracts";
 
 type SavedWork = Work & { conversationId: string };
 export class App {
+  private notice?: string;
+  private available = false;
+  private flushTimer?: NodeJS.Timeout;
+  private dirty = false;
   private works: SavedWork[] = [];
   private accountState = { connected: false };
   private writes: Promise<void> = Promise.resolve();
@@ -24,8 +28,19 @@ export class App {
       const saved = JSON.parse(
         await readFile(join(this.data, "works.json"), "utf8"),
       );
-      if (saved.version !== 1 || !Array.isArray(saved.works))
-        throw new Error("Invalid saved work list");
+      if (!saved || saved.version !== 1 || !Array.isArray(saved.works))
+        throw new SyntaxError("Invalid saved work list");
+      if (
+        saved.works.some(
+          (w: SavedWork) =>
+            !w ||
+            typeof w.id !== "string" ||
+            typeof w.conversationId !== "string" ||
+            !Array.isArray(w.messages) ||
+            typeof w.details !== "string",
+        )
+      )
+        throw new SyntaxError("Invalid saved work");
       this.works = saved.works;
       for (const work of this.works)
         if (work.busy) {
@@ -34,28 +49,65 @@ export class App {
             "El trabajo se detuvo al cerrar la app. Podés continuarlo.";
         }
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      if (error instanceof SyntaxError) {
+        await rename(
+          join(this.data, "works.json"),
+          join(
+            this.data,
+            `works.corrupt-${new Date().toISOString().replace(/[:.]/g, "-")}.json`,
+          ),
+        );
+        this.works = [];
+        this.notice =
+          "No pude leer los trabajos guardados. Conservé el archivo dañado por separado y abrí una lista vacía.";
+      } else if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+        throw error;
     }
     this.unsubscribe = this.engine.subscribe((event) => this.event(event));
     await this.engine.start();
+    this.available = true;
     this.accountState = await this.engine.account();
   }
   snapshot(): Snapshot {
     return {
-      account: this.accountState,
+      account: this.available ? this.accountState : { connected: false },
+      engine: {
+        available: this.available,
+        safety: this.engine.executionSafety(),
+      },
+      notice: this.notice,
       works: this.works.map(({ conversationId: _, ...work }) => work),
     };
   }
   private changed() {
+    this.dirty = false;
     const content = JSON.stringify({ version: 1, works: this.works }, null, 2);
-    this.writes = this.writes.then(async () => {
-      await writeFile(join(this.data, "works.json.tmp"), content, "utf8");
-      await rename(
-        join(this.data, "works.json.tmp"),
-        join(this.data, "works.json"),
-      );
-    });
-    // Keep a failed persistence operation visible and prevent subsequent writes from masking it.
+    this.writes = this.writes
+      .catch(() => {})
+      .then(async () => {
+        await writeFile(join(this.data, "works.json.tmp"), content, "utf8");
+        for (let attempt = 0; ; attempt++) {
+          try {
+            await rename(
+              join(this.data, "works.json.tmp"),
+              join(this.data, "works.json"),
+            );
+            break;
+          } catch (error) {
+            if (
+              attempt >= 3 ||
+              !["EPERM", "EBUSY"].includes(
+                (error as NodeJS.ErrnoException).code || "",
+              )
+            )
+              throw error;
+            await new Promise((resolve) =>
+              setTimeout(resolve, 30 * (attempt + 1)),
+            );
+          }
+        }
+      });
+    // Report each failure while allowing the next write to recover.
     void this.writes.catch((error) =>
       this.publish({
         type: "problem",
@@ -66,6 +118,21 @@ export class App {
     this.publish({ type: "snapshot", state: this.snapshot() });
   }
   private event(event: EngineEvent) {
+    if (event.type === "availability") {
+      this.available = event.available;
+      this.resumed.clear();
+      if (!event.available) {
+        this.accountState = { connected: false };
+        for (const work of this.works)
+          if (work.busy) {
+            work.busy = false;
+            work.progress =
+              "El motor se detuvo. Podés continuar cuando vuelva.";
+          }
+      }
+      this.changed();
+      return;
+    }
     if (event.type === "account") {
       this.accountState = event.account;
       this.publish({ type: "snapshot", state: this.snapshot() });
@@ -89,7 +156,7 @@ export class App {
         work.title = event.title;
         break;
       case "progress":
-        work.progress = event.text;
+        work.progress = activityText[event.activity];
         break;
       case "message": {
         const message = work.messages.find((m) => m.id === event.id);
@@ -124,7 +191,28 @@ export class App {
         break;
     }
     work.updatedAt = new Date().toISOString();
-    this.changed();
+    if (
+      (event.type === "message" && event.delta) ||
+      event.type === "detail" ||
+      event.type === "progress"
+    ) {
+      this.dirty = true;
+      if (!this.flushTimer)
+        this.flushTimer = setTimeout(() => {
+          this.flushTimer = undefined;
+          if (this.dirty) this.changed();
+        }, 1000);
+      if (event.type === "message")
+        this.publish({
+          type: "message",
+          workId: work.id,
+          id: event.id,
+          text: event.text,
+          delta: event.delta,
+        });
+      else if (event.type === "progress")
+        this.publish({ type: "snapshot", state: this.snapshot() });
+    } else this.changed();
   }
   async command(
     command: ClientCommand,
@@ -150,6 +238,16 @@ export class App {
       reply({
         type: "problem",
         text: "Esperá a que termine el pedido actual o pausalo.",
+      });
+      return;
+    }
+    if (!this.available || !this.engine.executionSafety().allowed) {
+      reply({
+        type: "problem",
+        text: !this.available
+          ? "El motor está detenido. Esperá a que vuelva para enviar el pedido."
+          : "No puedo enviar pedidos porque la protección de la carpeta no está preparada. Hace falta completar la preparación de Windows.",
+        detail: this.engine.executionSafety().detail,
       });
       return;
     }
@@ -219,6 +317,8 @@ export class App {
     }
   }
   async close() {
+    clearTimeout(this.flushTimer);
+    if (this.dirty) this.changed();
     await this.engine.close();
     this.unsubscribe?.();
     await this.writes;

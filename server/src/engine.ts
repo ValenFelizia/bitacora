@@ -1,8 +1,19 @@
 export type Account = { connected: boolean; email?: string };
+export type ExecutionSafety = { allowed: boolean; detail: string };
+export type Activity =
+  | "preparing"
+  | "reading"
+  | "executing"
+  | "writing"
+  | "tool"
+  | "responding"
+  | "retrying";
 export type EngineEvent =
+  | { type: "availability"; available: boolean; safety: ExecutionSafety }
   | { type: "account"; account: Account }
   | { type: "title"; conversationId: string; title: string }
-  | { type: "progress"; conversationId: string; text: string }
+  | { type: "progress"; conversationId: string; activity: Activity }
+  | { type: "checkpoint"; conversationId: string }
   | {
       type: "message";
       conversationId: string;
@@ -25,6 +36,7 @@ export type EngineEvent =
 
 export interface Engine {
   start(): Promise<void>;
+  executionSafety(): ExecutionSafety;
   connectAccount(): Promise<{ url: string }>;
   account(): Promise<Account>;
   createWork(): Promise<{ conversationId: string; title?: string }>;
@@ -57,3 +69,13 @@ export function problemText(
       "No pude completar el pedido. Podés ver el detalle y volver a intentarlo.",
   }[kind];
 }
+
+export const activityText: Record<Activity, string> = {
+  preparing: "Preparando la respuesta…",
+  reading: "Leyendo los archivos…",
+  executing: "Trabajando en los archivos…",
+  writing: "Actualizando los archivos…",
+  tool: "Buscando información…",
+  responding: "Escribiendo la respuesta…",
+  retrying: "ChatGPT está reintentando el pedido…",
+};

@@ -1,6 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  rm,
+  writeFile,
+  readFile,
+  readdir,
+  mkdir,
+} from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { App } from "../src/app";
 import { FakeEngine } from "./fake-engine";
@@ -150,7 +157,7 @@ test("concurrent sends never start duplicate turns and empty requests are reject
   }
 });
 
-test("restart marks unfinished work as stopped and corrupt JSON is never overwritten", async () => {
+test("restart marks unfinished work as stopped and quarantines corrupt JSON", async () => {
   const f = await fixture();
   try {
     await f.app.command({ type: "send", text: "Pendiente" }, f.reply);
@@ -161,8 +168,101 @@ test("restart marks unfinished work as stopped and corrupt JSON is never overwri
     assert.match(restart.snapshot().works[0].progress, /se detuvo/);
     await restart.close();
     await writeFile(join(f.dir, "works.json"), "bad json");
-    await assert.rejects(new App(new FakeEngine(), f.dir, f.reply).start());
-    assert.equal(await readFile(join(f.dir, "works.json"), "utf8"), "bad json");
+    const recovered = new App(new FakeEngine(), f.dir, f.reply);
+    await recovered.start();
+    assert.equal(recovered.snapshot().works.length, 0);
+    assert.ok(recovered.snapshot().notice);
+    const corrupt = (await readdir(f.dir)).find((n) =>
+      n.startsWith("works.corrupt-"),
+    )!;
+    assert.equal(await readFile(join(f.dir, corrupt), "utf8"), "bad json");
+    await recovered.command({ type: "send", text: "Recovered" }, f.reply);
+    await recovered.close();
+    assert.match(
+      await readFile(join(f.dir, "works.json"), "utf8"),
+      /Recovered/,
+    );
+  } finally {
+    await f.app.close();
+    await rm(f.dir, { recursive: true });
+  }
+});
+
+test("failed persistence does not poison the next write", async () => {
+  const f = await fixture();
+  try {
+    await mkdir(join(f.dir, "works.json.tmp"));
+    await assert.rejects(
+      f.app.command({ type: "send", text: "First" }, f.reply),
+    );
+    await rm(join(f.dir, "works.json.tmp"), { recursive: true });
+    await f.app.command({ type: "send", text: "Second" }, f.reply);
+    await f.app.close();
+    assert.match(await readFile(join(f.dir, "works.json"), "utf8"), /Second/);
+    assert.ok(f.messages.some((m) => m.type === "problem"));
+  } finally {
+    await f.app.close();
+    await rm(f.dir, { recursive: true });
+  }
+});
+
+test("fragments publish incremental messages and persist at completion", async () => {
+  const f = await fixture();
+  try {
+    await f.app.command({ type: "send", text: "Start" }, f.reply);
+    const before = await readFile(join(f.dir, "works.json"), "utf8");
+    f.messages.length = 0;
+    for (let i = 0; i < 50; i++)
+      f.engine.emit({
+        type: "message",
+        conversationId: "conversation-1",
+        id: "a",
+        text: "x",
+        delta: true,
+      });
+    assert.equal(f.messages.length, 50);
+    assert.ok(f.messages.every((m) => m.type === "message"));
+    assert.equal(await readFile(join(f.dir, "works.json"), "utf8"), before);
+    f.engine.emit({
+      type: "finished",
+      conversationId: "conversation-1",
+      status: "completed",
+    });
+    await f.app.close();
+    assert.match(
+      await readFile(join(f.dir, "works.json"), "utf8"),
+      /xxxxxxxxxx/,
+    );
+  } finally {
+    await f.app.close();
+    await rm(f.dir, { recursive: true });
+  }
+});
+
+test("engine restart releases busy work and clears resumed conversations", async () => {
+  const f = await fixture();
+  try {
+    await f.app.command({ type: "send", text: "Start" }, f.reply);
+    const id = f.app.snapshot().works[0].id;
+    f.engine.emit({
+      type: "availability",
+      available: false,
+      safety: f.engine.executionSafety(),
+    });
+    assert.equal(f.app.snapshot().account.connected, false);
+    assert.equal(f.app.snapshot().works[0].busy, false);
+    await f.app.command({ type: "send", workId: id, text: "Blocked" }, f.reply);
+    assert.equal(f.engine.sent.length, 1);
+    f.engine.emit({
+      type: "availability",
+      available: true,
+      safety: f.engine.executionSafety(),
+    });
+    await f.app.command(
+      { type: "send", workId: id, text: "Continue" },
+      f.reply,
+    );
+    assert.deepEqual(f.engine.resumed, ["conversation-1"]);
   } finally {
     await f.app.close();
     await rm(f.dir, { recursive: true });

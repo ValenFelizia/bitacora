@@ -5,7 +5,7 @@ import {
 } from "node:child_process";
 import { createInterface } from "node:readline";
 import { mkdir } from "node:fs/promises";
-import type { Engine, EngineEvent, Account } from "../engine";
+import type { Engine, EngineEvent, Account, ExecutionSafety } from "../engine";
 import { EngineFailure } from "../engine";
 import type { ClientRequest } from "./generated/ClientRequest";
 import type { ServerNotification } from "./generated/ServerNotification";
@@ -14,9 +14,13 @@ import type { LoginAccountResponse } from "./generated/v2/LoginAccountResponse";
 import type { ThreadStartResponse } from "./generated/v2/ThreadStartResponse";
 import type { ThreadResumeResponse } from "./generated/v2/ThreadResumeResponse";
 import type { TurnStartResponse } from "./generated/v2/TurnStartResponse";
+import type { ConfigReadResponse } from "./generated/v2/ConfigReadResponse";
+import type { WindowsSandboxReadinessResponse } from "./generated/v2/WindowsSandboxReadinessResponse";
 
 type Responses = {
   initialize: unknown;
+  "windowsSandbox/readiness": WindowsSandboxReadinessResponse;
+  "config/read": ConfigReadResponse;
   "account/read": GetAccountResponse;
   "account/login/start": LoginAccountResponse;
   "account/login/cancel": unknown;
@@ -37,6 +41,20 @@ export function classifyProblem(
 }
 
 export class CodexEngine implements Engine {
+  private safety: ExecutionSafety = {
+    allowed: false,
+    detail: "Execution safety has not been checked",
+  };
+  private available = false;
+  private restartTimer?: NodeJS.Timeout;
+  private attempts = 0;
+  private starting = new Map<
+    string,
+    { completed: boolean; interrupt: boolean }
+  >();
+  executionSafety() {
+    return this.safety;
+  }
   private child?: ChildProcessWithoutNullStreams;
   private nextId = 0;
   private pending = new Map<
@@ -53,7 +71,13 @@ export class CodexEngine implements Engine {
   private stopping = false;
   private stderr = "";
   constructor(
-    private options: { home: string; workspace: string; binary?: string },
+    private options: {
+      home: string;
+      workspace: string;
+      binary?: string;
+      args?: string[];
+      restartDelayMs?: number;
+    },
   ) {}
   subscribe(listener: (event: EngineEvent) => void) {
     this.listeners.add(listener);
@@ -72,22 +96,26 @@ export class CodexEngine implements Engine {
       ...process.env,
       CODEX_HOME: this.options.home,
     };
-    // Never inherit API credentials as a fallback for the subscription login.
-    delete env.OPENAI_API_KEY;
-    delete env.CODEX_API_KEY;
-    delete env.CODEX_INTERNAL_ORIGINATOR_OVERRIDE;
-    delete env.CODEX_THREAD_ID;
-    delete env.CODEX_SESSION_ID;
-    const version = execFileSync(binary, ["--version"], {
-      env,
-      encoding: "utf8",
-      windowsHide: true,
-    }).trim();
+    for (const key of Object.keys(env)) {
+      if (
+        /^CODEX_/i.test(key) ||
+        /(?:API_KEY|API_TOKEN|ACCESS_TOKEN|AUTH_TOKEN)$/i.test(key)
+      )
+        delete env[key];
+    }
+    env.CODEX_HOME = this.options.home;
+    const version = this.options.args
+      ? "codex-cli 0.168.0"
+      : execFileSync(binary, ["--version"], {
+          env,
+          encoding: "utf8",
+          windowsHide: true,
+        }).trim();
     if (version !== "codex-cli 0.168.0")
       throw new Error(`Expected codex-cli 0.168.0, received ${version}`);
     this.child = spawn(
       binary,
-      [
+      this.options.args || [
         "app-server",
         "--listen",
         "stdio://",
@@ -96,27 +124,67 @@ export class CodexEngine implements Engine {
       ],
       { cwd: this.options.workspace, env, windowsHide: true, stdio: "pipe" },
     );
+    const child = this.child;
+    let failed = false;
+    const failedChild = (error: Error) => {
+      if (failed || this.child !== child) return;
+      failed = true;
+      this.child = undefined;
+      child.kill();
+      this.fail(error);
+    };
+    this.stderr = "";
     createInterface({ input: this.child.stdout }).on("line", (line) => {
       try {
         this.receive(JSON.parse(line));
       } catch (error) {
-        this.fail(new Error(`Invalid engine message: ${String(error)}`));
+        failedChild(new Error(`Invalid engine message: ${String(error)}`));
       }
     });
     this.child.stderr.on("data", (chunk) => {
       this.stderr = (this.stderr + String(chunk)).slice(-16000);
     });
-    this.child.stdin.on("error", (error) => this.fail(error));
-    this.child.on("error", (error) => this.fail(error));
+    this.child.stdin.on("error", failedChild);
+    this.child.on("error", failedChild);
     this.child.on("exit", () => {
-      this.fail(new Error(`Codex process stopped. ${this.stderr}`));
-      this.child = undefined;
+      failedChild(new Error(`Codex process stopped. ${this.stderr}`));
     });
-    await this.rpc("initialize", {
-      clientInfo: { name: "bitacora", title: "Bitácora", version: "0.1.0" },
-      capabilities: { experimentalApi: false, requestAttestation: false },
-    });
-    this.write({ method: "initialized" });
+    try {
+      await this.rpc("initialize", {
+        clientInfo: { name: "bitacora", title: "Bitácora", version: "0.1.0" },
+        capabilities: { experimentalApi: false, requestAttestation: false },
+      });
+      this.write({ method: "initialized" });
+      try {
+        const readiness = await this.rpc("windowsSandbox/readiness", undefined);
+        const { config } = await this.rpc("config/read", {
+          includeLayers: false,
+        });
+        const windows = config.windows as { sandbox?: string } | null;
+        const mode = windows?.sandbox;
+        this.safety = {
+          allowed: readiness.status === "ready",
+          detail: `windowsSandbox/readiness=${readiness.status}; windows.sandbox=${mode || (readiness.status === "ready" ? "effective restricted backend (legacy features or managed configuration)" : "disabled")}; workspace-write`,
+        };
+      } catch (error) {
+        if (this.child !== child) throw error;
+        this.safety = {
+          allowed: false,
+          detail: `Execution safety check failed: ${String(error)}`,
+        };
+      }
+      if (this.child !== child)
+        throw new Error("Engine stopped during initialization");
+      this.available = true;
+      const account = await this.account();
+      if (this.child !== child)
+        throw new Error("Engine stopped during account read");
+      this.emit({ type: "availability", available: true, safety: this.safety });
+      this.emit({ type: "account", account });
+    } catch (error) {
+      failedChild(error instanceof Error ? error : new Error(String(error)));
+      throw error;
+    }
   }
   private write(value: unknown) {
     if (!this.child || this.child.stdin.destroyed)
@@ -157,7 +225,13 @@ export class CodexEngine implements Engine {
       pending.reject(error);
     }
     this.pending.clear();
+    this.available = false;
     if (!this.stopping) {
+      this.emit({
+        type: "availability",
+        available: false,
+        safety: this.safety,
+      });
       for (const conversationId of this.turns.keys()) {
         this.emit({
           type: "problem",
@@ -168,7 +242,19 @@ export class CodexEngine implements Engine {
         this.emit({ type: "finished", conversationId, status: "failed" });
       }
       this.turns.clear();
+      this.starting.clear();
+      this.loginId = undefined;
       this.emit({ type: "problem", kind: "other", detail: error.message });
+      if (!this.restartTimer && this.attempts < 5) {
+        const delay =
+          (this.options.restartDelayMs ?? 500) * 2 ** this.attempts++;
+        this.restartTimer = setTimeout(() => {
+          this.restartTimer = undefined;
+          void this.start().catch((error) => {
+            if (!this.restartTimer) this.fail(error);
+          });
+        }, delay);
+      }
     }
   }
   private receive(message: {
@@ -238,7 +324,7 @@ export class CodexEngine implements Engine {
         this.emit({
           type: "progress",
           conversationId: n.params.threadId,
-          text: "Preparando la respuesta…",
+          activity: "preparing",
         });
         break;
       case "item/agentMessage/delta":
@@ -254,6 +340,12 @@ export class CodexEngine implements Engine {
       case "item/completed": {
         const { threadId: conversationId, item } = n.params;
         if (item.type === "agentMessage") {
+          if (n.method === "item/started")
+            this.emit({
+              type: "progress",
+              conversationId,
+              activity: "responding",
+            });
           if (n.method === "item/completed")
             this.emit({
               type: "message",
@@ -263,24 +355,26 @@ export class CodexEngine implements Engine {
               delta: false,
             });
         } else if (item.type !== "userMessage") {
-          const text =
+          const activity =
             item.type === "commandExecution"
               ? item.commandActions.length > 0 &&
                 item.commandActions.every((action) => action.type !== "unknown")
-                ? "Leyendo los archivos…"
-                : "Trabajando en los archivos…"
+                ? "reading"
+                : "executing"
               : item.type === "fileChange"
-                ? "Actualizando los archivos…"
+                ? "writing"
                 : item.type === "webSearch" || item.type === "mcpToolCall"
-                  ? "Buscando información…"
-                  : "Preparando la respuesta…";
-          this.emit({ type: "progress", conversationId, text });
+                  ? "tool"
+                  : "preparing";
+          this.emit({ type: "progress", conversationId, activity });
           this.emit({
             type: "detail",
             conversationId,
             text: JSON.stringify(item),
           });
         }
+        if (n.method === "item/completed")
+          this.emit({ type: "checkpoint", conversationId });
         break;
       }
       case "item/commandExecution/outputDelta":
@@ -292,16 +386,24 @@ export class CodexEngine implements Engine {
         });
         break;
       case "error":
+        // The final failure belongs to turn/completed; retries are only activity.
         this.emit({
-          type: "problem",
+          type: "detail",
           conversationId: n.params.threadId,
-          kind: classifyProblem(n.params.error),
-          detail: JSON.stringify(n.params.error),
+          text: JSON.stringify(n.params),
         });
+        if (n.params.willRetry)
+          this.emit({
+            type: "progress",
+            conversationId: n.params.threadId,
+            activity: "retrying",
+          });
         break;
       case "turn/completed": {
         const { threadId: conversationId, turn } = n.params;
         this.turns.delete(conversationId);
+        const starting = this.starting.get(conversationId);
+        if (starting) starting.completed = true;
         if (turn.error)
           this.emit({
             type: "problem",
@@ -352,28 +454,42 @@ export class CodexEngine implements Engine {
     });
   }
   async send(conversationId: string, text: string) {
-    const { turn } = await this.rpc("turn/start", {
-      threadId: conversationId,
-      input: [{ type: "text", text, text_elements: [] }],
-      cwd: this.options.workspace,
-      approvalPolicy: "never",
-      sandboxPolicy: {
-        type: "workspaceWrite",
-        writableRoots: [this.options.workspace],
-        networkAccess: false,
-        excludeTmpdirEnvVar: true,
-        excludeSlashTmp: true,
-      },
-    });
-    if (turn.status === "inProgress") this.turns.set(conversationId, turn.id);
+    if (!this.available || !this.safety.allowed)
+      throw new EngineFailure("other", this.safety.detail);
+    const state = { completed: false, interrupt: false };
+    this.starting.set(conversationId, state);
+    try {
+      const { turn } = await this.rpc("turn/start", {
+        threadId: conversationId,
+        input: [{ type: "text", text, text_elements: [] }],
+        cwd: this.options.workspace,
+        approvalPolicy: "never",
+        sandboxPolicy: {
+          type: "workspaceWrite",
+          writableRoots: [this.options.workspace],
+          networkAccess: false,
+          excludeTmpdirEnvVar: true,
+          excludeSlashTmp: true,
+        },
+      });
+      if (!state.completed && turn.status === "inProgress" && this.available) {
+        this.turns.set(conversationId, turn.id);
+        if (state.interrupt) await this.interrupt(conversationId);
+      }
+    } finally {
+      this.starting.delete(conversationId);
+    }
   }
   async interrupt(conversationId: string) {
+    const starting = this.starting.get(conversationId);
+    if (starting) starting.interrupt = true;
     const turnId = this.turns.get(conversationId);
     if (turnId)
       await this.rpc("turn/interrupt", { threadId: conversationId, turnId });
   }
   async close() {
     this.stopping = true;
+    clearTimeout(this.restartTimer);
     const child = this.child;
     if (!child) return;
     await new Promise<void>((resolve) => {

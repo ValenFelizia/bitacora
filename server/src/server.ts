@@ -22,12 +22,22 @@ export async function serve(
   const app = new App(engine, data, (message) => {
     for (const ws of sockets.clients) send(ws, message);
   });
+  const origins = new Set([webOrigin]);
+  const configured = new URL(webOrigin);
+  if (["127.0.0.1", "localhost"].includes(configured.hostname)) {
+    const alias = new URL(webOrigin);
+    alias.hostname =
+      configured.hostname === "localhost" ? "127.0.0.1" : "localhost";
+    origins.add(alias.origin);
+  }
   http.on("upgrade", (req, socket, head) => {
     // A public site must not be able to operate a local agent through the browser.
     if (
-      req.headers.origin !== webOrigin ||
-      req.headers.host !==
-        `127.0.0.1:${(http.address() as { port: number }).port}` ||
+      !origins.has(req.headers.origin || "") ||
+      ![
+        `127.0.0.1:${(http.address() as { port: number }).port}`,
+        `localhost:${(http.address() as { port: number }).port}`,
+      ].includes(req.headers.host || "") ||
       req.url !== "/ws"
     ) {
       socket.destroy();

@@ -28,11 +28,29 @@ test("localhost websocket serves snapshots, connects an account and blocks forei
     );
     socket.send(JSON.stringify({ type: "connect" }));
     await loggedIn;
-    const bad = new WebSocket(`ws://127.0.0.1:${server.port}/ws`, {
-      origin: "https://untrusted.example",
+    for (const options of [
+      {},
+      { origin: "https://untrusted.example" },
+      {
+        origin: "http://127.0.0.1:5173",
+        headers: { Host: `wrong.example:${server.port}` },
+      },
+      { origin: "http://localhost:5174" },
+      { origin: "http://localhost.evil:5173" },
+    ]) {
+      const bad = new WebSocket(`ws://127.0.0.1:${server.port}/ws`, options);
+      await new Promise<void>((resolve) => bad.once("error", () => resolve()));
+      assert.notEqual(bad.readyState, WebSocket.OPEN);
+    }
+    const local = new WebSocket(`ws://127.0.0.1:${server.port}/ws`, {
+      origin: "http://localhost:5173",
+      headers: { Host: `localhost:${server.port}` },
     });
-    await new Promise<void>((resolve) => bad.once("error", () => resolve()));
-    assert.notEqual(bad.readyState, WebSocket.OPEN);
+    await new Promise<void>((resolve, reject) => {
+      local.once("open", () => resolve());
+      local.once("error", reject);
+    });
+    local.terminate();
   } finally {
     socket.terminate();
     await server.close();
