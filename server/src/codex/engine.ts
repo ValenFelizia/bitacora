@@ -9,6 +9,8 @@ import { join } from "node:path";
 import { codexBinary, codexVersion } from "../../../scripts/codex-runtime.mjs";
 import { createInterface } from "node:readline";
 import { mkdir } from "node:fs/promises";
+import { registerKit } from './kit';
+import { initializeKit } from '../tools/kit';
 import type { Engine, EngineEvent, Account, ExecutionSafety } from "../engine";
 import { EngineFailure } from "../engine";
 import type { ClientRequest } from "./generated/ClientRequest";
@@ -104,6 +106,10 @@ export class CodexEngine implements Engine {
   async start() {
     await mkdir(this.options.home, { recursive: true });
     await mkdir(this.options.workspace, { recursive: true });
+    if (!this.options.args) {
+      await initializeKit(this.options.workspace);
+      await registerKit(this.options.home, this.options.workspace);
+    }
     const binary = this.options.binary || codexBinary();
     const env: NodeJS.ProcessEnv = {
       ...process.env,
@@ -498,7 +504,7 @@ export class CodexEngine implements Engine {
                 : item.type === "webSearch" || item.type === "mcpToolCall"
                   ? "tool"
                   : "preparing";
-          this.emit({ type: "progress", conversationId, activity });
+          this.emit({ type: "progress", conversationId, activity: item.type === 'mcpToolCall' && item.server === 'bitacora' && ['traer', 'controlar', 'dibujar'].includes(item.tool) ? item.tool as 'traer' | 'controlar' | 'dibujar' : activity });
           this.emit({
             type: "detail",
             conversationId,
