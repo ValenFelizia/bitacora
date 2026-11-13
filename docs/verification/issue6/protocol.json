@@ -1,0 +1,67 @@
+{
+  "initialize": {
+    "userAgent": "bitacora-verification/0.168.0 (Windows 10.0.26300; x86_64) dumb (bitacora-verification; 1.0)",
+    "codexHome": "C:\\Users\\Valen\\AppData\\Local\\Bitacora-dev\\issue6\\verification\\datos\\codex",
+    "platformFamily": "windows",
+    "platformOs": "windows"
+  },
+  "tools": [
+    "controlar",
+    "dibujar",
+    "traer"
+  ],
+  "approvalRequests": [],
+  "calls": [
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"source\":\"ejemplo/fuente.md\",\"lines\":7}"
+        }
+      ]
+    },
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"ok\":true,\"checked\":2,\"errors\":[],\"warnings\":[],\"report\":\"protocolo-control.md\"}"
+        }
+      ]
+    },
+    {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"ok\":true,\"errors\":[],\"warnings\":[],\"files\":[\"protocolo-salida/pieza-1.png\",\"protocolo-salida/piezas.pdf\",\"protocolo-salida/todas.png\"]}"
+        }
+      ]
+    }
+  ],
+  "draw": {
+    "ok": true,
+    "errors": [],
+    "warnings": [],
+    "files": [
+      "salida/pieza-1.png",
+      "salida/piezas.pdf",
+      "salida/todas.png"
+    ]
+  },
+  "check": {
+    "ok": true,
+    "checked": 2,
+    "errors": [],
+    "warnings": [],
+    "report": "control.md"
+  },
+  "overflow": {
+    "ok": false,
+    "errors": [
+      "Pieza 1: no entra p."
+    ],
+    "warnings": [],
+    "files": []
+  },
+  "brokenFont": "Error: No se pudieron cargar las fuentes: Local.",
+  "modelTurns": 0
+}

@@ -76,7 +76,54 @@ y el siguiente guardado puede recuperarse.
 
 El aislamiento
 estricto de lecturas, las copias y deshacer corresponden al issue #4 y no
-están implementados. Tampoco hay adjuntos, galería, kit ni instalador.
+están implementados. Tampoco hay instalador. Los adjuntos y la galería se trabajan en #5.
+
+## Kit de turismo
+
+Al arrancar se copia `kit/turismo/` a la carpeta de la agencia, sin reemplazar
+archivos existentes. Las instrucciones, el HTML de ejemplo y las reglas son
+archivos que el agente puede modificar conversando con la usuaria. No incluyen
+marca ni tono de una agencia: eso corresponde a #7.
+
+La app registra un servidor MCP por stdio en **su propio** `CODEX_HOME`.
+`server/src/codex/kit.ts` configura exclusivamente `traer`, `controlar` y
+`dibujar` con `approval_mode = "approve"`, compatible con Codex 0.168.0 y
+`approvalPolicy: never`. No habilita red del shell ni otros permisos.
+El servidor MCP es un envoltorio de los módulos neutrales de `server/src/tools/`.
+
+- **Traer:** recibe `url` y `destination`. Guarda `fuente.md` y hasta 12 fotos
+  (JPEG, PNG o WebP). Límite de página: 2 MB; por foto: 5 MB; operación: 45 s;
+  hasta 5 redirecciones. Valida cada destino y fija la dirección DNS validada
+  al conectar. Rechaza redes privadas, locales y loopback. Sin `url`, `notes`
+  agrega datos de la usuaria con fecha al final de la fuente existente.
+- **Controlar:** recibe `html`, `source`, `report` y opcionalmente `rules`.
+  Lee el texto del HTML en Edge y exige citas explícitas con el formato
+  `data-cites='{"1.250":3}'`: el número visible debe aparecer en la línea
+  física 3 de la fuente. Normaliza miles con punto y decimales con coma.
+  El informe muestra número, ubicación, línea citada y su texto. Las reglas
+  editables permiten prohibir nombres del operador y emojis, y advertir sobre
+  afirmaciones de experiencia personal. La correspondencia de hotel, unidad,
+  base y fecha todavía exige revisión del agente: la coincidencia numérica
+  no prueba esas relaciones ni la veracidad de la fuente.
+- **Dibujar:** recibe `html`, `destination`, `width` y `height` (por defecto
+  1080 × 1920). Lee un archivo HTML estático con piezas `data-piece`, sin
+  ejecutar sus scripts. Usa `playwright-core`, Edge del sistema y escala 1,
+  sin descargar navegador. Verifica fuentes, medidas, desbordes y fotos chicas;
+  genera un PNG por pieza, PDF y `todas.png`. Rechaza recursos que no sean
+  archivos dentro de la agencia. Usá una carpeta nueva para cada dibujo:
+  las salidas existentes no se sobrescriben.
+
+Todas las rutas de herramientas son relativas a la agencia: se rechazan
+escapes, rutas absolutas, enlaces simbólicos, junctions, enlaces múltiples y
+nombres especiales de Windows. El kit no genera imágenes con IA ni busca fotos.
+Los archivos HTML pueden usar fuentes locales y fotos guardadas en la agencia.
+
+`npm test` incluye un cliente MCP real, un operador HTTP de prueba con permiso
+de loopback explícito solo dentro del test, y dibujo real con Edge.
+`npx tsx scripts/verify-kit.ts` comprueba además el catálogo y las llamadas a las
+tres herramientas por app-server, sin iniciar un turno de modelo ni usar login.
+Guarda evidencia en `docs/verification/issue6/` y usa datos descartables dentro
+de `%LOCALAPPDATA%\Bitacora-dev\issue6\`. No usa puertos de la app.
 
 - Qué tiene que hacer el MVP: [`.csdd/specs.md`](.csdd/specs.md)
 - Por qué está armado así: [`.csdd/decisions.md`](.csdd/decisions.md)
