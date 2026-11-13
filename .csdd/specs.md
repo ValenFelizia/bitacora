@@ -47,6 +47,13 @@ sin ayuda de Valentín.
 ## Constraints
 
 - La app corre en la compu de la usuaria. No hay versión hosteada.
+- La app es gratuita y de código abierto. La documentación oficial de Codex
+  app-server (consultada el 2026-11-13) permite su autenticación en aplicaciones
+  locales o de código abierto y dice que nunca estuvo permitida para servicios
+  comerciales u hosteados. Cobrar por la app o hostearla exige otra vía (Sign in
+  with ChatGPT, con lista de espera para partners).
+- Cada usuaria usa su propia cuenta de ChatGPT. La app no comparte ni
+  redistribuye credenciales.
 - Solo Windows en el MVP.
 - Solo ChatGPT/Codex como proveedor en el MVP.
 - El público no es programador: nada en la interfaz puede exigir conocer git,
