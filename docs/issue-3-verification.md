@@ -1,5 +1,59 @@
 # Verificación del issue #3: correcciones del PR #11
 
+## Segunda ronda, 13 de noviembre de 2026
+
+Los ocho puntos de «Segunda revisión (Claude Opus 5.5), sobre los arreglos»
+se confirmaron contra `d335589`. No se descartó ninguno. Esta sección reemplaza
+las limitaciones de la primera ronda que se corrigieron abajo.
+
+| Punto | Cambio | Evidencia nueva |
+| --- | --- | --- |
+| 1 | El presupuesto de cinco relanzamientos se reinicia después de 60 segundos estables. Al agotarlo se emite `exhausted`; la pantalla deja de prometer recuperación automática y ofrece **Reintentar**, sin reenviar pedidos. | Proceso falso: siete caídas separadas por estabilidad, esperas crecientes, agotamiento y arranque manual. Edge: seis caídas sin pedido activo, botón y recuperación. |
+| 2 | Lista negra por patrón, sin lista blanca: elimina `CODEX_*`, `OPENAI_*`, `ANTHROPIC_*` y nombres que contienen TOKEN, SECRET, PASSWORD, API_KEY, ACCESS_KEY o CREDENTIAL, sin distinguir mayúsculas. Sólo se repone `CODEX_HOME`, fijado por la app. | El hijo devuelve el entorno: diez centinelas ausentes y PATH, SystemRoot, USERPROFILE, APPDATA, LOCALAPPDATA y TEMP conservados. Investigación de fuentes debajo. |
+| 3 | Cuarentena y guardado comparten reintentos EPERM/EBUSY (30/60/90 ms). Si renombrar sigue fallando, se copia. Si tampoco se puede copiar, arranca vacío con un aviso que no afirma haber conservado una copia. | Pruebas con renombrado siempre bloqueado, copia exitosa con bytes intactos y copia fallida sin impedir el arranque. |
+| 4 | Base de botones sin colores; variantes principal y secundaria separadas. El borde seleccionado y el transparente son excluyentes. | Edge: hover real sobre ambos botones, texto blanco, fondo `rgb(34,72,62)`, borde `rgb(49,89,77)`; seleccionado `rgb(217,221,210)`. Captura e inspección visual. |
+| 5 | Se cierra el motor, se desuscribe y recién entonces se guarda lo pendiente y se espera la escritura. Se registra SIGHUP junto con SIGINT/SIGTERM. | Prueba entrega un fragmento durante el cierre y verifica que quedó en disco y que no quedan suscripciones. SIGHUP revisado en fuente; no se cerró físicamente una consola de Windows. |
+| 6 | La primera pausa reserva la interrupción antes del RPC; las siguientes no repiten el envío. `turn/started` también entrega una pausa pendiente. | El proceso falso manda started antes de la respuesta, demora completed y rechaza una segunda interrupción. Prueba: dos pausas, un único RPC, ningún problema y envío inicial resuelto. |
+| 7 | La caída global usa el estado del motor, sin el error genérico de pedido. Detalle del motor sólo aparece cuando está caído o bloqueado y queda plegado. | Edge: caída sin pedido activo, ausencia del error genérico, detalle cerrado y texto interno invisible; al recuperar desaparece el detalle. |
+| 8 | FakeEngine puede declarar ejecución insegura. Pruebas propias de app y persistencia. | Envío bloqueado antes de crear trabajo o llamar send; renombrado falla una o dos veces con EPERM y luego guarda correctamente. |
+
+Validación final: `npm run typecheck`, `npm test` tres veces seguidas (22/22 cada
+vez) y `npm run build`. Navegador: `npx tsx scripts/verify-round2-browser.ts`,
+con Vite levantado, Edge local, servidor real y proceso falso. Cero errores de
+página. La vista previa compartida falló dos veces con
+`Preview automation snapshot timed out after 15000ms`; se usó Edge como alternativa.
+
+Capturas inspeccionadas: [botones y selección](verification/pr11/round2-buttons.png),
+[intentos agotados](verification/pr11/round2-exhausted.png) y
+[motor recuperado](verification/pr11/round2-recovered.png).
+El script nuevo elimina sus datos y cierra servidor, motor y navegador en finally.
+`pr11-browser` quedó eliminado. El borrado de la carpeta anterior
+`%LOCALAPPDATA%\Bitacora-dev\pr11` fue rechazado por la revisión automática con
+`blocked by policy`, incluso usando su ruta absoluta verificada. Sigue presente;
+la limpieza de esa carpeta queda pendiente. No quedan servidores escuchando en
+4317 ni 5173; el proceso falso y Edge finalizaron.
+
+### Variables de destino en Codex 0.168.0
+
+Lectura por `gh api repos/openai/codex/contents/<ruta>?ref=rust-v0.168.0`, con
+Accept raw, sin clonar, ejecutar Codex ni enviar pedidos. La búsqueda de rutas
+usó el árbol de ese tag; la búsqueda de código del repositorio sólo sirvió para
+encontrar candidatos, que luego se leyeron en el tag fijado.
+
+- [core/src/config/mod.rs](https://github.com/openai/codex/blob/rust-v0.168.0/codex-rs/core/src/config/mod.rs): toma `cfg.openai_base_url` y lo pasa a `built_in_model_providers`. No encontré una lectura directa de la variable de entorno `OPENAI_BASE_URL` en esta ruta de inferencia.
+- [model-provider-info/src/lib.rs](https://github.com/openai/codex/blob/rust-v0.168.0/codex-rs/model-provider-info/src/lib.rs): `create_openai_provider` conserva esa URL de configuración; `to_api_provider` la prefiere al destino predeterminado, incluido el de ChatGPT. `create_oss_provider` sí lee `CODEX_OSS_BASE_URL` y `CODEX_OSS_PORT` del entorno para proveedores locales.
+- [intermediario de credenciales](https://github.com/openai/codex/blob/rust-v0.168.0/codex-rs/network-proxy/src/credential_broker/providers/openai.rs): `OPENAI_BASE_URL` sí figura como variable de contexto y de vinculación de credenciales, y participa en los hosts confiables. Esto no demuestra que redirija por sí sola la inferencia de ChatGPT.
+- [SDK TypeScript](https://github.com/openai/codex/blob/rust-v0.168.0/sdk/typescript/src/exec.ts): la opción `baseUrl` se transforma en `--config openai_base_url=...`.
+
+El filtro elimina todas las familias anteriores, aunque la app no use el SDK ni
+proveedores locales. Se mantuvo el resto del entorno de Windows según lo pedido.
+No se afirma haber auditado todas las variables de red de Codex o de sus herramientas.
+
+**Cero pedidos a ChatGPT y ningún login.** No se preparó el aislamiento, no se
+pidieron permisos de administrador y el bloqueo de envío sigue vigente (#12).
+EPERM/EBUSY son fallos inyectados, no un bloqueo físico de Defender. No se tocaron
+`.csdd/`, títulos automáticos, plugins/skills, adjuntos, kit, Tauri, copias ni deshacer.
+
 ## Verificación actual, 13 de noviembre de 2026
 
 Windows, Codex CLI 0.168.0. Se incorporó `origin/main` antes de modificar código;
