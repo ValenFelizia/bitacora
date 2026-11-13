@@ -1,3 +1,4 @@
+import { pipeline } from "node:stream/promises";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { WorkspaceFiles, FileProblem, MAX_REQUEST } from "./workspace-files";
 import { createServer } from "node:http";
@@ -20,26 +21,32 @@ export async function serve(
     void (async () => {
       const url = new URL(req.url || "/", "http://127.0.0.1");
       const supplied = url.searchParams.get("token") || "";
-      const validToken = supplied.length === token.length && timingSafeEqual(Buffer.from(supplied), Buffer.from(token));
+      const validToken = Buffer.byteLength(supplied) === Buffer.byteLength(token) && timingSafeEqual(Buffer.from(supplied), Buffer.from(token));
       if (!validToken || !localHost(req.headers.host) || (req.headers.origin && !origins.has(req.headers.origin))) {
         res.writeHead(403); res.end(); return;
       }
       if (url.pathname !== "/files" || !["GET", "HEAD"].includes(req.method || "") || !files) { res.writeHead(404); res.end(); return; }
       const ref = app.file(url.searchParams.get("id") || "");
       if (!ref) { res.writeHead(404); res.end(); return; }
-      if (req.method === "HEAD") { await files.safePath(ref.path); res.writeHead(200, { "Cache-Control": "no-store" }); res.end(); return; }
-      const content = await files.read(ref);
-      res.writeHead(200, {
-        "Content-Type": ref.mime,
-        "X-Content-Type-Options": "nosniff",
-        "Cache-Control": "no-store",
-        "Referrer-Policy": "no-referrer",
-        "Cross-Origin-Resource-Policy": "same-origin",
-        "Content-Security-Policy": "default-src 'none'; sandbox",
-        "Content-Disposition": `${url.searchParams.has("download") || ref.mime === "text/plain" ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(ref.name).replace(/'/g, "%27")}`,
-      });
-      res.end(content);
-    })().catch(() => { if (!res.headersSent) res.writeHead(404); res.end(); });
+      const { handle, size } = await files.openResult(ref);
+      try {
+        res.writeHead(200, {
+          "Content-Type": ref.mime,
+          "Content-Length": size,
+          "X-Content-Type-Options": "nosniff",
+          "Cache-Control": "no-store",
+          "Referrer-Policy": "no-referrer",
+          "Cross-Origin-Resource-Policy": "same-origin",
+          "Content-Security-Policy": `default-src 'none'${ref.mime === "application/pdf" ? "" : "; sandbox"}`,
+          "Content-Disposition": `${url.searchParams.has("download") || ref.mime === "text/plain" ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(ref.name).replace(/'/g, "%27")}`,
+        });
+        if (req.method === 'HEAD' || !size) res.end();
+        else await pipeline(handle.createReadStream({ start: 0, end: size - 1, autoClose: false }), res);
+      } finally { await handle.close(); }
+    })().catch(error => {
+      if (res.headersSent) { res.destroy(); return; }
+      res.writeHead(error instanceof FileProblem ? 413 : 404); res.end();
+    });
   });
   const localHost = (host?: string) => [`127.0.0.1:${(http.address() as { port: number }).port}`, `localhost:${(http.address() as { port: number }).port}`].includes(host || "");
   const sockets = new WebSocketServer({ noServer: true, maxPayload: Math.ceil(MAX_REQUEST / 3) * 4 + 100000 });

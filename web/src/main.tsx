@@ -138,6 +138,19 @@ function App() {
     finally { setReadingFiles(false); }
   }
   useEffect(() => {
+    const dragover = (event: DragEvent) => { event.preventDefault(); };
+    const drop = (event: DragEvent) => {
+      event.preventDefault();
+      if (event.dataTransfer?.files.length) {
+        setGallery(false);
+        void addFiles(Array.from(event.dataTransfer.files));
+      }
+    };
+    window.addEventListener('dragover', dragover);
+    window.addEventListener('drop', drop);
+    return () => { window.removeEventListener('dragover', dragover); window.removeEventListener('drop', drop); };
+  });
+  useEffect(() => {
     document.title = gallery ? "Galería · Bitácora" : "Bitácora";
     document.querySelector<HTMLElement>("main")?.focus();
   }, [gallery]);
@@ -360,8 +373,6 @@ function App() {
             </details>
           )}
           <form
-            onDragOver={e => { e.preventDefault(); }}
-            onDrop={e => { e.preventDefault(); void addFiles(Array.from(e.dataTransfer.files)); }}
             className="bg-[#fffefa] border border-[#cdd4c8] rounded-xl py-[14px] px-[18px]"
             onSubmit={(e) => {
               e.preventDefault();
