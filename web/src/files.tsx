@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import type { FileRef } from '../../server/src/contracts';
 export function fileUrl(file: FileRef, token?: string) {
   return `/files?id=${encodeURIComponent(file.id)}&token=${encodeURIComponent(token || '')}`;
