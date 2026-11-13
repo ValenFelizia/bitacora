@@ -55,7 +55,7 @@ export async function serve(
           const command = JSON.parse(String(data)) as ClientCommand;
           if (
             !command ||
-            !["connect", "retry", "send", "interrupt"].includes(command.type)
+            !["connect", "retry", "prepareProtection", "send", "interrupt"].includes(command.type)
           )
             throw new Error("Invalid message");
           await app.command(command, (message) => send(ws, message));

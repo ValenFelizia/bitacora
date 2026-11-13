@@ -7,6 +7,7 @@ export class FakeEngine implements Engine {
   count = 0;
   safe = true;
   async retry() {}
+  async prepareProtection() { this.safe = true; this.emit({ type: "protection", safety: this.executionSafety() }); }
   executionSafety() {
     return { allowed: this.safe, detail: "fake restricted execution" };
   }

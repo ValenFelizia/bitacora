@@ -1,8 +1,10 @@
 // Deterministic app-server peer. No Codex, credentials, tools, or inference.
 import { createInterface } from "node:readline";
-import { appendFileSync } from "node:fs";
+import { appendFileSync, existsSync, writeFileSync, readFileSync } from "node:fs";
 const send = (m) => process.stdout.write(JSON.stringify(m) + "\n");
 const notify = (method, params) => send({ method, params });
+const setupFile = process.env.CODEX_HOME + "/fake-protection";
+let configuredMode = existsSync(setupFile) ? readFileSync(setupFile, "utf8") : null;
 const threadId = "thread-1";
 let interrupts = 0;
 let crashScheduled = false;
@@ -19,12 +21,30 @@ createInterface({ input: process.stdin })
         reply({ userAgent: "fake" });
         break;
       case "windowsSandbox/readiness":
-        reply({ status: process.env.BITACORA_FAKE_SAFETY || "ready" });
+        if (process.env.BITACORA_FAKE_READ_FAIL) { send({ id: m.id, error: { message: "read failed" } }); break; }
+        reply({ status: configuredMode ? "ready" : process.env.BITACORA_FAKE_SAFETY || "ready" });
         break;
       case "config/read":
-        reply({ config: { windows: { sandbox: "unelevated" } } });
+        reply({ config: { windows: { sandbox: configuredMode || (process.env.BITACORA_FAKE_MODE || (process.env.BITACORA_FAKE_SAFETY ? null : "elevated")) } } });
+        break;
+      case "config/value/write":
+        configuredMode = m.params.value;
+        writeFileSync(setupFile, configuredMode);
+        setTimeout(() => reply({}), Number(process.env.BITACORA_FAKE_CONFIG_DELAY || 0));
+        break;
+      case "windowsSandbox/setupStart":
+        if (process.env.BITACORA_FAKE_SETUP_TIMEOUT) break;
+        if (process.env.BITACORA_FAKE_SETUP_INTERRUPTED && !existsSync(setupFile + ".interrupted")) { writeFileSync(setupFile + ".interrupted", "1"); reply({ started: true }); setTimeout(() => process.exit(3), 40); break; }
+        reply({ started: true });
+        setTimeout(() => {
+          const success = !process.env.BITACORA_FAKE_SETUP_FAIL;
+          if (success) writeFileSync(setupFile, "elevated");
+          if (process.env.BITACORA_FAKE_SETUP_CRASH) process.exit(3);
+          notify("windowsSandbox/setupCompleted", { mode: m.params.mode, success, error: success ? null : "UAC cancelled" });
+        }, Number(process.env.BITACORA_FAKE_SETUP_DELAY || 100));
         break;
       case "account/read":
+        if (existsSync(setupFile + ".hang")) break;
         if (process.env.BITACORA_FAKE_IDLE_CRASH && !crashScheduled) {
           crashScheduled = true;
           setTimeout(() => process.exit(3), 2000);
@@ -85,6 +105,10 @@ createInterface({ input: process.stdin })
             threadId,
             turn: { ...turn("failed"), error: { message: "final" } },
           });
+        }
+        if (scenario === "markdown") {
+          notify("item/completed", { threadId, item: { type: "agentMessage", id: "markdown", text: "Creé **hola.txt**.\n\n- Una *prueba*\n- Código: `hola`\n\n```txt\nHola, mundo\n```\n\n[Enlace](https://example.test)\n\n<script>alert('raw')</script>" } });
+          notify("turn/completed", { threadId, turn: turn("completed") });
         }
         if (scenario === "race")
           notify("turn/completed", { threadId, turn: turn("completed") });

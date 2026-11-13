@@ -6,6 +6,8 @@ import type {
   ServerMessage,
 } from "../../server/src/contracts";
 import "./style.css";
+import ReactMarkdown from "react-markdown";
+import { protectionText } from "./protection-text";
 
 const buttonBase = "touch-manipulation cursor-pointer rounded-lg border px-[15px] py-[10px] text-center disabled:opacity-50 disabled:cursor-default focus-visible:outline-3 focus-visible:outline-[#94733c] focus-visible:outline-offset-3 max-[460px]:text-xs max-[460px]:p-[9px]";
 const buttonSecondary = `${buttonBase} border-[#c6d0c9] hover:bg-[#e4ebe5]`;
@@ -234,10 +236,10 @@ function App() {
           {work?.messages.map((m) => (
             <article
               key={m.id}
-              className={`mb-[26px] text-[15px] leading-[1.75] [&>h2]:text-[11px] [&>h2]:uppercase [&>h2]:tracking-[1px] [&>h2]:text-[#67746b] [&>h2]:mb-[7px] [&>div]:whitespace-pre-wrap [&>div]:[overflow-wrap:anywhere] ${m.role === "user" ? "bg-[#eef0e8] py-[18px] px-[22px] rounded-xl" : ""}`}
+              className={`mb-[26px] text-[15px] leading-[1.75] [&>h2]:text-[11px] [&>h2]:uppercase [&>h2]:tracking-[1px] [&>h2]:text-[#67746b] [&>h2]:mb-[7px] [&>div]:[overflow-wrap:anywhere] ${m.role === "user" ? "bg-[#eef0e8] py-[18px] px-[22px] rounded-xl" : ""}`}
             >
               <h2>{m.role === "user" ? "Vos" : "Bitácora"}</h2>
-              <div>{m.text}</div>
+              {m.role === "user" ? <div className="whitespace-pre-wrap">{m.text}</div> : <div className="markdown"><ReactMarkdown skipHtml components={{ a: ({node, ...props}) => <a {...props} target="_blank" rel="noopener noreferrer" /> }}>{m.text}</ReactMarkdown></div>}
             </article>
           ))}
           <div ref={bottom} />
@@ -255,12 +257,19 @@ function App() {
             </p>
           )}
           {online && state.engine.available && !state.engine.safety.allowed && (
-            <p role="alert" className="text-sm text-[#913d2c]">
-              La protección de la carpeta no está preparada. No puedo enviar
-              pedidos hasta completar la preparación de Windows.
-            </p>
+            state.engine.safety.status !== "failed" && !state.engine.safety.needsPermission ?
+              <p role="status" className="mb-3 text-sm">Preparando todo…</p> :
+            <section aria-labelledby="protection-title" className="mb-4 rounded-xl border border-[#cdd4c8] bg-[#fffefa] p-5">
+              <h2 id="protection-title" className="font-semibold">{state.engine.safety.status === "failed" ? "No pude dejar todo listo" : "Antes de empezar"}</h2>
+              {state.engine.safety.needsPermission && <p className="my-2 text-sm">Para trabajar en tu carpeta sin cambiar tus otros archivos, Bitácora necesita preparar la protección de tu compu. Windows va a mostrar un cartel para permitir cambios. Tocá «Sí» si querés continuar.</p>}
+              <p role="status" className="my-2 text-sm">{protectionText(state.engine.safety)}</p>
+              <button className={buttonPrimary} disabled={state.engine.safety.status === "preparing"}
+                onClick={() => send({ type: "prepareProtection" })}>
+                {state.engine.safety.status === "preparing" ? "Preparando…" : state.engine.safety.status === "failed" ? "Reintentar" : "Preparar la protección"}
+              </button>
+            </section>
           )}
-          {online && (!state.engine.available || !state.engine.safety.allowed) && <details className="mb-3 text-xs text-[#596b5e]">
+          {online && (!state.engine.available || (!state.engine.safety.allowed && (state.engine.safety.needsPermission || state.engine.safety.status === "failed"))) && <details className="mb-3 text-xs text-[#596b5e]">
             <summary className="cursor-pointer focus-visible:outline-3 focus-visible:outline-[#94733c] focus-visible:outline-offset-3">
               Detalle del motor
             </summary>
@@ -275,7 +284,9 @@ function App() {
             {work?.busy
               ? work.progress
               : work?.progress ||
-                (state.account.connected
+                (!state.engine.safety.allowed
+                  ? ""
+                  : state.account.connected
                   ? "Todo listo para empezar."
                   : "Conectá tu cuenta de ChatGPT para empezar.")}
           </p>
