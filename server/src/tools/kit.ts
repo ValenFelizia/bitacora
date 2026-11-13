@@ -1,12 +1,16 @@
-import { readdir, mkdir } from 'node:fs/promises';
+import { readdir, mkdir, realpath } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { AgencyFiles } from './paths';
 
-export async function initializeKit(workspace: string) {
+export async function initializeKit(workspace: string, data: string) {
   await mkdir(workspace, {recursive:true});
+  await mkdir(data,{recursive:true});
   const source = new AgencyFiles(fileURLToPath(new URL('../../../kit/turismo/', import.meta.url)));
   const target = new AgencyFiles(workspace);
-  try { await target.read('.bitacora-kit-initialized'); return; }
+  const state = new AgencyFiles(data);
+  const marker = `kit-initialized-${createHash('sha256').update((await realpath(workspace)).toLowerCase()).digest('hex')}.json`;
+  try { await state.read(marker); return; }
   catch(e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
   async function copy(dir: string) {
     for (const item of await readdir(await source.path(dir), { withFileTypes: true })) {
@@ -17,5 +21,5 @@ export async function initializeKit(workspace: string) {
     }
   }
   await copy('.');
-  await target.write('.bitacora-kit-initialized', '1\n');
+  await state.write(marker, JSON.stringify({version:1,workspace:await realpath(workspace)}));
 }

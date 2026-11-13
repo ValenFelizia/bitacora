@@ -17,7 +17,7 @@ const evidence = join(process.cwd(), 'docs/verification/issue6');
 await mkdir(workspace,{recursive:true}); await mkdir(home,{recursive:true}); await mkdir(evidence,{recursive:true});
 let child: ReturnType<typeof spawn> | undefined;
 try {
-  await initializeKit(workspace); await registerKit(home,workspace);
+  await initializeKit(workspace,join(base,'datos')); await registerKit(home,workspace);
   const files = new AgencyFiles(workspace);
   await copyFile('C:/Windows/Fonts/arial.ttf',join(workspace,'ejemplo/local.ttf'));
   const html = (await files.read('ejemplo/pieza.html')).replace('</style>',"@font-face{font-family:Local;src:url('local.ttf')}p{font-family:Local}</style>");

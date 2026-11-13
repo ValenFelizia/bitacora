@@ -30,7 +30,7 @@ test('path boundaries, Windows names, links and kit preservation', async () => {
     await symlink(join(f.root, 'real'), join(f.root, 'link'), 'junction');
     await assert.rejects(f.files.write('link/archivo', 'no'));
     await f.files.write('AGENTS.md', 'Instrucciones propias');
-    await initializeKit(f.root); await initializeKit(f.root);
+    await initializeKit(f.root,f.data); await initializeKit(f.root,f.data);
     assert.equal(await f.files.read('AGENTS.md'), 'Instrucciones propias');
     assert.match(await f.files.read('ejemplo/pieza.html'), /data-cites/);
   } finally { await f.close(); }
@@ -59,7 +59,7 @@ test('fetch with explicit test-only local grant, photos, append, SSRF and redire
 test('real Edge: citation failures, exact PNG, PDF, overflow, broken fonts and blocked resources', async () => {
   const f = await fixture();
   try {
-    await initializeKit(f.root);
+    await initializeKit(f.root,f.data);
     const input = {html:'ejemplo/pieza.html', source:'ejemplo/fuente.md', report:'control.md', rules:'ejemplo/rules.json'};
     assert.equal((await controlar(f.files,input)).ok,true);
     const draw = await dibujar(f.files,{html:input.html,destination:'salida',width:1080,height:1920});
@@ -89,7 +89,7 @@ test('real MCP stdio client discovers and calls all three tools', async () => {
   const transport = new StdioClientTransport({command:process.execPath,args:['--import',pathToFileURL(createRequire(import.meta.url).resolve('tsx/esm')).href,join(process.cwd(),'server/src/tools/mcp.ts'),f.root,f.options.allowedUrls],stderr:'pipe'});
   const client = new Client({name:'verification',version:'1.0'});
   try {
-    await initializeKit(f.root);
+    await initializeKit(f.root,f.data);
     await client.connect(transport);
     assert.deepEqual((await client.listTools()).tools.map(t=>t.name).sort(),['controlar','dibujar','traer']);
     for (const [name,args] of [

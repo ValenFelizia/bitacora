@@ -1,9 +1,9 @@
-import { paths } from "./paths";
+import { paths, preparePaths } from "./paths";
 import { CodexEngine } from "./codex/engine";
 import { serve } from "./server";
 import { initializeKit } from './tools/kit';
-const locations = paths();
-await initializeKit(locations.workspace);
+const locations = await preparePaths(paths());
+await initializeKit(locations.workspace,locations.data);
 const server = await serve(
   new CodexEngine({
     home: locations.codexHome,
