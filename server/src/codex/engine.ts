@@ -1,8 +1,11 @@
 import {
   spawn,
   execFileSync,
+  execFile,
   type ChildProcessWithoutNullStreams,
 } from "node:child_process";
+import { promisify } from "node:util";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { mkdir } from "node:fs/promises";
 import type { Engine, EngineEvent, Account, ExecutionSafety } from "../engine";
@@ -21,6 +24,8 @@ type Responses = {
   initialize: unknown;
   "windowsSandbox/readiness": WindowsSandboxReadinessResponse;
   "config/read": ConfigReadResponse;
+  "config/value/write": unknown;
+  "windowsSandbox/setupStart": { started: boolean };
   "account/read": GetAccountResponse;
   "account/login/start": LoginAccountResponse;
   "account/login/cancel": unknown;
@@ -81,6 +86,7 @@ export class CodexEngine implements Engine {
       args?: string[];
       restartDelayMs?: number;
       stableAfterMs?: number;
+      probeProtection?: () => Promise<boolean>;
     },
   ) {}
   subscribe(listener: (event: EngineEvent) => void) {
@@ -140,7 +146,7 @@ export class CodexEngine implements Engine {
     this.stderr = "";
     createInterface({ input: this.child.stdout }).on("line", (line) => {
       try {
-        this.receive(JSON.parse(line));
+        if (this.child === child) this.receive(JSON.parse(line));
       } catch (error) {
         failedChild(new Error(`Invalid engine message: ${String(error)}`));
       }
@@ -159,24 +165,7 @@ export class CodexEngine implements Engine {
         capabilities: { experimentalApi: false, requestAttestation: false },
       });
       this.write({ method: "initialized" });
-      try {
-        const readiness = await this.rpc("windowsSandbox/readiness", undefined);
-        const { config } = await this.rpc("config/read", {
-          includeLayers: false,
-        });
-        const windows = config.windows as { sandbox?: string } | null;
-        const mode = windows?.sandbox;
-        this.safety = {
-          allowed: readiness.status === "ready",
-          detail: `windowsSandbox/readiness=${readiness.status}; windows.sandbox=${mode || (readiness.status === "ready" ? "effective restricted backend (legacy features or managed configuration)" : "disabled")}; workspace-write`,
-        };
-      } catch (error) {
-        if (this.child !== child) throw error;
-        this.safety = {
-          allowed: false,
-          detail: `Execution safety check failed: ${String(error)}`,
-        };
-      }
+      await this.checkProtection(env);
       if (this.child !== child)
         throw new Error("Engine stopped during initialization");
       this.available = true;
@@ -192,6 +181,83 @@ export class CodexEngine implements Engine {
       failedChild(error instanceof Error ? error : new Error(String(error)));
       throw error;
     }
+  }
+  private setupMode: "mxc" | "elevated" = "elevated";
+  private setupTimer?: NodeJS.Timeout;
+  private setupPending = false;
+  private setProtection(safety: ExecutionSafety) {
+    this.safety = safety;
+    this.emit({ type: "protection", safety });
+  }
+  private async checkProtection(env: NodeJS.ProcessEnv) {
+    try {
+      const readiness = await this.rpc("windowsSandbox/readiness", undefined);
+      const { config } = await this.rpc("config/read", { includeLayers: false });
+      const mode = (config.windows as { sandbox?: string } | null)?.sandbox;
+      const detail = `windowsSandbox/readiness=${readiness.status}; windows.sandbox=${mode || "disabled"}; workspace-write`;
+      if (readiness.status === "ready" && (mode === "mxc" || mode === "elevated")) {
+        clearTimeout(this.setupTimer);
+        this.setProtection({ allowed: true, status: "ready", detail });
+        return;
+      }
+      const mxc = this.options.probeProtection
+        ? await this.options.probeProtection()
+        : await promisify(execFile)(this.options.binary || "codex", [
+            "-c", "windows.sandbox=mxc", "sandbox", "--include-managed-config",
+            "--permission-profile", ":workspace", "--", "cmd.exe", "/d", "/c", "echo MXC_OK",
+          ], { cwd: this.options.workspace, env, windowsHide: true, timeout: 30000 })
+            .then(r => r.stdout.trim() === "MXC_OK", () => false);
+      this.setupMode = mxc ? "mxc" : "elevated";
+      const interrupted = this.safety.status === "preparing";
+      this.setProtection({ allowed: false, status: interrupted ? "failed" : "needed",
+        needsPermission: !mxc, detail,
+        message: interrupted ? "Se interrumpió la preparación. Revisé la protección y todavía no está lista. Podés reintentar." : undefined });
+    } catch (error) {
+      this.setProtection({ allowed: false, status: "failed", needsPermission: true, detail: String(error),
+        message: "No pude comprobar la protección. Reintentá la preparación." });
+    }
+  }
+  async prepareProtection() {
+    if (!this.available || this.safety.allowed || this.safety.status === "preparing" || this.setupPending) return;
+    this.setProtection({ ...this.safety, allowed: false, status: "preparing", message: undefined });
+    try {
+      if (this.setupMode === "mxc") {
+        await this.rpc("config/value/write", { keyPath: "windows.sandbox", value: "mxc",
+          mergeStrategy: "replace", filePath: join(this.options.home, "config.toml") });
+        await this.reloadProtection();
+      } else {
+        // No fallback: the user has already seen the permission explanation.
+        this.setupPending = true;
+        const { started } = await this.rpc("windowsSandbox/setupStart", { mode: "elevated", cwd: this.options.workspace });
+        if (!started) throw new Error("Windows did not start protection setup");
+        if (this.executionSafety().status === "preparing") this.setupTimer = setTimeout(() => {
+          this.setProtection({ ...this.safety, message: "Windows todavía no confirmó el resultado. Esperá a que cierre el cartel de permiso. Si no termina, cerrá y volvé a abrir Bitácora para comprobar la protección." });
+        }, 180000);
+      }
+    } catch (error) {
+      if (error instanceof EngineFailure) this.setupPending = false;
+      this.protectionFailed(String(error));
+    }
+  }
+  private protectionFailed(detail: string) {
+    clearTimeout(this.setupTimer);
+    this.setProtection({ ...this.safety, allowed: false, status: "failed", detail,
+      message: "Windows no pudo terminar la preparación. Si cancelaste el permiso, podés reintentar. Si vuelve a fallar, abrí el detalle para pedir ayuda." });
+  }
+  private async reloadProtection() {
+    const child = this.child;
+    this.child = undefined;
+    this.available = false;
+    this.setupPending = false;
+    this.safety = { ...this.safety, allowed: false };
+    clearTimeout(this.setupTimer);
+    clearTimeout(this.stableTimer);
+    this.emit({ type: "availability", available: false, safety: this.safety });
+    if (child) await new Promise<void>(resolve => {
+      child.once("exit", () => resolve());
+      child.kill();
+    });
+    if (!this.stopping) await this.start();
   }
   private write(value: unknown) {
     if (!this.child || this.child.stdin.destroyed)
@@ -233,6 +299,9 @@ export class CodexEngine implements Engine {
     }
     this.pending.clear();
     this.available = false;
+    this.setupPending = false;
+    this.safety = { ...this.safety, allowed: false };
+    clearTimeout(this.setupTimer);
     clearTimeout(this.stableTimer);
     if (!this.stopping) {
       this.emit({
@@ -300,6 +369,12 @@ export class CodexEngine implements Engine {
   }
   private notification(n: ServerNotification) {
     switch (n.method) {
+      case "windowsSandbox/setupCompleted":
+        this.setupPending = false;
+        clearTimeout(this.setupTimer);
+        if (!n.params.success) this.protectionFailed(n.params.error || "Windows setup failed");
+        else void this.reloadProtection().catch(error => this.protectionFailed(String(error)));
+        break;
       case "account/updated":
       case "account/login/completed":
         if (n.method === "account/login/completed") {
@@ -512,6 +587,7 @@ export class CodexEngine implements Engine {
   }
   async close() {
     this.stopping = true;
+    clearTimeout(this.setupTimer);
     clearTimeout(this.restartTimer);
     clearTimeout(this.stableTimer);
     const child = this.child;

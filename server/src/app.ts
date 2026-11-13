@@ -113,6 +113,10 @@ export class App {
     this.publish({ type: "snapshot", state: this.snapshot() });
   }
   private event(event: EngineEvent) {
+    if (event.type === "protection") {
+      this.publish({ type: "snapshot", state: this.snapshot() });
+      return;
+    }
     if (event.type === "availability") {
       this.available = event.available;
       this.exhausted = event.exhausted ?? false;
@@ -214,6 +218,11 @@ export class App {
     command: ClientCommand,
     reply: (message: ServerMessage) => void,
   ) {
+    if (command.type === "prepareProtection") {
+      if (!this.available || this.submitting || this.works.some(w => w.busy)) return;
+      await this.engine.prepareProtection();
+      return;
+    }
     if (command.type === "retry") {
       await this.engine.retry();
       return;

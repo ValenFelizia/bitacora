@@ -255,10 +255,18 @@ function App() {
             </p>
           )}
           {online && state.engine.available && !state.engine.safety.allowed && (
-            <p role="alert" className="text-sm text-[#913d2c]">
-              La protección de la carpeta no está preparada. No puedo enviar
-              pedidos hasta completar la preparación de Windows.
-            </p>
+            <section aria-labelledby="protection-title" className="mb-4 rounded-xl border border-[#cdd4c8] bg-[#fffefa] p-5">
+              <h2 id="protection-title" className="font-semibold">Antes de empezar</h2>
+              <p className="my-2 text-sm">Bitácora necesita preparar la protección de tu compu para trabajar en tu carpeta sin cambiar tus otros archivos. Se hace una sola vez.</p>
+              {state.engine.safety.needsPermission && <p className="my-2 text-sm">Windows va a mostrar un cartel para permitir cambios en la compu. Tocá «Sí». Esto crea cuentas de uso restringido y reglas de protección de archivos y conexiones. Después no te vamos a pedir permiso para cada pedido.</p>}
+              <p role="status" className="my-2 text-sm">
+                {state.engine.safety.status === "preparing" ? "Preparando la protección… Esperá a que termine." : state.engine.safety.message || "Hasta que esté lista, no se pueden enviar pedidos."}
+              </p>
+              <button className={buttonPrimary} disabled={state.engine.safety.status === "preparing"}
+                onClick={() => send({ type: "prepareProtection" })}>
+                {state.engine.safety.status === "preparing" ? "Preparando…" : state.engine.safety.status === "failed" ? "Reintentar preparación" : "Preparar la protección"}
+              </button>
+            </section>
           )}
           {online && (!state.engine.available || !state.engine.safety.allowed) && <details className="mb-3 text-xs text-[#596b5e]">
             <summary className="cursor-pointer focus-visible:outline-3 focus-visible:outline-[#94733c] focus-visible:outline-offset-3">
@@ -275,7 +283,9 @@ function App() {
             {work?.busy
               ? work.progress
               : work?.progress ||
-                (state.account.connected
+                (!state.engine.safety.allowed
+                  ? "Prepará la protección para empezar."
+                  : state.account.connected
                   ? "Todo listo para empezar."
                   : "Conectá tu cuenta de ChatGPT para empezar.")}
           </p>
