@@ -1,6 +1,7 @@
 # Verificación del kit de turismo
 
-La ronda de retrabajo y sus resultados actuales están en [review.md](review.md).
+La tercera ronda y sus resultados actuales están en [final-review.md](final-review.md).
+La ronda anterior se conserva en [review.md](review.md).
 Incluye descarga pública real, lista de links escritos por la usuaria y las
 tres nuevas corridas de 43 pruebas. Los registros de 37 pruebas más abajo
 corresponden a la primera entrega.

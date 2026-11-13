@@ -22,6 +22,8 @@ No intentes instalar programas, usar la red ni lanzar un navegador desde comando
    `data-piece`, tamaño explícito y `box-sizing:border-box`. No usa JavaScript.
    Usá texto y fotos en el documento principal. Sacá shadow DOM, iframe, object,
    embed, formularios y content con counter/counters: las herramientas los rechazan.
+   Sacá también listas con texto o números generados, @counter-style, reglas @page
+   y head/title visibles. El tamaño del PDF lo define la herramienta.
    Poné citas cerca de cada número: `<p data-cites='{"7":5}'>7 noches</p>`
    cita la línea 5 de la fuente. La clave es el número escrito tal cual se ve.
    Sacá también las citas de datos que ya no se muestran: el informe las avisa.
@@ -41,6 +43,9 @@ No intentes instalar programas, usar la red ni lanzar un navegador desde comando
 
 - Todo número visible sale de una línea citada de la fuente, incluso noches,
   equipaje, cuotas, fechas y números dentro del nombre de un hotel.
+- El control reconoce dígitos Unicode, pero no lee números dentro de imágenes ni
+  escritos con palabras. No uses esas formas para precios ni fechas: escribilos
+  como texto con dígitos y cita en el HTML.
 - No mezcles tarifas de hoteles, bases ni fechas distintas. Si hay contradicciones,
   avisá y preguntá; no corrijas la fuente ni elijas un total por tu cuenta.
 - Aclará moneda, base y tasas. No conviertas un precio «desde» en precio final.

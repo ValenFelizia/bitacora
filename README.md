@@ -82,7 +82,8 @@ están implementados. Tampoco hay instalador. Los adjuntos y la galería se trab
 
 La capa de arranque de la app copia `kit/turismo/` a la carpeta de la agencia
 una sola vez, sin reemplazar archivos existentes, y deja la marca
-`.bitacora-kit-initialized`. No repone archivos borrados en arranques posteriores.
+`kit-initialized-<identidad de la agencia>.json` en la carpeta de datos, fuera de
+la agencia. No repone archivos borrados aunque se vacíe toda la agencia.
 Las instrucciones, el HTML de ejemplo y las reglas son
 archivos que el agente puede modificar conversando con la usuaria. No incluyen
 marca ni tono de una agencia: eso corresponde a #7.
@@ -97,7 +98,9 @@ El servidor MCP es un envoltorio de los módulos neutrales de `server/src/tools/
   (JPEG, PNG o WebP). Límite de página: 2 MB; por foto: 5 MB; operación: 45 s;
   hasta 5 redirecciones. Valida cada destino y fija la dirección DNS validada
   al conectar (incluida la resolución de nombres en Node 24). Decodifica el
-  charset de la cabecera o del meta HTML y comprueba firma y cabecera de cada foto.
+  charset de la cabecera o del meta HTML y decide el tipo de cada foto por sus
+  bytes, aunque la cabecera diga image/jpg u octet-stream. Envía User-Agent de
+  navegador y Accept para páginas y fotos.
   Rechaza redes privadas, locales y loopback. Sin `url`, `notes`
   agrega datos de la usuaria con fecha al final de la fuente existente.
 - **Controlar:** recibe `html`, `source`, `report` y opcionalmente `rules`.
@@ -115,7 +118,10 @@ El servidor MCP es un envoltorio de los módulos neutrales de `server/src/tools/
   1080 × 1920). Lee un archivo HTML estático con piezas `data-piece`, sin
   ejecutar sus scripts. Se rechazan shadow DOM declarativo, paneles internos
   (iframe, object, embed), formularios y content con counter/counters: usá texto
-  con citas en el HTML principal. Usa `playwright-core`, Edge del sistema y escala 1,
+  con citas en el HTML principal. También rechaza listas con texto/números
+  generados, @counter-style, reglas @page y head/title visibles. Reconoce dígitos
+  Unicode; no controla números en imágenes ni escritos con palabras (no usarlos
+  para precios o fechas). Usa `playwright-core`, Edge del sistema y escala 1,
   sin descargar navegador. Verifica fuentes, medidas, desbordes y fotos chicas;
   genera un PNG por pieza, PDF y `todas.png`. Rechaza recursos que no sean
   archivos dentro de la agencia. Usá una carpeta nueva para cada dibujo:
@@ -129,12 +135,20 @@ Cambiar la consulta, ruta, puerto o esquema no queda autorizado. Si falta el lin
 el agente debe pedirle a la usuaria que lo pegue en su pedido. Solo la descarga
 puede seguir redirecciones y fotos extraídas de esa página, siempre con validación
 de direcciones; el agente no propone URLs de fotos para descargar.
+La extracción admite comillas angulares/tipográficas, paréntesis balanceados y
+links `www.` sin esquema (se guardan con https). Si la lista se daña, la app la
+aparta con un nombre `corrupt-*` y crea una lista nueva; el MCP falla cerrado
+mientras tanto. Antes de arrancar se comprueba que datos y agencia están separados
+por sus rutas reales, incluidas las rutas con alias del sistema.
 
 Todas las rutas de herramientas son relativas a la agencia: se rechazan
 escapes, rutas absolutas, enlaces simbólicos, junctions, enlaces múltiples y
 nombres especiales de Windows. Las lecturas comprueban la ruta real y la identidad
 del archivo abierto; Edge recibe esos bytes verificados desde su URL de archivo.
-Las escrituras usan temporal verificado en el mismo directorio y publicación
+Las escrituras protegen cada directorio con handles de Windows sin compartir
+borrado y un archivo transitorio protegido contra borrado que impide convertirlo
+en junction. Se mantienen desde antes de crear subcarpetas hasta terminar la
+limpieza. Usan temporal verificado en el mismo directorio y publicación
 atómica (rename para reemplazo, enlace transitorio sin sobrescritura para archivos
 nuevos), y vuelven a comprobar la ruta final. El kit no genera imágenes con IA ni busca fotos.
 Los archivos HTML pueden usar fuentes locales y fotos guardadas en la agencia.
@@ -145,16 +159,22 @@ de loopback explícito solo dentro del test, y dibujo real con Edge.
 tres herramientas por app-server, sin iniciar un turno de modelo ni usar login.
 Guarda evidencia en `docs/verification/issue6/` y usa datos descartables dentro
 de `%LOCALAPPDATA%\Bitacora-dev\issue6\`. No usa puertos de la app.
-`npx tsx scripts/verify-fetch.ts` comprueba además una descarga pública real y
-registra resolución DNS, fuente y firma en `public-fetch.json`.
+`npx tsx scripts/verify-fetch.ts <URL>` comprueba además una descarga pública real y
+registra resolución DNS, fuente y firma en `public-fetch-<host>.json`.
+`npx tsx scripts/verify-kit-mutations.ts` comprueba que quitar la protección de
+escritura o las dependencias de producción hace fallar sus respectivas pruebas;
+restaura los archivos originales al terminar.
 
 `controlar` protege contra errores honestos, no contra un agente que edite la
 fuente. Ni una cita ni un número coincidente prueban la veracidad de esa fuente.
-`tsx`, `playwright-core` y las dependencias del MCP son dependencias de producción
+`tsx`, `playwright-core`, `koffi` y las dependencias del MCP son dependencias de producción
 del servidor. Para #9 falta empaquetar ese paquete con sus dependencias, Node,
 el Codex fijado, scripts/recursos necesarios y `kit/turismo`, conservando las
 rutas relativas o adaptándolas al paquete. Se seguirá usando Edge del sistema,
 sin descargar navegador; no se implementó el instalador en este issue.
+El paquete debe incluir además el binario precompilado de Koffi para la arquitectura
+Windows correspondiente; se usa para los handles del sistema, sin compilador ni
+instalación adicional por parte de la usuaria.
 
 - Qué tiene que hacer el MVP: [`.csdd/specs.md`](.csdd/specs.md)
 - Por qué está armado así: [`.csdd/decisions.md`](.csdd/decisions.md)
