@@ -355,3 +355,20 @@ for (const scenario of ["success", "failure", "restart", "mxc"] as const) {
     }
   });
 }
+
+
+test("generic files become local images and named relative document mentions", async () => {
+  const f = await fixture();
+  const image = join(f.dir, 'workspace', 'adjuntos', 'foto con ñ.png');
+  const pdf = join(f.dir, 'workspace', 'adjuntos', 'cotización.pdf');
+  try {
+    await f.engine.send("thread-1", "Describí", [
+      { path: image, mime: "image/png" },
+      { path: pdf, mime: "application/pdf" },
+    ]);
+    const call = (await f.records()).find(m => m.method === "turn/start");
+    assert.equal(call.params.input[0].text, 'Describí');
+    assert.deepEqual(call.params.input[1], { type: 'mention', name: 'cotización.pdf', path: join('adjuntos', 'cotización.pdf') });
+    assert.deepEqual(call.params.input[2], { type: "localImage", path: image });
+  } finally { await f.close(); }
+});

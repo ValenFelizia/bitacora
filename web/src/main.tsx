@@ -6,6 +6,10 @@ import type {
   ServerMessage,
 } from "../../server/src/contracts";
 import "./style.css";
+import { FileCard } from "./files";
+import type { Work } from "../../server/src/contracts";
+const latestResult = (work: Work) => work.messages.flatMap(m => m.results || []).reduce((latest, f) => f.createdAt > latest ? f.createdAt : latest, "");
+import type { Upload } from "../../server/src/contracts";
 import ReactMarkdown from "react-markdown";
 import { protectionText } from "./protection-text";
 
@@ -19,6 +23,10 @@ function App() {
     works: [],
     engine: { available: false, safety: { allowed: false, detail: "" } },
   });
+  const [gallery, setGallery] = useState(false);
+  const [attachments, setAttachments] = useState<Upload[]>([]);
+  const [readingFiles, setReadingFiles] = useState(false);
+  const fileInput = useRef<HTMLInputElement>(null);
   const [selected, setSelected] = useState<string>();
   const [text, setText] = useState("");
   const [online, setOnline] = useState(false);
@@ -73,6 +81,7 @@ function App() {
         if (message.type === "selected") {
           setSelected(message.workId);
           setText("");
+          setAttachments([]);
           setPending(false);
         }
         if (message.type === "problem") {
@@ -106,6 +115,45 @@ function App() {
     setProblem(undefined);
     socket.current.send(JSON.stringify(command));
   }
+  async function addFiles(files: File[]) {
+    if (readingFiles || pending) return;
+    setReadingFiles(true);
+    try {
+      if (attachments.length + files.length > 10) throw new Error("Podés adjuntar hasta 10 archivos.");
+      const total = attachments.reduce((n, f) => n + f.data.length * 3 / 4, 0) + files.reduce((n, f) => n + f.size, 0);
+      if (total > 40 * 1024 * 1024) throw new Error("Los adjuntos pueden pesar hasta 40 MB en total.");
+      for (const f of files) {
+        if (!/\.(png|jpe?g|webp|pdf|txt|md|csv|json)$/i.test(f.name)) throw new Error("Elegí una imagen, un PDF o texto (txt, md, csv o json).");
+        if (!f.size || f.size > 20 * 1024 * 1024) throw new Error("Cada archivo debe tener contenido y pesar hasta 20 MB.");
+      }
+      const added = await Promise.all(files.map(f => new Promise<Upload>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve({ name: f.name, data: String(reader.result).split(",")[1] });
+        reader.onerror = () => reject(new Error("No pude leer el archivo. Elegilo de nuevo."));
+        reader.readAsDataURL(f);
+      })));
+      setAttachments(previous => [...previous, ...added]);
+      setProblem(undefined);
+    } catch (error) { setProblem({ text: String((error as Error).message) }); }
+    finally { setReadingFiles(false); }
+  }
+  useEffect(() => {
+    const dragover = (event: DragEvent) => { event.preventDefault(); };
+    const drop = (event: DragEvent) => {
+      event.preventDefault();
+      if (event.dataTransfer?.files.length) {
+        setGallery(false);
+        void addFiles(Array.from(event.dataTransfer.files));
+      }
+    };
+    window.addEventListener('dragover', dragover);
+    window.addEventListener('drop', drop);
+    return () => { window.removeEventListener('dragover', dragover); window.removeEventListener('drop', drop); };
+  });
+  useEffect(() => {
+    document.title = gallery ? "Galería · Bitácora" : "Bitácora";
+    document.querySelector<HTMLElement>("main")?.focus();
+  }, [gallery]);
   return (
     <div className="grid grid-cols-[280px_1fr] h-dvh max-[720px]:grid-cols-[190px_1fr] max-[460px]:grid-cols-[135px_1fr] font-sans text-[#283c3a] bg-[#faf9f5] [font-synthesis:none]">
       <aside className="bg-[#edf0e9] border-r border-[#dbe0d6] pt-[30px] px-[22px] pb-[22px] flex flex-col gap-7 overflow-y-auto max-[720px]:px-3 max-[720px]:py-5 max-[720px]:gap-5">
@@ -120,6 +168,8 @@ function App() {
         <button
           className={`${buttonPrimary} w-full`}
           onClick={() => {
+            setGallery(false);
+            setAttachments([]);
             setSelected(undefined);
             setText("");
             setProblem(undefined);
@@ -127,6 +177,7 @@ function App() {
         >
           + Nuevo trabajo
         </button>
+        <button className={buttonSecondary} onClick={() => setGallery(true)} aria-pressed={gallery}>Galería</button>
         <nav
           className="flex-1 [&>h2]:uppercase [&>h2]:tracking-[1.5px] [&>h2]:text-[11px] [&>h2]:mb-4 [&>h2]:text-[#58675e]"
           aria-label="Trabajos anteriores"
@@ -139,6 +190,7 @@ function App() {
                   className={`${buttonBase} hover:bg-[#e4ebe5] block w-full text-left mb-2 p-3 [&>span]:block [&>span]:[overflow-wrap:anywhere] [&>span]:text-sm [&>span]:font-[550] ${selected === w.id ? "bg-[#fffefa] border-[#d9ddd2]" : "border-transparent"}`}
                   aria-current={selected === w.id ? "page" : undefined}
                   onClick={() => {
+                    setGallery(false);
                     setSelected(w.id);
                     setProblem(undefined);
                   }}
@@ -214,13 +266,25 @@ function App() {
           )}
         </section>
       </aside>
-      <main className="flex flex-col min-w-0 min-h-0">
+      <main tabIndex={-1} className="flex flex-col min-w-0 min-h-0">
         <header className="py-5 px-9 border-b border-[#e6e7de] flex items-center justify-between gap-5 [&>p]:m-0 [&>p]:text-sm [&>p]:font-semibold [&>p]:truncate [&>span]:text-[#69756d] [&>span]:text-xs [&>span]:shrink-0 max-[720px]:p-4 max-[720px]:[&>span]:hidden">
-          <p>{work?.title || "Un lugar para tus próximos pasos"}</p>
+          <p>{gallery ? "Galería" : work?.title || "Un lugar para tus próximos pasos"}</p>
           <span>{online ? "Tu espacio de trabajo" : "Reconectando…"}</span>
         </header>
         <div className="overflow-y-auto flex-1 py-8 px-[max(30px,calc((100%_-_760px)/2))] max-[720px]:p-5">
-          {!work && (
+          {gallery && <section aria-label="Resultados por trabajo">
+            <h2 className="font-[Georgia,serif] text-3xl mb-6">Todo lo que creamos</h2>
+            {!state.works.some(w => w.messages.some(m => m.results?.length)) && <p>Cuando preparemos imágenes o PDFs, los vas a encontrar acá.</p>}
+            {[...state.works].sort((a, b) => latestResult(b).localeCompare(latestResult(a))).map(w => {
+              const results = w.messages.flatMap(m => m.results || []).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+              return results.length ? <section key={w.id} className="mb-8">
+                <h3 className="font-semibold">{w.title}</h3>
+                <button className={buttonSecondary} onClick={() => { setSelected(w.id); setGallery(false); }}>Ir al trabajo</button>
+                <div className="grid gap-4 sm:grid-cols-2">{results.map(f => <FileCard key={f.id} file={f} token={state.fileToken} result />)}</div>
+              </section> : null;
+            })}
+          </section>}
+          {!gallery && !work && (
             <section className="mt-[10vh] mx-auto mb-[30px] [&>h2]:font-[Georgia,serif] [&>h2]:text-4xl [&>h2]:leading-[1.2] [&>h2]:tracking-[-0.7px] [&>h2]:my-[18px] [&>p:last-child]:text-[#657168] [&>p:last-child]:leading-[1.8] [&>p:last-child]:text-base max-[720px]:[&>h2]:text-[28px] max-[460px]:[&>h2]:text-2xl">
               <p className="text-[10px] tracking-[1.7px] font-[650] text-[#5e7067] max-[460px]:text-[8px]">
                 EMPECEMOS POR UNA IDEA
@@ -233,18 +297,20 @@ function App() {
               </p>
             </section>
           )}
-          {work?.messages.map((m) => (
+          {!gallery && work?.messages.map((m) => (
             <article
               key={m.id}
               className={`mb-[26px] text-[15px] leading-[1.75] [&>h2]:text-[11px] [&>h2]:uppercase [&>h2]:tracking-[1px] [&>h2]:text-[#67746b] [&>h2]:mb-[7px] [&>div]:[overflow-wrap:anywhere] ${m.role === "user" ? "bg-[#eef0e8] py-[18px] px-[22px] rounded-xl" : ""}`}
             >
               <h2>{m.role === "user" ? "Vos" : "Bitácora"}</h2>
-              {m.role === "user" ? <div className="whitespace-pre-wrap">{m.text}</div> : <div className="markdown"><ReactMarkdown skipHtml components={{ a: ({node, ...props}) => <a {...props} target="_blank" rel="noopener noreferrer" /> }}>{m.text}</ReactMarkdown></div>}
+              {m.role === "user" ? <div className="whitespace-pre-wrap">{m.text.split(/(https?:\/\/[^\s]+)/g).map((part, i) => /^https?:\/\//.test(part) ? <a key={i} className="underline text-[#245a4d]" href={part} target="_blank" rel="noreferrer">{part}</a> : part)}</div> : <div className="markdown"><ReactMarkdown skipHtml components={{ a: ({node, ...props}) => <a {...props} target="_blank" rel="noopener noreferrer" /> }}>{m.text}</ReactMarkdown></div>}
+              <div className="grid gap-3 sm:grid-cols-2">{m.attachments?.map(f => <FileCard key={f.id} file={f} token={state.fileToken} />)}</div>
+              {!!m.results?.length && <section aria-label="Resultados del pedido"><h3 className="mt-5 font-semibold">Resultados</h3><div className="grid gap-3 sm:grid-cols-2">{m.results.map(f => <FileCard key={f.id} file={f} token={state.fileToken} result />)}</div></section>}
             </article>
           ))}
           <div ref={bottom} />
         </div>
-        <div className="w-full max-w-[820px] mx-auto pt-[10px] px-[30px] pb-[26px] max-[720px]:px-4 max-[720px]:pb-[18px]">
+        {!gallery && <div className="w-full max-w-[820px] mx-auto pt-[10px] px-[30px] pb-[26px] max-[720px]:px-4 max-[720px]:pb-[18px]">
           {state.notice && (
             <p role="alert" className="text-sm text-[#913d2c]">
               {state.notice}
@@ -311,7 +377,8 @@ function App() {
             onSubmit={(e) => {
               e.preventDefault();
               if (
-                !text.trim() ||
+                (!text.trim() && !attachments.length) ||
+                readingFiles ||
                 busy ||
                 pending ||
                 !online ||
@@ -321,7 +388,7 @@ function App() {
               )
                 return;
               setPending(true);
-              send({ type: "send", workId: selected, text });
+              send({ type: "send", workId: selected, text: text.trim() || "Revisá los archivos adjuntos.", attachments });
             }}
           >
             <label className="text-xs font-semibold" htmlFor="request">
@@ -336,6 +403,13 @@ function App() {
               placeholder="Por ejemplo: ayudame a organizar una propuesta de viaje…"
               rows={3}
             />
+            <div className="mb-3">
+              <input ref={fileInput} id="attachments" aria-label="Elegir archivos" type="file" multiple accept=".png,.jpg,.jpeg,.webp,.pdf,.txt,.md,.csv,.json" className="sr-only" tabIndex={-1} onChange={e => { void addFiles(Array.from(e.target.files || [])); e.target.value = ""; }} />
+              <button type="button" className={buttonSecondary} disabled={pending || readingFiles} onClick={() => fileInput.current?.click()}>Adjuntar archivos</button>
+              <p className="mt-2 text-xs text-[#69746a]">También podés arrastrarlos acá. Hasta 20 MB por archivo y 40 MB por pedido.</p>
+              <p role="status" className="text-xs">{readingFiles ? "Leyendo archivos…" : ""}</p>
+              <ul>{attachments.map((f, i) => <li key={i} className="flex items-center gap-3 my-2 break-words text-sm"><span>{f.name}</span><button className={buttonSecondary} type="button" aria-label={`Quitar ${f.name}`} onClick={() => setAttachments(a => a.filter((_, n) => n !== i))}>Quitar</button></li>)}</ul>
+            </div>
             <footer className="flex items-center justify-between gap-4 [&>span]:text-[11px] [&>span]:text-[#69746a] [&>button]:text-[13px] max-[720px]:[&>span]:hidden">
               <span>
                 {!online
@@ -364,7 +438,8 @@ function App() {
                     !state.engine.safety.allowed ||
                     !state.account.connected ||
                     pending ||
-                    !text.trim()
+                    readingFiles ||
+                    (!text.trim() && !attachments.length)
                   }
                   type="submit"
                 >
@@ -373,7 +448,7 @@ function App() {
               )}
             </footer>
           </form>
-        </div>
+        </div>}
       </main>
     </div>
   );

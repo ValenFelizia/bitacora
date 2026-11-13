@@ -26,7 +26,7 @@ export class FakeEngine implements Engine {
   async resumeWork(id: string) {
     this.resumed.push(id);
   }
-  async send(id: string, text: string) {
+  async send(id: string, text: string, _files?: import("../src/engine").EngineFile[]) {
     this.sent.push(text);
     this.emit({
       type: "progress",
