@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import type { FileRef } from '../../server/src/contracts';
-export function fileUrl(file: FileRef, token?: string) {
-  return `/files?id=${encodeURIComponent(file.id)}&token=${encodeURIComponent(token || '')}`;
+export function fileUrl(file: FileRef) {
+  return `/files?id=${encodeURIComponent(file.id)}`;
 }
-export function FileCard({ file, token, result = false }: { file: FileRef; token?: string; result?: boolean }) {
+export function FileCard({ file, result = false }: { file: FileRef; result?: boolean }) {
   const [missing, setMissing] = useState(false);
   const [content, setContent] = useState<{ blob: Blob; url: string }>();
   const [notice, setNotice] = useState('');
@@ -11,7 +11,7 @@ export function FileCard({ file, token, result = false }: { file: FileRef; token
     setMissing(false); setContent(undefined);
     const controller = new AbortController();
     let objectUrl: string | undefined;
-    if (token) void fetch(fileUrl(file, token), { signal: controller.signal }).then(async response => {
+    void fetch(fileUrl(file), { signal: controller.signal }).then(async response => {
       if (!response.ok) throw new Error('unavailable');
       const blob = await response.blob();
       if (controller.signal.aborted) return;
@@ -19,7 +19,7 @@ export function FileCard({ file, token, result = false }: { file: FileRef; token
       setContent({ blob, url: objectUrl });
     }).catch(() => { if (!controller.signal.aborted) setMissing(true); });
     return () => { controller.abort(); if (objectUrl) URL.revokeObjectURL(objectUrl); };
-  }, [file.id, token]);
+  }, [file.id]);
   const image = file.mime.startsWith('image/');
   async function copy() {
     if (!content) return;

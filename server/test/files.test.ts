@@ -1,3 +1,4 @@
+import { authenticate } from './session-helper';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, writeFile, readFile, rm, symlink } from 'node:fs/promises';
@@ -87,27 +88,28 @@ test('HTTP files require session token, local host, allowed origin and registere
   const engine = new FakeEngine();
   const server = await serve(engine, join(f.dir, 'data'), 0, undefined, f.files.root);
   const base = `http://127.0.0.1:${server.port}`;
-  const ws = new WebSocket(base.replace('http:', 'ws:') + '/ws', { origin: 'http://127.0.0.1:5173' });
+  const cookie = await authenticate(server);
+  const ws = new WebSocket(base.replace('http:', 'ws:') + '/ws', { origin: 'http://127.0.0.1:5173', headers: {Cookie: cookie} });
   const messages: any[] = [];
   ws.on('message', data => messages.push(JSON.parse(String(data))));
   const until = async (check: () => boolean) => { for (let i = 0; i < 300; i++) { if (check()) return; await new Promise(r => setTimeout(r, 10)); } throw new Error('timeout'); };
   try {
     await until(() => !!messages[0]);
-    const token = messages[0].state.fileToken;
+    assert.equal(messages[0].state.fileToken, undefined);
     ws.send(JSON.stringify({ type: 'send', text: 'foto', attachments: [upload()] }));
     await until(() => messages.some(m => m.state?.works[0]?.messages[0]?.attachments?.length));
     const ref = messages.find(m => m.state?.works[0]?.messages[0]?.attachments?.length).state.works[0].messages[0].attachments[0];
     const url = `${base}/files?id=${ref.id}`;
     assert.equal((await fetch(url)).status, 403);
     assert.equal((await fetch(url + '&token=incorrect')).status, 403);
-    assert.equal((await fetch(url + '&token=' + token, { headers: { Origin: 'https://evil.test' } })).status, 403);
-    assert.equal(await new Promise<number | undefined>(resolve => get(url + '&token=' + token, { headers: { Host: 'evil.test' } }, res => { res.resume(); resolve(res.statusCode); })), 403);
-    for (const id of ['../outside.png', 'C:/outside.png', '/outside.png', 'missing']) assert.equal((await fetch(`${base}/files?id=${encodeURIComponent(id)}&token=${token}`)).status, 404);
-    const good = await fetch(url + '&token=' + token + '&download=1');
+    assert.equal((await fetch(url, { headers: { Cookie: cookie, Origin: 'https://evil.test' } })).status, 403);
+    assert.equal(await new Promise<number | undefined>(resolve => get(url, { headers: { Cookie: cookie, Host: 'evil.test' } }, res => { res.resume(); resolve(res.statusCode); })), 403);
+    for (const id of ['../outside.png', 'C:/outside.png', '/outside.png', 'missing']) assert.equal((await fetch(`${base}/files?id=${encodeURIComponent(id)}`, {headers:{Cookie:cookie}})).status, 404);
+    const good = await fetch(url + '&download=1', {headers:{Cookie:cookie}});
     assert.equal(good.status, 200); assert.match(good.headers.get('content-disposition')!, /attachment.*%C3%B1/);
     assert.deepEqual(Buffer.from(await good.arrayBuffer()), png);
     assert.equal(good.headers.get('access-control-allow-origin'), null);
     await rm(join(f.files.root, ref.path));
-    assert.equal((await fetch(url + '&token=' + token)).status, 404);
+    assert.equal((await fetch(url, {headers:{Cookie:cookie}})).status, 404);
   } finally { ws.terminate(); await server.close(); await f.cleanup(); }
 });

@@ -29,6 +29,7 @@ function App() {
   const fileInput = useRef<HTMLInputElement>(null);
   const [selected, setSelected] = useState<string>();
   const [text, setText] = useState("");
+  const [entryNeeded, setEntryNeeded] = useState(false);
   const [online, setOnline] = useState(false);
   const [pending, setPending] = useState(false);
   const [problem, setProblem] = useState<{ text: string; detail?: string }>();
@@ -41,7 +42,15 @@ function App() {
   useEffect(() => {
     let disposed = false;
     let timer: ReturnType<typeof setTimeout>;
-    function connect() {
+    async function connect() {
+      try {
+        const response = await fetch('/session', {cache:'no-store'});
+        if (disposed) return;
+        if (response.status === 403) { setEntryNeeded(true); return; }
+        if (!response.ok) throw Error();
+        setEntryNeeded(false);
+      } catch { if (!disposed) timer = setTimeout(connect, 1500); return; }
+      if (disposed) return;
       const ws = new WebSocket(`ws://${location.host}/ws`);
       socket.current = ws;
       ws.onopen = () => setOnline(true);
@@ -154,6 +163,7 @@ function App() {
     document.title = gallery ? "Galería · Bitácora" : "Bitácora";
     document.querySelector<HTMLElement>("main")?.focus();
   }, [gallery]);
+  if (entryNeeded) return <main className="p-8 text-[#283c3a] bg-[#faf9f5] min-h-dvh"><h1 className="text-2xl mb-4">Volvé a entrar a Bitácora</h1><p>Abrí la dirección nueva que aparece al iniciar Bitácora. La entrada anterior ya no sirve.</p></main>;
   return (
     <div className="grid grid-cols-[280px_1fr] h-dvh max-[720px]:grid-cols-[190px_1fr] max-[460px]:grid-cols-[135px_1fr] font-sans text-[#283c3a] bg-[#faf9f5] [font-synthesis:none]">
       <aside className="bg-[#edf0e9] border-r border-[#dbe0d6] pt-[30px] px-[22px] pb-[22px] flex flex-col gap-7 overflow-y-auto max-[720px]:px-3 max-[720px]:py-5 max-[720px]:gap-5">
@@ -280,7 +290,7 @@ function App() {
               return results.length ? <section key={w.id} className="mb-8">
                 <h3 className="font-semibold">{w.title}</h3>
                 <button className={buttonSecondary} onClick={() => { setSelected(w.id); setGallery(false); }}>Ir al trabajo</button>
-                <div className="grid gap-4 sm:grid-cols-2">{results.map(f => <FileCard key={f.id} file={f} token={state.fileToken} result />)}</div>
+                <div className="grid gap-4 sm:grid-cols-2">{results.map(f => <FileCard key={f.id} file={f} result />)}</div>
               </section> : null;
             })}
           </section>}
@@ -304,8 +314,8 @@ function App() {
             >
               <h2>{m.role === "user" ? "Vos" : "Bitácora"}</h2>
               {m.role === "user" ? <div className="whitespace-pre-wrap">{m.text.split(/(https?:\/\/[^\s]+)/g).map((part, i) => /^https?:\/\//.test(part) ? <a key={i} className="underline text-[#245a4d]" href={part} target="_blank" rel="noreferrer">{part}</a> : part)}</div> : <div className="markdown"><ReactMarkdown skipHtml components={{ a: ({node, ...props}) => <a {...props} target="_blank" rel="noopener noreferrer" /> }}>{m.text}</ReactMarkdown></div>}
-              <div className="grid gap-3 sm:grid-cols-2">{m.attachments?.map(f => <FileCard key={f.id} file={f} token={state.fileToken} />)}</div>
-              {!!m.results?.length && <section aria-label="Resultados del pedido"><h3 className="mt-5 font-semibold">Resultados</h3><div className="grid gap-3 sm:grid-cols-2">{m.results.map(f => <FileCard key={f.id} file={f} token={state.fileToken} result />)}</div></section>}
+              <div className="grid gap-3 sm:grid-cols-2">{m.attachments?.map(f => <FileCard key={f.id} file={f} />)}</div>
+              {!!m.results?.length && <section aria-label="Resultados del pedido"><h3 className="mt-5 font-semibold">Resultados</h3><div className="grid gap-3 sm:grid-cols-2">{m.results.map(f => <FileCard key={f.id} file={f} result />)}</div></section>}
             </article>
           ))}
           <div ref={bottom} />

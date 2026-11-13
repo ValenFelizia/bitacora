@@ -1,5 +1,5 @@
 import { pipeline } from "node:stream/promises";
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { createSession, entryPage } from "./session";
 import { WorkspaceFiles, FileProblem, MAX_REQUEST } from "./workspace-files";
 import { createServer } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
@@ -16,15 +16,31 @@ export async function serve(
   workspace?: string,
 ) {
   const files = workspace ? new WorkspaceFiles(workspace) : undefined;
-  const token = randomBytes(32).toString("hex");
+  const session = createSession();
   const http = createServer((req, res) => {
     void (async () => {
       const url = new URL(req.url || "/", "http://127.0.0.1");
-      const supplied = url.searchParams.get("token") || "";
-      const validToken = Buffer.byteLength(supplied) === Buffer.byteLength(token) && timingSafeEqual(Buffer.from(supplied), Buffer.from(token));
-      if (!validToken || !localHost(req.headers.host) || (req.headers.origin && !origins.has(req.headers.origin))) {
+      res.setHeader("Cache-Control", "no-store");
+      res.setHeader("Referrer-Policy", "no-referrer");
+      if (!localHost(req.headers.host) || (req.headers.origin && !origins.has(req.headers.origin))) {
         res.writeHead(403); res.end(); return;
       }
+      if (url.pathname === "/entry" && req.method === "GET") {
+        res.setHeader("Content-Security-Policy", "default-src 'none'; script-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'");
+        res.writeHead(200, {"Content-Type":"text/html; charset=utf-8"}); res.end(entryPage); return;
+      }
+      if (url.pathname === "/entry" && req.method === "POST" && origins.has(req.headers.origin || "")) {
+        let code = "";
+        for await (const chunk of req) {
+          code += chunk.toString();
+          if (code.length > 64) { res.writeHead(403); res.end(); return; }
+        }
+        const cookie = session.redeem(code);
+        if (!cookie) { res.writeHead(403); res.end(); return; }
+        res.writeHead(204, {"Set-Cookie": cookie}); res.end(); return;
+      }
+      if (!session.authenticated(req)) { res.writeHead(403); res.end(); return; }
+      if (url.pathname === "/session" && req.method === "GET") { res.writeHead(204); res.end(); return; }
       if (url.pathname !== "/files" || !["GET", "HEAD"].includes(req.method || "") || !files) { res.writeHead(404); res.end(); return; }
       const ref = app.file(url.searchParams.get("id") || "");
       if (!ref) { res.writeHead(404); res.end(); return; }
@@ -51,7 +67,7 @@ export async function serve(
   const localHost = (host?: string) => [`127.0.0.1:${(http.address() as { port: number }).port}`, `localhost:${(http.address() as { port: number }).port}`].includes(host || "");
   const sockets = new WebSocketServer({ noServer: true, maxPayload: Math.ceil(MAX_REQUEST / 3) * 4 + 100000 });
   const send = (ws: WebSocket, message: ServerMessage) => {
-    if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message.type === "snapshot" ? { ...message, state: { ...message.state, fileToken: token } } : message));
+    if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message));
   };
   const app = new App(engine, data, (message) => {
     for (const ws of sockets.clients) send(ws, message);
@@ -67,6 +83,7 @@ export async function serve(
   http.on("upgrade", (req, socket, head) => {
     // A public site must not be able to operate a local agent through the browser.
     if (
+      !session.authenticated(req) ||
       !origins.has(req.headers.origin || "") ||
       ![
         `127.0.0.1:${(http.address() as { port: number }).port}`,
@@ -116,6 +133,7 @@ export async function serve(
     throw error;
   }
   return {
+    entryUrl: `${webOrigin}/entry#${session.entryCode}`,
     port: (http.address() as { port: number }).port,
     async close() {
       for (const ws of sockets.clients) ws.terminate();

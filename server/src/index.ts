@@ -13,7 +13,7 @@ const server = await serve(
   process.env.BITACORA_WEB_ORIGIN,
   locations.workspace,
 );
-console.log(`Bitácora lista en 127.0.0.1:${server.port}`);
+console.log(`Para entrar a Bitácora, abrí esta dirección antes de dos minutos (sirve una sola vez):\n${server.entryUrl}`);
 let closing = false;
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const)
   process.on(signal, () => {

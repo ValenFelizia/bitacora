@@ -18,7 +18,6 @@ export type Snapshot = {
   works: Work[];
   engine: { available: boolean; exhausted?: boolean; safety: ExecutionSafety };
   notice?: string;
-  fileToken?: string;
 };
 export type ClientCommand =
   | { type: "connect" }

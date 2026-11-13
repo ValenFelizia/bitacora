@@ -1,3 +1,4 @@
+import { authenticate } from './session-helper';
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { WebSocket } from "ws";
@@ -12,8 +13,9 @@ test("localhost websocket serves snapshots, connects an account and blocks forei
   const engine = new FakeEngine();
   engine.connected = false;
   const server = await serve(engine, dir, 0);
+  const cookie = await authenticate(server);
   const socket = new WebSocket(`ws://127.0.0.1:${server.port}/ws`, {
-    origin: "http://127.0.0.1:5173",
+    origin: "http://127.0.0.1:5173", headers: {Cookie: cookie},
   });
   try {
     const initial = await new Promise<string>((resolve) =>
@@ -30,13 +32,15 @@ test("localhost websocket serves snapshots, connects an account and blocks forei
     await loggedIn;
     for (const options of [
       {},
-      { origin: "https://untrusted.example" },
+      {origin: "http://127.0.0.1:5173"},
+      {origin: "http://127.0.0.1:5173", headers: {Cookie: "bitacora_session=" + "0".repeat(64)}},
+      { origin: "https://untrusted.example", headers: {Cookie: cookie} },
       {
         origin: "http://127.0.0.1:5173",
-        headers: { Host: `wrong.example:${server.port}` },
+        headers: { Host: `wrong.example:${server.port}`, Cookie: cookie },
       },
-      { origin: "http://localhost:5174" },
-      { origin: "http://localhost.evil:5173" },
+      { origin: "http://localhost:5174", headers: {Cookie: cookie} },
+      { origin: "http://localhost.evil:5173", headers: {Cookie: cookie} },
     ]) {
       const bad = new WebSocket(`ws://127.0.0.1:${server.port}/ws`, options);
       await new Promise<void>((resolve) => bad.once("error", () => resolve()));
@@ -44,7 +48,7 @@ test("localhost websocket serves snapshots, connects an account and blocks forei
     }
     const local = new WebSocket(`ws://127.0.0.1:${server.port}/ws`, {
       origin: "http://localhost:5173",
-      headers: { Host: `localhost:${server.port}` },
+      headers: { Host: `localhost:${server.port}`, Cookie: cookie },
     });
     await new Promise<void>((resolve, reject) => {
       local.once("open", () => resolve());

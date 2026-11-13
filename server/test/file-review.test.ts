@@ -1,3 +1,4 @@
+import { authenticate } from './session-helper';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { test } from 'node:test';
@@ -123,12 +124,11 @@ test('registered HTTP files enforce paths, headers, HEAD and streaming size cap'
   const refs: FileRef[] = ['safe.pdf', 'safe.png', 'huge.pdf', '../outside/secret.pdf', join(f.dir, 'outside', 'secret.pdf'), 'escape/secret.pdf'].map((path, i) => ({ id: String(i), path, name: path.endsWith('.png') ? 'imagen.png' : 'cotización.pdf', mime: path.endsWith('.png') ? 'image/png' : 'application/pdf', createdAt: new Date().toISOString() }));
   await writeFile(join(data, 'works.json'), JSON.stringify({ version: 1, works: [{ id: 'work', conversationId: 'conversation-1', messages: [{ id: 'm', role: 'user', text: 'registered', attachments: refs }], details: '', busy: false }] }));
   const server = await serve(new FakeEngine(), data, 0, undefined, f.files.root);
-  const ws = new WebSocket(`ws://127.0.0.1:${server.port}/ws`, { origin: 'http://127.0.0.1:5173' });
+  const cookie = await authenticate(server);
   try {
-    const token = await new Promise<string>(resolve => ws.once('message', data => resolve(JSON.parse(String(data)).state.fileToken)));
-    const url = (id: number) => `http://127.0.0.1:${server.port}/files?id=${id}&token=${token}`;
+    const url = (id: number) => `http://127.0.0.1:${server.port}/files?id=${id}`;
     for (const method of ['GET', 'HEAD']) for (const id of [0, 1]) {
-      const res = await fetch(url(id), { method });
+      const res = await fetch(url(id), { method, headers:{Cookie:cookie} });
       assert.equal(res.status, 200); assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
       assert.equal(res.headers.get('content-type'), refs[id].mime);
       assert.equal(res.headers.get('cache-control'), 'no-store');
@@ -139,13 +139,13 @@ test('registered HTTP files enforce paths, headers, HEAD and streaming size cap'
       assert.equal(res.headers.get('content-length'), id === 0 ? '8' : '5');
       assert.equal((await res.arrayBuffer()).byteLength, method === 'HEAD' ? 0 : id === 0 ? 8 : 5);
     }
-    const download = await fetch(url(0) + '&download=1');
+    const download = await fetch(url(0) + '&download=1', {headers:{Cookie:cookie}});
     assert.match(download.headers.get('content-disposition')!, /attachment.*cotizaci%C3%B3n.pdf/); await download.body?.cancel();
     for (const method of ['GET', 'HEAD']) {
-      assert.equal((await fetch(url(2), { method })).status, 413);
-      for (const id of [3, 4, 5]) assert.equal((await fetch(url(id), { method })).status, 404, `registered path ${id}`);
+      assert.equal((await fetch(url(2), { method, headers:{Cookie:cookie} })).status, 413);
+      for (const id of [3, 4, 5]) assert.equal((await fetch(url(id), { method, headers:{Cookie:cookie} })).status, 404, `registered path ${id}`);
     }
-  } finally { ws.terminate(); await server.close(); await f.cleanup(); }
+  } finally { await server.close(); await f.cleanup(); }
 });
 
 
