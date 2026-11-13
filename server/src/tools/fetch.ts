@@ -97,7 +97,7 @@ export async function traer(files: AgencyFiles, input: { url?: string; destinati
     try {
       const photo = await follow(new URL(src, page.url), signal, options);
       const ext = photoExtension(photo.data);
-      const path = `${input.destination}/fotos/operador-${i + 1}.${ext}`;
+      const path = `${input.destination}/fotos/operador/imagen-${i + 1}.${ext}`;
       await files.write(path, photo.data); saved.push(path);
     } catch (e) { warnings.push(`No se guardó la foto ${i + 1}: ${String(e)}`); }
   }

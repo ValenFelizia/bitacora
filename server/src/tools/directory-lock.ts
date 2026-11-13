@@ -1,4 +1,4 @@
-﻿import koffi from 'koffi';
+import koffi from 'koffi';
 import { openSync, closeSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -13,11 +13,11 @@ const lastError = kernel.func('uint32 __stdcall GetLastError()');
 
 function lockPath(path: string, directory: boolean, share = directory ? 1 : 3): () => void {
   const handle = create(path, 0x80000000, share, null, 3, 0x02200000, null);
-  if (!handle || koffi.address(handle) === 0xffffffffffffffffn) throw new Error(`No pude proteger la carpeta durante la escritura (Windows ${lastError()}). VolvÃ© a intentarlo.`);
+  if (!handle || koffi.address(handle) === 0xffffffffffffffffn) throw new Error(`No pude proteger la carpeta durante la escritura (Windows ${lastError()}). Volvé a intentarlo.`);
   const attributes = Buffer.alloc(8);
   if (!info(handle, 9, attributes, attributes.length) || !!(attributes.readUInt32LE(0) & 0x10) !== directory || (attributes.readUInt32LE(0) & 0x400)) {
     close(handle);
-    throw new Error('No se permiten enlaces ni cambios de ubicaciÃ³n durante la escritura.');
+    throw new Error('No se permiten enlaces ni cambios de ubicación durante la escritura.');
   }
   return () => { close(handle); };
 }

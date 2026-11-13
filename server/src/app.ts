@@ -3,6 +3,7 @@ import { WorkspaceFiles, type FileScan } from "./workspace-files";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { rememberUserUrls } from './allowed-urls';
+import { initializeKit } from './tools/kit';
 import type { Engine, EngineEvent } from "./engine";
 import { problemText, EngineFailure, activityText } from "./engine";
 import type { FileRef, Work, Snapshot, ClientCommand, ServerMessage } from "./contracts";
@@ -32,6 +33,7 @@ export class App {
   async start() {
     await mkdir(this.data, { recursive: true });
     await this.workspace?.initialize();
+    if (this.workspace) await initializeKit(this.workspace.root, this.data);
     try {
       const saved = JSON.parse(
         await readFile(join(this.data, "works.json"), "utf8"),

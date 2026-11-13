@@ -1,5 +1,6 @@
 import { AgencyFiles } from './paths';
 import { withPage, visibleTexts } from './page';
+import { extname } from 'node:path';
 
 export const numbers = (s: string) => s.match(/\p{Nd}+(?:[.,]\p{Nd}+)*/gu) || [];
 export const normalizeNumber = (s: string) => {
@@ -14,6 +15,7 @@ export const normalizeNumber = (s: string) => {
 };
 export type Rules = { operatorNames?: string[]; noEmoji?: boolean; warnExperience?: boolean };
 export async function controlar(files: AgencyFiles, input: { html: string; source: string; report: string; rules?: string }) {
+  if (extname(input.source).toLowerCase() !== '.md' || extname(input.report).toLowerCase() !== '.md') throw new Error('La fuente y el informe deben ser archivos con terminación .md.');
   const source = (await files.read(input.source)).split(/\r?\n/);
   const rules: Rules = input.rules ? JSON.parse((await files.read(input.rules)).replace(/^\uFEFF/, '')) : {};
   const {texts,whole} = await withPage(files, input.html, async page => ({texts:await visibleTexts(page),whole:await page.evaluate(() => document.body.innerText)}));
