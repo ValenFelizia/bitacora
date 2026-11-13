@@ -1,0 +1,11 @@
+{
+  "name": "@bitacora/server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
+  }
+}
