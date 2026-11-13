@@ -260,7 +260,7 @@ function App() {
               <p className="my-2 text-sm">Bitácora necesita preparar la protección de tu compu para trabajar en tu carpeta sin cambiar tus otros archivos. Se hace una sola vez.</p>
               {state.engine.safety.needsPermission && <p className="my-2 text-sm">Windows va a mostrar un cartel para permitir cambios en la compu. Tocá «Sí». Esto crea cuentas de uso restringido y reglas de protección de archivos y conexiones. Después no te vamos a pedir permiso para cada pedido.</p>}
               <p role="status" className="my-2 text-sm">
-                {state.engine.safety.status === "preparing" ? "Preparando la protección… Esperá a que termine." : state.engine.safety.message || "Hasta que esté lista, no se pueden enviar pedidos."}
+                {state.engine.safety.message || (state.engine.safety.status === "preparing" ? "Preparando la protección… Esperá a que termine." : "Hasta que esté lista, no se pueden enviar pedidos.")}
               </p>
               <button className={buttonPrimary} disabled={state.engine.safety.status === "preparing"}
                 onClick={() => send({ type: "prepareProtection" })}>

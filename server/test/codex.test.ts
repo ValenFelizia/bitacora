@@ -220,12 +220,15 @@ for (const scenario of ["success", "failure", "restart", "mxc"] as const) {
         await until(() => f.engine.executionSafety().status === "failed");
         assert.match(f.engine.executionSafety().detail, /UAC cancelled/);
         await assert.rejects(f.engine.send("thread-1", "race"));
+        await f.engine.prepareProtection();
+        assert.equal(f.engine.executionSafety().status, "preparing");
+        await until(() => f.engine.executionSafety().status === "failed");
       } else {
         await until(() => f.engine.executionSafety().allowed);
         await f.engine.send("thread-1", "race");
       }
       const records = await f.records();
-      assert.equal(records.filter(m => m.method === "windowsSandbox/setupStart").length, scenario === "mxc" ? 0 : 1);
+      assert.equal(records.filter(m => m.method === "windowsSandbox/setupStart").length, scenario === "mxc" ? 0 : scenario === "failure" ? 2 : 1);
       assert.equal(records.filter(m => m.method === "turn/start").length, scenario === "failure" ? 0 : 1);
       assert.ok(f.events.some(e => e.type === "protection" && e.safety.status === "preparing"));
     } finally {

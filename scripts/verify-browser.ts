@@ -39,7 +39,7 @@ try {
   server = await make();
   await p.setViewportSize({ width: 1280, height: 800 });
   await p.reload();
-  await p.getByText(/La protección de la carpeta no está preparada/).waitFor();
+  await p.getByRole('heading', { name: 'Antes de empezar' }).waitFor();
   await p.getByText(/Conservé el archivo dañado/).waitFor();
   if (!(await p.getByRole('button', { name: 'Enviar pedido' }).isDisabled())) throw Error('unsafe send enabled');
   const popupEvent = p.waitForEvent('popup');

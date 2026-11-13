@@ -1,10 +1,10 @@
 // Deterministic app-server peer. No Codex, credentials, tools, or inference.
 import { createInterface } from "node:readline";
-import { appendFileSync, existsSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, writeFileSync, readFileSync } from "node:fs";
 const send = (m) => process.stdout.write(JSON.stringify(m) + "\n");
 const notify = (method, params) => send({ method, params });
 const setupFile = process.env.CODEX_HOME + "/fake-protection";
-let configuredMode = existsSync(setupFile) ? "elevated" : null;
+let configuredMode = existsSync(setupFile) ? readFileSync(setupFile, "utf8") : null;
 const threadId = "thread-1";
 let interrupts = 0;
 let crashScheduled = false;

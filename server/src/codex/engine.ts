@@ -229,14 +229,20 @@ export class CodexEngine implements Engine {
         // No fallback: the user has already seen the permission explanation.
         this.setupPending = true;
         const { started } = await this.rpc("windowsSandbox/setupStart", { mode: "elevated", cwd: this.options.workspace });
-        if (!started) throw new Error("Windows did not start protection setup");
+        if (!started) {
+          this.setupPending = false;
+          throw new Error("Windows did not start protection setup");
+        }
         if (this.executionSafety().status === "preparing") this.setupTimer = setTimeout(() => {
           this.setProtection({ ...this.safety, message: "Windows todavía no confirmó el resultado. Esperá a que cierre el cartel de permiso. Si no termina, cerrá y volvé a abrir Bitácora para comprobar la protección." });
         }, 180000);
       }
     } catch (error) {
       if (error instanceof EngineFailure) this.setupPending = false;
-      this.protectionFailed(String(error));
+      if (this.setupPending) {
+        this.setProtection({ ...this.safety, status: "preparing", detail: String(error),
+          message: "No pude confirmar si Windows terminó. Esperá a que cierre el cartel de permiso y volvé a abrir Bitácora. No hace falta aceptar otro permiso mientras tanto." });
+      } else this.protectionFailed(String(error));
     }
   }
   private protectionFailed(detail: string) {
