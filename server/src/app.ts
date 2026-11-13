@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile, rename, copyFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { rememberUserUrls } from './allowed-urls';
 import type { Engine, EngineEvent } from "./engine";
 import { problemText, EngineFailure, activityText } from "./engine";
 import type { Work, Snapshot, ClientCommand, ServerMessage } from "./contracts";
@@ -306,6 +307,7 @@ export class App {
       this.changed();
       await this.writes;
       reply({ type: "selected", workId: work.id });
+      await rememberUserUrls(this.data, command.text);
       await this.engine.send(work.conversationId, command.text.trim());
     } catch (error) {
       if (error instanceof EngineFailure && error.kind === "disconnected")

@@ -12,12 +12,15 @@ import { traer, publicAddress } from '../src/tools/fetch';
 import { controlar } from '../src/tools/check';
 import { dibujar } from '../src/tools/draw';
 import { initializeKit } from '../src/tools/kit';
+import { allowedUrlsPath, rememberUserUrls } from '../src/allowed-urls';
 
 const base = join(process.env.LOCALAPPDATA!, 'Bitacora-dev', 'issue6');
 async function fixture() {
   await mkdir(base, {recursive:true});
-  const root = await mkdtemp(join(base, 'agencia ñ á '));
-  return { root, files: new AgencyFiles(root), close: () => rm(root, {recursive:true, force:true}) };
+  const temp = await mkdtemp(join(base, 'caso ñ á '));
+  const root = join(temp,'agencia'), data = join(temp,'datos');
+  await mkdir(root); await mkdir(data);
+  return { root, data, options:{allowedUrls:allowedUrlsPath(data)}, files: new AgencyFiles(root), close: () => rm(temp, {recursive:true, force:true}) };
 }
 test('path boundaries, Windows names, links and kit preservation', async () => {
   const f = await fixture();
@@ -42,13 +45,14 @@ test('fetch with explicit test-only local grant, photos, append, SSRF and redire
   await new Promise<void>(r => server.listen(0,'127.0.0.1',r));
   const url = `http://127.0.0.1:${(server.address() as {port:number}).port}`;
   try {
-    await assert.rejects(traer(f.files,{url, destination:'rechazada'}));
-    const result = await traer(f.files,{url,destination:'oferta'},url);
+    await rememberUserUrls(f.data,`${url} ${url}/redirect`);
+    await assert.rejects(traer(f.files,{url, destination:'rechazada'},f.options));
+    const result = await traer(f.files,{url,destination:'oferta'},{...f.options,testOrigin:url});
     assert.equal(result.photos?.length,1);
     const old = await f.files.read('oferta/fuente.md');
-    await traer(f.files,{destination:'oferta',notes:'La usuaria confirma 5 kg.'});
+    await traer(f.files,{destination:'oferta',notes:'La usuaria confirma 5 kg.'},f.options);
     assert.ok((await f.files.read('oferta/fuente.md')).startsWith(old));
-    await assert.rejects(traer(f.files,{url: url+'/redirect',destination:'redirección'},url));
+    await assert.rejects(traer(f.files,{url: url+'/redirect',destination:'redirección'},{...f.options,testOrigin:url}));
     for (const address of ['127.0.0.1','10.0.0.1','169.254.169.254','192.168.0.1','::1','::ffff:127.0.0.1','fc00::1']) assert.equal(publicAddress(address),false,address);
   } finally { await new Promise<void>(r => server.close(() => r())); await f.close(); }
 });
@@ -82,7 +86,7 @@ test('real Edge: citation failures, exact PNG, PDF, overflow, broken fonts and b
 });
 test('real MCP stdio client discovers and calls all three tools', async () => {
   const f = await fixture();
-  const transport = new StdioClientTransport({command:process.execPath,args:['--import',pathToFileURL(createRequire(import.meta.url).resolve('tsx/esm')).href,join(process.cwd(),'server/src/tools/mcp.ts'),f.root],stderr:'pipe'});
+  const transport = new StdioClientTransport({command:process.execPath,args:['--import',pathToFileURL(createRequire(import.meta.url).resolve('tsx/esm')).href,join(process.cwd(),'server/src/tools/mcp.ts'),f.root,f.options.allowedUrls],stderr:'pipe'});
   const client = new Client({name:'verification',version:'1.0'});
   try {
     await initializeKit(f.root);

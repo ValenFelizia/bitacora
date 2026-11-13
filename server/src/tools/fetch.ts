@@ -3,20 +3,36 @@ import { request, Agent } from 'undici';
 import ipaddr from 'ipaddr.js';
 import { load } from 'cheerio';
 import { AgencyFiles } from './paths';
+import { requireAllowedUrl } from '../allowed-urls';
+
+export type FetchOptions = {
+  allowedUrls: string;
+  testOrigin?: string;
+  resolve?: (host: string) => Promise<{address: string; family: number}[]>;
+  timeoutMs?: number;
+};
 
 export function publicAddress(address: string) {
   const parsed = ipaddr.process(address);
   return parsed.range() === 'unicast';
 }
 // Only test callers can grant one exact loopback origin. Never exposed by MCP.
-export async function download(url: URL, signal: AbortSignal, testOrigin?: string, maxBytes = 5_000_000): Promise<{ data: Buffer; type: string; url: URL }> {
+export async function download(url: URL, signal: AbortSignal, options: Pick<FetchOptions, 'testOrigin' | 'resolve'> = {}, maxBytes = 5_000_000): Promise<{ data: Buffer; type: string; url: URL }> {
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('La dirección debe ser http o https, sin credenciales.');
   const hostname = url.hostname.replace(/^\[|\]$/g, '');
-  const addresses = await lookup(hostname, { all: true });
-  if (!addresses.length || addresses.some(a => !publicAddress(a.address)) && url.origin !== testOrigin) throw new Error('No se permiten direcciones locales ni privadas.');
+  const addresses = await new Promise<{address:string;family:number}[]>((resolve,reject) => {
+    const abort = () => reject(signal.reason);
+    if (signal.aborted) { abort(); return; }
+    signal.addEventListener('abort',abort,{once:true});
+    (options.resolve ? options.resolve(hostname) : lookup(hostname,{all:true}))
+      .then(resolve,reject).finally(() => signal.removeEventListener('abort',abort));
+  });
+  if (!addresses.length || addresses.some(a => !publicAddress(a.address)) && url.origin !== options.testOrigin) throw new Error('No se permiten direcciones locales ni privadas.');
   const selected = addresses[0];
   // Pin the validated DNS answer to the connection: no second DNS lookup/rebinding.
-  const dispatcher = new Agent({ connect: { lookup: (_host, _options, cb) => cb(null, selected.address, selected.family) } });
+  const dispatcher = new Agent({ connect: { autoSelectFamily: false, lookup: (_host, options, cb) => {
+    if (options.all) cb(null, [selected]); else cb(null, selected.address, selected.family);
+  } } });
   try {
     const response = await request(url, { dispatcher, signal, headersTimeout: 15000, bodyTimeout: 15000 });
     if (response.statusCode >= 300 && response.statusCode < 400) {
@@ -33,16 +49,28 @@ export async function download(url: URL, signal: AbortSignal, testOrigin?: strin
       chunks.push(Buffer.from(chunk));
     }
     return { data: Buffer.concat(chunks), type: String(response.headers['content-type'] || ''), url };
-  } finally { await dispatcher.close(); }
+  } finally { await dispatcher.destroy(); }
 }
-async function follow(url: URL, signal: AbortSignal, testOrigin?: string, maxBytes?: number) {
+async function follow(url: URL, signal: AbortSignal, options: FetchOptions, maxBytes?: number) {
   for (let i = 0; i < 6; i++) {
-    try { return await download(url, signal, testOrigin, maxBytes); }
+    try { return await download(url, signal, options, maxBytes); }
     catch (e) { if (!(e as {redirect?: URL}).redirect) throw e; url = (e as unknown as {redirect: URL}).redirect; }
   }
   throw new Error('Demasiadas redirecciones.');
 }
-export async function traer(files: AgencyFiles, input: { url?: string; destination: string; notes?: string }, testOrigin?: string) {
+export function decodePage(data: Buffer, type: string) {
+  const charset = /charset\s*=\s*["']?([^\s;"'>]+)/i.exec(type)?.[1]
+    || /<meta\b[^>]*charset\s*=\s*["']?([^\s;"'>]+)/i.exec(data.subarray(0, 4096).toString('latin1'))?.[1] || 'utf-8';
+  try { return new TextDecoder(charset).decode(data); }
+  catch { throw new Error(`La codificación de la página no está admitida: ${charset}.`); }
+}
+export function photoExtension(data: Buffer) {
+  if (data.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10]))) return 'png';
+  if (data[0] === 255 && data[1] === 216 && data[2] === 255) return 'jpg';
+  if (data.toString('ascii',0,4) === 'RIFF' && data.toString('ascii',8,12) === 'WEBP') return 'webp';
+  throw new Error('Los bytes de la foto no son JPEG, PNG ni WebP.');
+}
+export async function traer(files: AgencyFiles, input: { url?: string; destination: string; notes?: string }, options: FetchOptions) {
   const source = `${input.destination}/fuente.md`;
   if (!input.url) {
     if (!input.notes?.trim()) throw new Error('Falta la dirección o los datos para agregar.');
@@ -50,10 +78,11 @@ export async function traer(files: AgencyFiles, input: { url?: string; destinati
     await files.write(source, old + `\n## Datos aportados por la usuaria — ${new Date().toISOString()}\n${input.notes}\n`, false);
     return { source, lines: (await files.read(source)).split('\n').length };
   }
-  const signal = AbortSignal.timeout(45000);
-  const page = await follow(new URL(input.url), signal, testOrigin, 2_000_000);
+  await requireAllowedUrl(options.allowedUrls, input.url);
+  const signal = AbortSignal.timeout(options.timeoutMs ?? 45000);
+  const page = await follow(new URL(input.url), signal, options, 2_000_000);
   if (!/text\/html/i.test(page.type)) throw new Error('La dirección no devuelve una página HTML.');
-  const $ = load(page.data.toString('utf8'));
+  const $ = load(decodePage(page.data, page.type));
   const photos = [...new Set($('img').toArray().map(el => $(el).attr('src') || $(el).attr('data-src')).filter((s): s is string => !!s))];
   $('script,style,noscript,svg,nav,footer').remove();
   $('td,th').append(' | '); $('p,div,tr,li,h1,h2,h3,h4,section,br').prepend('\n');
@@ -63,9 +92,10 @@ export async function traer(files: AgencyFiles, input: { url?: string; destinati
   const saved: string[] = [], warnings: string[] = [];
   for (const [i, src] of photos.slice(0, 12).entries()) {
     try {
-      const photo = await follow(new URL(src, page.url), signal, testOrigin);
-      const ext = /image\/jpeg/i.test(photo.type) ? 'jpg' : /image\/png/i.test(photo.type) ? 'png' : /image\/webp/i.test(photo.type) ? 'webp' : undefined;
-      if (!ext) throw new Error('Formato de foto no admitido.');
+      const photo = await follow(new URL(src, page.url), signal, options);
+      const ext = photoExtension(photo.data);
+      const expected = ext === 'jpg' ? 'image/jpeg' : `image/${ext}`;
+      if (photo.type.split(';')[0].trim().toLowerCase() !== expected) throw new Error('El formato de la foto no coincide con su cabecera.');
       const path = `${input.destination}/fotos/operador-${i + 1}.${ext}`;
       await files.write(path, photo.data); saved.push(path);
     } catch (e) { warnings.push(`No se guardó la foto ${i + 1}: ${String(e)}`); }
