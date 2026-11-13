@@ -1,5 +1,5 @@
 export type Account = { connected: boolean; email?: string };
-export type ExecutionSafety = { allowed: boolean; detail: string; status?: "needed" | "preparing" | "ready" | "failed"; needsPermission?: boolean; message?: string };
+export type ExecutionSafety = { allowed: boolean; detail: string; status?: "needed" | "preparing" | "ready" | "failed"; needsPermission?: boolean; issue?: "check" | "setup" | "uncertain" | "interrupted" | "restart" };
 export type Activity =
   | "preparing"
   | "reading"

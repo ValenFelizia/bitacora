@@ -21,17 +21,20 @@ createInterface({ input: process.stdin })
         reply({ userAgent: "fake" });
         break;
       case "windowsSandbox/readiness":
+        if (process.env.BITACORA_FAKE_READ_FAIL) { send({ id: m.id, error: { message: "read failed" } }); break; }
         reply({ status: configuredMode ? "ready" : process.env.BITACORA_FAKE_SAFETY || "ready" });
         break;
       case "config/read":
-        reply({ config: { windows: { sandbox: configuredMode || (process.env.BITACORA_FAKE_SAFETY ? null : "elevated") } } });
+        reply({ config: { windows: { sandbox: configuredMode || (process.env.BITACORA_FAKE_MODE || (process.env.BITACORA_FAKE_SAFETY ? null : "elevated")) } } });
         break;
       case "config/value/write":
         configuredMode = m.params.value;
         writeFileSync(setupFile, configuredMode);
-        reply({});
+        setTimeout(() => reply({}), Number(process.env.BITACORA_FAKE_CONFIG_DELAY || 0));
         break;
       case "windowsSandbox/setupStart":
+        if (process.env.BITACORA_FAKE_SETUP_TIMEOUT) break;
+        if (process.env.BITACORA_FAKE_SETUP_INTERRUPTED && !existsSync(setupFile + ".interrupted")) { writeFileSync(setupFile + ".interrupted", "1"); reply({ started: true }); setTimeout(() => process.exit(3), 40); break; }
         reply({ started: true });
         setTimeout(() => {
           const success = !process.env.BITACORA_FAKE_SETUP_FAIL;
@@ -41,6 +44,7 @@ createInterface({ input: process.stdin })
         }, Number(process.env.BITACORA_FAKE_SETUP_DELAY || 100));
         break;
       case "account/read":
+        if (existsSync(setupFile + ".hang")) break;
         if (process.env.BITACORA_FAKE_IDLE_CRASH && !crashScheduled) {
           crashScheduled = true;
           setTimeout(() => process.exit(3), 2000);
@@ -101,6 +105,10 @@ createInterface({ input: process.stdin })
             threadId,
             turn: { ...turn("failed"), error: { message: "final" } },
           });
+        }
+        if (scenario === "markdown") {
+          notify("item/completed", { threadId, item: { type: "agentMessage", id: "markdown", text: "Creé **hola.txt**.\n\n- Una *prueba*\n- Código: `hola`\n\n```txt\nHola, mundo\n```\n\n[Enlace](https://example.test)\n\n<script>alert('raw')</script>" } });
+          notify("turn/completed", { threadId, turn: turn("completed") });
         }
         if (scenario === "race")
           notify("turn/completed", { threadId, turn: turn("completed") });

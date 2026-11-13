@@ -6,6 +6,7 @@ import {
 } from "node:child_process";
 import { promisify } from "node:util";
 import { join } from "node:path";
+import { codexBinary, codexVersion } from "../../../scripts/codex-runtime.mjs";
 import { createInterface } from "node:readline";
 import { mkdir } from "node:fs/promises";
 import type { Engine, EngineEvent, Account, ExecutionSafety } from "../engine";
@@ -87,6 +88,8 @@ export class CodexEngine implements Engine {
       restartDelayMs?: number;
       stableAfterMs?: number;
       probeProtection?: () => Promise<boolean>;
+      requestTimeoutMs?: number;
+      setupTimeoutMs?: number;
     },
   ) {}
   subscribe(listener: (event: EngineEvent) => void) {
@@ -101,7 +104,7 @@ export class CodexEngine implements Engine {
   async start() {
     await mkdir(this.options.home, { recursive: true });
     await mkdir(this.options.workspace, { recursive: true });
-    const binary = this.options.binary || "codex";
+    const binary = this.options.binary || codexBinary();
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       CODEX_HOME: this.options.home,
@@ -115,14 +118,14 @@ export class CodexEngine implements Engine {
     }
     env.CODEX_HOME = this.options.home;
     const version = this.options.args
-      ? "codex-cli 0.168.0"
+      ? codexVersion
       : execFileSync(binary, ["--version"], {
           env,
           encoding: "utf8",
           windowsHide: true,
         }).trim();
-    if (version !== "codex-cli 0.168.0")
-      throw new Error(`Expected codex-cli 0.168.0, received ${version}`);
+    if (version !== codexVersion)
+      throw new Error(`Expected ${codexVersion}, received ${version}`);
     this.child = spawn(
       binary,
       this.options.args || [
@@ -165,7 +168,8 @@ export class CodexEngine implements Engine {
         capabilities: { experimentalApi: false, requestAttestation: false },
       });
       this.write({ method: "initialized" });
-      await this.checkProtection(env);
+      this.environment = env;
+      await this.checkProtection();
       if (this.child !== child)
         throw new Error("Engine stopped during initialization");
       this.available = true;
@@ -177,78 +181,111 @@ export class CodexEngine implements Engine {
         throw new Error("Engine stopped during account read");
       this.emit({ type: "availability", available: true, safety: this.safety });
       this.emit({ type: "account", account });
+      if (this.safety.status === "needed" && !this.safety.needsPermission) void this.prepareProtection();
     } catch (error) {
       failedChild(error instanceof Error ? error : new Error(String(error)));
       throw error;
     }
   }
-  private setupMode: "mxc" | "elevated" = "elevated";
+  private setupMode?: "mxc" | "elevated";
+  private environment: NodeJS.ProcessEnv = {};
+  private mxcAvailable?: boolean;
   private setupTimer?: NodeJS.Timeout;
   private setupPending = false;
+  private setupInterrupted = false;
+  private checking?: Promise<void>;
   private setProtection(safety: ExecutionSafety) {
     this.safety = safety;
     this.emit({ type: "protection", safety });
   }
-  private async checkProtection(env: NodeJS.ProcessEnv) {
+  private async probeMxc() {
+    if (this.mxcAvailable !== undefined) return this.mxcAvailable;
+    if (this.options.probeProtection) return this.mxcAvailable = await this.options.probeProtection();
+    try {
+      const result = await promisify(execFile)(this.options.binary || codexBinary(), [
+        "-c", "windows.sandbox=mxc", "sandbox", "--include-managed-config",
+        "--permission-profile", ":workspace", "--", "cmd.exe", "/d", "/c", "echo MXC_OK",
+      ], { cwd: this.options.workspace, env: this.environment, windowsHide: true, timeout: 30000 });
+      if (result.stdout.trim() !== "MXC_OK") throw new Error("Unexpected MXC probe output");
+      return this.mxcAvailable = true;
+    } catch (error) {
+      // Exact diagnostic from codex-mxc-sandbox 0.168.0; timeouts and other
+      // failures must never select an administrative setup.
+      if (!(error as { killed?: boolean }).killed &&
+          String((error as { stderr?: string }).stderr).includes("native MXC is unavailable on this Windows build"))
+        return this.mxcAvailable = false;
+      throw error;
+    }
+  }
+  private checkProtection(): Promise<void> {
+    if (this.checking) return this.checking;
+    this.checking = this.readProtection().finally(() => { this.checking = undefined; });
+    return this.checking;
+  }
+  private async readProtection() {
+    const interrupted = this.safety.status === "preparing" || this.setupInterrupted;
+    this.setupInterrupted = false;
+    this.setupMode = undefined;
     try {
       const readiness = await this.rpc("windowsSandbox/readiness", undefined);
       const { config } = await this.rpc("config/read", { includeLayers: false });
       const mode = (config.windows as { sandbox?: string } | null)?.sandbox;
       const detail = `windowsSandbox/readiness=${readiness.status}; windows.sandbox=${mode || "disabled"}; workspace-write`;
-      if (readiness.status === "ready" && (mode === "mxc" || mode === "elevated")) {
-        clearTimeout(this.setupTimer);
+      const mxc = mode === "elevated" && readiness.status === "ready" ? undefined : await this.probeMxc();
+      if (readiness.status === "ready" && (mode === "elevated" || (mode === "mxc" && mxc))) {
         this.setProtection({ allowed: true, status: "ready", detail });
         return;
       }
-      const mxc = this.options.probeProtection
-        ? await this.options.probeProtection()
-        : await promisify(execFile)(this.options.binary || "codex", [
-            "-c", "windows.sandbox=mxc", "sandbox", "--include-managed-config",
-            "--permission-profile", ":workspace", "--", "cmd.exe", "/d", "/c", "echo MXC_OK",
-          ], { cwd: this.options.workspace, env, windowsHide: true, timeout: 30000 })
-            .then(r => r.stdout.trim() === "MXC_OK", () => false);
       this.setupMode = mxc ? "mxc" : "elevated";
-      const interrupted = this.safety.status === "preparing";
       this.setProtection({ allowed: false, status: interrupted ? "failed" : "needed",
-        needsPermission: !mxc, detail,
-        message: interrupted ? "Se interrumpió la preparación. Revisé la protección y todavía no está lista. Podés reintentar." : undefined });
+        needsPermission: !mxc, detail, issue: interrupted ? "interrupted" : undefined });
     } catch (error) {
-      this.setProtection({ allowed: false, status: "failed", needsPermission: true, detail: String(error),
-        message: "No pude comprobar la protección. Reintentá la preparación." });
+      this.setProtection({ allowed: false, status: "failed", detail: String(error), issue: "check" });
     }
   }
   async prepareProtection() {
     if (!this.available || this.safety.allowed || this.safety.status === "preparing" || this.setupPending) return;
-    this.setProtection({ ...this.safety, allowed: false, status: "preparing", message: undefined });
+    // An unknown/ambiguous result is retried by reading state, never by
+    // repeating an administrative setup whose outcome is not yet known.
+    if (!this.setupMode) {
+      await this.checkProtection();
+      if (this.safety.status === "needed" && !this.safety.needsPermission) await this.prepareProtection();
+      return;
+    }
+    this.setProtection({ ...this.safety, allowed: false, status: "preparing", issue: undefined });
     try {
       if (this.setupMode === "mxc") {
         await this.rpc("config/value/write", { keyPath: "windows.sandbox", value: "mxc",
           mergeStrategy: "replace", filePath: join(this.options.home, "config.toml") });
         await this.reloadProtection();
       } else {
-        // No fallback: the user has already seen the permission explanation.
         this.setupPending = true;
         const { started } = await this.rpc("windowsSandbox/setupStart", { mode: "elevated", cwd: this.options.workspace });
-        if (!started) {
+        if (!started) throw new Error("Windows did not start protection setup");
+        if (this.setupPending) this.setupTimer = setTimeout(() => {
           this.setupPending = false;
-          throw new Error("Windows did not start protection setup");
-        }
-        if (this.executionSafety().status === "preparing") this.setupTimer = setTimeout(() => {
-          this.setProtection({ ...this.safety, message: "Windows todavía no confirmó el resultado. Esperá a que cierre el cartel de permiso. Si no termina, cerrá y volvé a abrir Bitácora para comprobar la protección." });
-        }, 180000);
+          this.setupMode = undefined;
+          this.protectionFailed("Windows setup completion timed out", "uncertain");
+        }, this.options.setupTimeoutMs ?? 180000);
       }
     } catch (error) {
-      if (error instanceof EngineFailure) this.setupPending = false;
-      if (this.setupPending) {
-        this.setProtection({ ...this.safety, status: "preparing", detail: String(error),
-          message: "No pude confirmar si Windows terminó. Esperá a que cierre el cartel de permiso y volvé a abrir Bitácora. No hace falta aceptar otro permiso mientras tanto." });
-      } else this.protectionFailed(String(error));
+      this.setupPending = false;
+      if (this.setupMode === "elevated" && !(error instanceof EngineFailure)) {
+        this.setupMode = undefined;
+        this.protectionFailed(String(error), "uncertain");
+      } else if (this.child) this.protectionFailed(String(error), "setup");
     }
   }
-  private protectionFailed(detail: string) {
+  private protectionFailed(detail: string, issue: ExecutionSafety["issue"] = "setup") {
     clearTimeout(this.setupTimer);
-    this.setProtection({ ...this.safety, allowed: false, status: "failed", detail,
-      message: "Windows no pudo terminar la preparación. Si cancelaste el permiso, podés reintentar. Si vuelve a fallar, abrí el detalle para pedir ayuda." });
+    this.setProtection({ ...this.safety, allowed: false, status: "failed", detail, issue });
+  }
+  private cancelPending(error: Error) {
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(error);
+    }
+    this.pending.clear();
   }
   private async reloadProtection() {
     const child = this.child;
@@ -256,6 +293,7 @@ export class CodexEngine implements Engine {
     this.available = false;
     this.setupPending = false;
     this.safety = { ...this.safety, allowed: false };
+    this.cancelPending(new Error("Engine reloading protection"));
     clearTimeout(this.setupTimer);
     clearTimeout(this.stableTimer);
     this.emit({ type: "availability", available: false, safety: this.safety });
@@ -263,7 +301,10 @@ export class CodexEngine implements Engine {
       child.once("exit", () => resolve());
       child.kill();
     });
-    if (!this.stopping) await this.start();
+    if (!this.stopping) try { await this.start(); } catch (error) {
+      if (!this.restartTimer) this.fail(error instanceof Error ? error : new Error(String(error)));
+      throw error;
+    }
   }
   private write(value: unknown) {
     if (!this.child || this.child.stdin.destroyed)
@@ -283,7 +324,7 @@ export class CodexEngine implements Engine {
             `Engine request timed out: ${method}. Do not automatically retry.`,
           ),
         );
-      }, 45000);
+      }, this.options.requestTimeoutMs ?? 45000);
       this.pending.set(id, {
         resolve: resolve as (value: unknown) => void,
         reject,
@@ -299,11 +340,9 @@ export class CodexEngine implements Engine {
     });
   }
   private fail(error: Error) {
-    for (const pending of this.pending.values()) {
-      clearTimeout(pending.timer);
-      pending.reject(error);
-    }
-    this.pending.clear();
+    this.setupInterrupted ||= this.safety.status === "preparing";
+    this.cancelPending(error);
+    this.protectionFailed(error.message, "restart");
     this.available = false;
     this.setupPending = false;
     this.safety = { ...this.safety, allowed: false };
@@ -379,7 +418,7 @@ export class CodexEngine implements Engine {
         this.setupPending = false;
         clearTimeout(this.setupTimer);
         if (!n.params.success) this.protectionFailed(n.params.error || "Windows setup failed");
-        else void this.reloadProtection().catch(error => this.protectionFailed(String(error)));
+        else void this.reloadProtection().catch(() => { /* fail() owns restart errors */ });
         break;
       case "account/updated":
       case "account/login/completed":
@@ -589,7 +628,10 @@ export class CodexEngine implements Engine {
     this.attempts = 0;
     this.exhausted = false;
     this.emit({ type: "availability", available: false, exhausted: false, safety: this.safety });
-    await this.start();
+    try { await this.start(); } catch (error) {
+      if (!this.restartTimer) this.fail(error instanceof Error ? error : new Error(String(error)));
+      throw error;
+    }
   }
   async close() {
     this.stopping = true;
