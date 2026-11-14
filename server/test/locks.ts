@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { join } from 'node:path';
-export async function lockForWriting(path: string) {
-  const child = spawn(join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', `$s=[System.IO.File]::Open('${path.replaceAll("'", "''")}', 'Open', 'ReadWrite', 'Read');[Console]::WriteLine('LOCKED');[Console]::ReadLine()|Out-Null;$s.Dispose()`], { windowsHide: true });
+export async function lockForWriting(path: string, sharing: 'Read' | 'None' = 'Read') {
+  const child = spawn(join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', `$s=[System.IO.File]::Open('${path.replaceAll("'", "''")}', 'Open', 'ReadWrite', '${sharing}');[Console]::WriteLine('LOCKED');[Console]::ReadLine()|Out-Null;$s.Dispose()`], { windowsHide: true });
   const exited = once(child, 'exit');
   await new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('Lock fixture timed out')), 10000);

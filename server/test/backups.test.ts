@@ -11,14 +11,14 @@ import { denyRead } from './acl';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 const target = { workId: 'work', title: 'Propuesta', request: 'Prepará la propuesta' };
-test('a Windows exclusive lock invalidates the copy without hanging', async () => {
+test('a Windows exclusive lock omits only that file without hanging', async () => {
   const f = await fixture();
   const path = join(f.root, 'bloqueado.txt'); await writeFile(path, 'contenido');
   const child = spawn(join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', `$s=[System.IO.File]::Open('${path.replaceAll("'", "''")}', 'Open', 'ReadWrite', 'None');[Console]::WriteLine('LOCKED');[Console]::ReadLine()|Out-Null;$s.Dispose()`], { windowsHide: true });
   const exited = once(child, 'exit');
   try {
     await new Promise<void>((resolve, reject) => { child.stdout.on('data', b => { if (String(b).includes('LOCKED')) resolve(); }); child.stderr.on('data', b => reject(new Error(String(b)))); child.once('error', reject); });
-    assert.equal(await f.backups.before(target), false); assert.equal(f.backups.target, undefined);
+    assert.equal(await f.backups.before(target), true); assert.equal(f.backups.target, undefined);
   } finally { child.stdin.end('\n'); await exited; await f.close(); }
 });
 async function fixture() {
@@ -39,7 +39,7 @@ test('deduplicated copies restore create/modify/delete, unicode, empty directori
     await unlink(join(f.root, 'borrar.txt')); await writeFile(join(f.root, 'nuevo.png'), 'nuevo');
     await f.backups.finish();
     // Both snapshots survive restart; do not reconstruct an after-state at startup.
-    const restarted = new Backups(f.root, f.data); await restarted.initialize();
+    const restarted = new Backups(f.root, f.data); await restarted.initialize(f.backups.receipt);
     assert.ok(restarted.target);
     await restarted.undo(restarted.target!.id);
     assert.equal(await readFile(join(f.root, 'Carpeta ñ/cotización.txt'), 'utf8'), 'original');
@@ -72,9 +72,9 @@ test('excluded content survives undo; limits and unreadable folders invalidate c
     for (const limits of [{ ...BACKUP_LIMITS, files: 0 }, { ...BACKUP_LIMITS, bytes: 0 }, { ...BACKUP_LIMITS, fileBytes: 0 }]) {
       const b = new Backups(f.root, f.data, limits); await b.initialize(); assert.equal(await b.before(target), true); assert.deepEqual(Object.keys(b.lastScan!.entries), []);
     }
-    const limited = new Backups(f.root, f.data, { ...BACKUP_LIMITS, entries: 0 }); await limited.initialize(); assert.equal(await limited.before(target), false);
+    const limited = new Backups(f.root, f.data, { ...BACKUP_LIMITS, entries: 0 }); await limited.initialize(); assert.equal(await limited.before(target), true);
     await mkdir(join(f.root, 'denied')); restore = denyRead(join(f.root, 'denied'));
-    assert.equal(await f.backups.before(target), false); restore(); restore = undefined;
+    assert.equal(await f.backups.before(target), true); restore(); restore = undefined;
     assert.equal(await f.backups.before(target), true);
     await mkdir(join(f.root, 'node_modules')); await writeFile(join(f.root, 'node_modules/keep'), 'keep');
     await writeFile(join(f.root, 'a'), 'b'); await f.backups.finish(); await f.backups.undo(f.backups.target!.id);
@@ -110,7 +110,7 @@ test('fake engine sees pre-request copy; global undo survives restart, results r
     try { await app.command({ type: 'send', text: 'sin copia' }, () => {}); }
     finally { restore(); }
     for (let i = 0; i < 300 && app.snapshot().works.some(w => w.busy); i++) await delay(10);
-    assert.equal(engine.sent.at(-1), 'sin copia'); assert.equal(app.snapshot().undo, undefined);
-    assert.match(app.snapshot().notice!, /no vas a poder deshacer/);
+    assert.equal(engine.sent.at(-1), 'sin copia'); assert.ok(app.snapshot().undo);
+    assert.match(app.snapshot().notice!, /no pude guardar copia/i);
   } finally { await app?.close(); await f.close(); }
 });

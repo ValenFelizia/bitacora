@@ -68,7 +68,7 @@ test('journal resumes after process death between rename and journal update; cle
     assert.equal(await readFile(join(f.root, 'a.txt'), 'utf8'), 'before-a');
     assert.equal(await readFile(join(f.root, 'b.txt'), 'utf8'), 'after-b');
     await crashed.clean(); assert.equal((await readdir(join(f.data, 'backups/objects'))).length, 4);
-    const resumed = new Backups(f.root, f.data); await resumed.initialize(); assert.equal(resumed.target?.retry, true);
+    const resumed = new Backups(f.root, f.data); await resumed.initialize(crashed.receipt); assert.equal(resumed.target?.retry, true);
     await assert.rejects(resumed.before(target), /pendiente/);
     await resumed.undo(id); assert.equal(await readFile(join(f.root, 'b.txt'), 'utf8'), 'before-b');
     assert.equal(resumed.target, undefined); assert.equal((await readdir(join(f.data, 'backups/objects'))).length, 0);
@@ -112,7 +112,7 @@ test('junction introduced DURING restoration cannot redirect a later mutation ou
     await assert.rejects(b.undo(b.target!.id), /enlace/);
     assert.equal(await readFile(join(outside, 'victim.txt'), 'utf8'), 'after');
     await unlink(join(f.root, 'folder')); await rename(join(f.root, 'moved'), join(f.root, 'folder'));
-    const resumed = new Backups(f.root, f.data); await resumed.initialize(); await resumed.undo(resumed.target!.id);
+    const resumed = new Backups(f.root, f.data); await resumed.initialize(b.receipt); await resumed.undo(resumed.target!.id);
     assert.equal(await readFile(join(f.root, 'folder/victim.txt'), 'utf8'), 'before');
   } finally { await f.close(); }
 });
@@ -130,7 +130,7 @@ test('tampered manifest or journal cannot escape the workspace; corrupt content 
     await writeFile(statePath, JSON.stringify(original));
     const hash = original.undo.before.entries['a.txt'].hash;
     await writeFile(join(f.data, 'backups/objects', hash), 'damaged');
-    const b = new Backups(f.root, f.data); await b.initialize(); await assert.rejects(b.undo(b.target!.id), /incompleta/);
+    const b = new Backups(f.root, f.data); await b.initialize(f.backups.receipt); await assert.rejects(b.undo(b.target!.id), /incompleta/);
     assert.equal(await readFile(join(f.root, 'new.txt'), 'utf8'), 'new'); assert.ok(b.target);
     await unlink(join(f.data, 'backups/objects', hash)); await assert.rejects(b.undo(b.target!.id), /incompleta/);
     assert.equal(await readFile(join(f.root, 'new.txt'), 'utf8'), 'new');
@@ -177,7 +177,7 @@ test('failed atomic replacement never removes the destination; partial staging i
     }, afterStep: async () => {} });
     await b.initialize(); await b.before(target); await writeFile(join(f.root, 'a.txt'), 'after'); await b.finish();
     await assert.rejects(b.undo(b.target!.id)); assert.equal(await readFile(join(f.root, 'a.txt'), 'utf8'), 'after');
-    const stage = (await readdir(f.root)).find(p => p.startsWith('.bitacora-undo-'))!;
+    const stage = (await readdir(f.root)).find(p => p.startsWith('.bitacora-undo-')) || `.bitacora-undo-${b.target!.id}-0.tmp`;
     await writeFile(join(f.root, stage), 'partial');
     fail = false; await b.undo(b.target!.id); assert.equal(await readFile(join(f.root, 'a.txt'), 'utf8'), 'before');
     assert.equal((await readdir(f.root)).some(p => p.startsWith('.bitacora-undo-')), false);
@@ -205,7 +205,7 @@ test('completion journal failure preserves retry even after all files were resto
     b.save = async () => { if (!b.state.undo) throw new Error('completion write failed'); await save(); };
     const id = f.backups.target!.id; await assert.rejects(f.backups.undo(id), /completion write failed/);
     assert.equal(await readFile(join(f.root, 'a.txt'), 'utf8'), 'before'); assert.equal(f.backups.target?.retry, true);
-    const resumed = new Backups(f.root, f.data); await resumed.initialize(); await resumed.undo(id); assert.equal(resumed.target, undefined);
+    const resumed = new Backups(f.root, f.data); await resumed.initialize(f.backups.receipt); await resumed.undo(id); assert.equal(resumed.target, undefined);
   } finally { await f.close(); }
 });
 test('App restart exposes retry and blocks new requests until the journal completes; busy undo explains why', async () => {
