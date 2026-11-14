@@ -1,0 +1,106 @@
+{
+  "workspace": "C:\\Users\\Valen\\AppData\\Local\\Bitacora-dev\\issue6\\integración ñ 1Xhx1t\\agencia",
+  "allowedUrls": [
+    "http://127.0.0.1:63439/oferta"
+  ],
+  "calls": {
+    "traer": {
+      "source": "propuestas/prueba/fuente.md",
+      "lines": 7,
+      "photos": [
+        "propuestas/prueba/fotos/operador/imagen-1.png"
+      ],
+      "warnings": [],
+      "preview": [
+        "Oferta de prueba",
+        "7 noches, desde USD 1.250 por persona en base doble, más tasas."
+      ]
+    },
+    "controlar": {
+      "ok": true,
+      "checked": 2,
+      "errors": [],
+      "warnings": [],
+      "report": "propuestas/prueba/control.md"
+    },
+    "dibujar": {
+      "ok": true,
+      "errors": [],
+      "warnings": [],
+      "files": [
+        "propuestas/prueba/salida/pieza-1.png",
+        "propuestas/prueba/salida/piezas.pdf",
+        "propuestas/prueba/salida/todas.png"
+      ]
+    }
+  },
+  "snapshot": {
+    "account": {
+      "connected": true
+    },
+    "engine": {
+      "available": true,
+      "exhausted": false,
+      "safety": {
+        "allowed": true,
+        "detail": "fake restricted execution"
+      }
+    },
+    "works": [
+      {
+        "id": "61095977-ee79-4df4-9fe1-e2f2ebea2603",
+        "title": "Prepará esta oferta: http://127.0.0.1:63439/oferta",
+        "createdAt": "2026-11-14T13:48:16.365Z",
+        "updatedAt": "2026-11-14T13:48:18.183Z",
+        "messages": [
+          {
+            "id": "74933dd3-568b-48bd-aa11-d62dd8d7814d",
+            "attachments": [
+              {
+                "id": "0ceab030-d19a-43ca-b925-6343171241d1",
+                "path": "adjuntos\\61095977-ee79-4df4-9fe1-e2f2ebea2603\\0ceab030-d19a-43ca-b925-6343171241d1-www.nombre-adjunto.example.txt",
+                "name": "www.nombre-adjunto.example.txt",
+                "mime": "text/plain",
+                "createdAt": "2026-11-14T13:48:16.368Z"
+              }
+            ],
+            "role": "user",
+            "text": "Prepará esta oferta: http://127.0.0.1:63439/oferta",
+            "results": [
+              {
+                "id": "55b22149-8775-4cdb-965a-9b1eddb22ce7",
+                "path": "propuestas\\prueba\\salida\\pieza-1.png",
+                "name": "pieza-1.png",
+                "mime": "image/png",
+                "createdAt": "2026-11-14T13:48:18.193Z"
+              },
+              {
+                "id": "7b92b8f8-a7a8-412f-b007-1c7604db5645",
+                "path": "propuestas\\prueba\\salida\\piezas.pdf",
+                "name": "piezas.pdf",
+                "mime": "application/pdf",
+                "createdAt": "2026-11-14T13:48:18.193Z"
+              },
+              {
+                "id": "3cc59273-125c-4569-b45c-1ca841ec1ebb",
+                "path": "propuestas\\prueba\\salida\\todas.png",
+                "name": "todas.png",
+                "mime": "image/png",
+                "createdAt": "2026-11-14T13:48:18.193Z"
+              }
+            ]
+          },
+          {
+            "id": "answer",
+            "role": "assistant",
+            "text": "Preparé las piezas. [Descargar PNG](propuestas/prueba/salida/pieza-1.png) · [Sitio del operador](http://127.0.0.1:63439/oferta) · [Correo](mailto:agencia@example.test)"
+          }
+        ],
+        "details": "",
+        "busy": false,
+        "progress": "Listo."
+      }
+    ]
+  },
+  "modelRequests": 0
+}

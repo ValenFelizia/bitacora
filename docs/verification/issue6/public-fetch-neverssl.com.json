@@ -1,0 +1,29 @@
+{
+  "date": "2026-11-13T19:10:01.818Z",
+  "node": "v24.15.0",
+  "url": "http://neverssl.com/",
+  "resolved": [
+    {
+      "host": "neverssl.com",
+      "addresses": [
+        {
+          "address": "34.223.124.45",
+          "family": 4
+        }
+      ]
+    }
+  ],
+  "result": {
+    "source": "oferta/fuente.md",
+    "lines": 6,
+    "photos": [],
+    "warnings": [],
+    "preview": [
+      "NeverSSL"
+    ]
+  },
+  "sourceBytes": 82,
+  "sourceSha256": "4f65d38e3c26701c14747e7c91f5e6c338561671b5dce0e45688ba2779d0fa99",
+  "excerpt": "# Fuente\nURL: http://neverssl.com/\nConsultada: 2026-11-13T19:10:01.802Z\n\nNeverSSL\n",
+  "modelRequests": 0
+}

@@ -1,6 +1,8 @@
+import { toolProgress } from './tools/progress';
 export type Account = { connected: boolean; email?: string };
 export type ExecutionSafety = { allowed: boolean; detail: string; status?: "needed" | "preparing" | "ready" | "failed"; needsPermission?: boolean; issue?: "check" | "setup" | "uncertain" | "interrupted" | "restart" };
 export type Activity =
+  | keyof typeof toolProgress
   | "preparing"
   | "reading"
   | "executing"
@@ -76,6 +78,7 @@ export function problemText(
 }
 
 export const activityText: Record<Activity, string> = {
+  ...toolProgress,
   preparing: "Preparando la respuesta…",
   reading: "Leyendo los archivos…",
   executing: "Trabajando en los archivos…",

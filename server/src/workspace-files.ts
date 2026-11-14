@@ -108,6 +108,9 @@ export class WorkspaceFiles {
           if (++found.visited > this.limits.entries) { warn(folder, 'entry limit'); break; }
           if (entry.name.startsWith('.') || ['adjuntos', 'node_modules'].includes(entry.name)) continue;
           const path = join(folder, entry.name);
+          // Tourism inputs and the editable starter example are not produced results.
+          const parts = path.toLowerCase().split(/[\\/]/);
+          if (parts[0] === 'ejemplo' || parts.some((part, i) => part === 'fotos' && parts[i + 1] === 'operador')) continue;
           if (entry.isSymbolicLink()) { warn(path, 'link skipped'); continue; }
           if (entry.isDirectory()) await walk(path, depth + 1);
           else if (entry.isFile() && media[extname(entry.name).toLowerCase()]) {
