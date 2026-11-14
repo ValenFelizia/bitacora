@@ -1,0 +1,140 @@
+✖ N1 agent case-only rename preserves file (76.6422ms)
+✖ N1 agent case-only rename preserves directory with user content (80.9177ms)
+✖ N2a agent read-only file can be undone without mistaking its attribute for a lock (32.0944ms)
+✖ N2b preflight junction rejection does not persist a plan or block new requests (36.7729ms)
+✖ N2c replaced parent is rejected before restoring any file and leaves an exit (89.9786ms)
+✖ N3 unreadable file does not disable the rest of the copy (261.5125ms)
+✖ N3 unreadable folder does not disable the rest of the copy (61.9771ms)
+✖ N4 retry does not recreate a file manually deleted after a failed rename (84.9231ms)
+ℹ tests 8
+ℹ suites 0
+ℹ pass 0
+ℹ fail 8
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 961.9564
+
+✖ failing tests:
+
+test at server\test\undo-round3.test.ts:19:40
+✖ N1 agent case-only rename preserves file (76.6422ms)
+  Error: ENOENT: no such file or directory, open 'C:\Users\Valen\Desktop\Vale\Desarrollo Web\bitacora\.local\undo-r3-ubh1Ph\agency\informe.txt'
+      at async open (node:internal/fs/promises:640:25)
+      at async readFile (node:internal/fs/promises:1287:14)
+      at async TestContext.<anonymous> (C:\Users\Valen\Desktop\Vale\Desarrollo Web\bitacora\server\test\undo-round3.test.ts:28:18)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    errno: -4058,
+    code: 'ENOENT',
+    syscall: 'open',
+    path: 'C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\bitacora\\.local\\undo-r3-ubh1Ph\\agency\\informe.txt'
+  }
+
+test at server\test\undo-round3.test.ts:19:40
+✖ N1 agent case-only rename preserves directory with user content (80.9177ms)
+  Error: ENOENT: no such file or directory, open 'C:\Users\Valen\Desktop\Vale\Desarrollo Web\bitacora\.local\undo-r3-z2QwPZ\agency\fotos\mía.txt'
+      at async open (node:internal/fs/promises:640:25)
+      at async readFile (node:internal/fs/promises:1287:14)
+      at async TestContext.<anonymous> (C:\Users\Valen\Desktop\Vale\Desarrollo Web\bitacora\server\test\undo-round3.test.ts:28:18)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    errno: -4058,
+    code: 'ENOENT',
+    syscall: 'open',
+    path: 'C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\bitacora\\.local\\undo-r3-z2QwPZ\\agency\\fotos\\mía.txt'
+  }
+
+test at server\test\undo-round3.test.ts:32:1
+✖ N2a agent read-only file can be undone without mistaking its attribute for a lock (32.0944ms)
+  Error: No pude deshacer todavía: el archivo está abierto o no se puede reemplazar (a.txt). Cerrá el archivo si está abierto y tocá Reintentar deshacer.
+      at Backups.preflight (C:\Users\Valen\Desktop\Vale\Desarrollo Web\bitacora\server\src\backups.ts:185:23)
+      at async Backups.undo (C:\Users\Valen\Desktop\Vale\Desarrollo Web\bitacora\server\src\backups.ts:231:35)
+      at async TestContext.<anonymous> (C:\Users\Valen\Desktop\Vale\Desarrollo Web\bitacora\server\test\undo-round3.test.ts:36:5)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7)
+
+test at server\test\undo-round3.test.ts:39:1
+✖ N2b preflight junction rejection does not persist a plan or block new requests (36.7729ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  true !== false
+  
+      at TestContext.<anonymous> (C:\Users\Valen\Desktop\Vale\Desarrollo Web\bitacora\server\test\undo-round3.test.ts:46:119)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: true,
+    expected: false,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at server\test\undo-round3.test.ts:50:1
+✖ N2c replaced parent is rejected before restoring any file and leaves an exit (89.9786ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  'before' !== 'after'
+  
+      at TestContext.<anonymous> (C:\Users\Valen\Desktop\Vale\Desarrollo Web\bitacora\server\test\undo-round3.test.ts:56:88)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'before',
+    expected: 'after',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at server\test\undo-round3.test.ts:60:40
+✖ N3 unreadable file does not disable the rest of the copy (261.5125ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  false !== true
+  
+      at TestContext.<anonymous> (C:\Users\Valen\Desktop\Vale\Desarrollo Web\bitacora\server\test\undo-round3.test.ts:66:62)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at server\test\undo-round3.test.ts:60:40
+✖ N3 unreadable folder does not disable the rest of the copy (61.9771ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  false !== true
+  
+      at TestContext.<anonymous> (C:\Users\Valen\Desktop\Vale\Desarrollo Web\bitacora\server\test\undo-round3.test.ts:66:62)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at server\test\undo-round3.test.ts:72:1
+✖ N4 retry does not recreate a file manually deleted after a failed rename (84.9231ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  true !== false
+  
+      at TestContext.<anonymous> (C:\Users\Valen\Desktop\Vale\Desarrollo Web\bitacora\server\test\undo-round3.test.ts:80:12)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: true,
+    expected: false,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
