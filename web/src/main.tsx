@@ -274,6 +274,9 @@ function App() {
         </header>
         <section aria-label="Deshacer el último pedido" className="px-5 py-3 border-b border-[#e6e7de]">
           {state.undo && !busy && <>
+            {state.undo.retry && <button className={buttonSecondary} disabled={!online} onClick={() => {
+              if (window.confirm('Voy a dejar la carpeta como está ahora y descartar el Deshacer pendiente. Después podés seguir trabajando.')) send({ type: 'discardUndo', id: state.undo!.id });
+            }}>Dejar la carpeta como está</button>}
             <p className="text-sm">Último pedido con cambios en tu carpeta: {state.undo.title} · «{state.undo.request}»</p>
             {confirmUndo === state.undo.id ? <div role="group" aria-label="Confirmar Deshacer">
               <p className="my-2">Voy a deshacer los cambios de este pedido, aunque estés en otro trabajo. Lo que agregaste o cambiaste a mano después no se toca.</p>

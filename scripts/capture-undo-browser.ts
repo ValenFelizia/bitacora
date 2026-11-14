@@ -38,12 +38,12 @@ try {
   await page.getByRole('button', { name: 'Deshacer', exact: true }).click();
   await page.getByRole('button', { name: 'Sí, deshacer', exact: true }).click();
   await page.getByRole('status').filter({ hasText: 'el archivo está abierto o no se puede reemplazar' }).waitFor();
-  await page.getByRole('button', { name: 'Reintentar deshacer', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Deshacer', exact: true }).waitFor();
   assert.equal(await readFile(join(fixture.workspace, 'documento.docx'), 'utf8'), 'cambio del pedido');
   assert.ok(await readFile(join(fixture.workspace, 'propuesta.png')));
   await page.screenshot({ path: 'docs/verification/issue4/05-locked-no-loss.png', fullPage: true });
   await fixture.unlock();
-  await page.getByRole('button', { name: 'Reintentar deshacer', exact: true }).click();
+  await page.getByRole('button', { name: 'Deshacer', exact: true }).click();
   await page.getByRole('button', { name: 'Sí, deshacer', exact: true }).click();
   await page.getByRole('status').filter({ hasText: 'Lo que agregaste o cambiaste después quedó como estaba' }).waitFor();
   assert.equal(await readFile(join(fixture.workspace, 'documento.docx'), 'utf8'), 'original');

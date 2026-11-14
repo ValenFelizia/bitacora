@@ -22,6 +22,12 @@ export async function undoFixture() {
     manual: () => writeFile(join(workspace, 'foto personal.jpg'), 'foto agregada a mano'),
     lock: async () => { unlock ||= await lockForWriting(join(workspace, 'documento.docx')); },
     unlock: async () => { await unlock?.(); unlock = undefined; },
+    partial: () => {
+      // Deterministic late failure, after the new image was already reverted.
+      (server.app as any).backups.io.beforeMutation = async (path: string, kind: string) => {
+        if (path === 'documento.docx' && kind === 'rename') throw new Error('Fixture: later file cannot be replaced');
+      };
+    },
     close: async () => { await unlock?.(); await vite.close(); await server.close(); await rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); },
   };
 }
