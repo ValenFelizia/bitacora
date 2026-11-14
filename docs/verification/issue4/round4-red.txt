@@ -1,274 +1,120 @@
 ✖ R4 Opus A: discard restores an interrupted parked file before dropping the journal (72.0997ms)
-
 ✖ R4 Opus B: discard repairs a directory removed before a failed replacement (76.134ms)
-
 ✖ R4 Greptile later backups retain bytes for cached unchanged hashes after undo (85.2088ms)
-
 ✖ R4 Greptile retry recovers a later park even when an earlier action is active (96.2657ms)
-
 ✖ R4 Greptile interrupted read-only step is recovered from disk before retry (35.2956ms)
-
 ✖ R4 Opus 2: ambiguous NTFS names omit only the ambiguous entries (37.5213ms)
-
 ✖ R4 Opus 3: returned original after failed replacement leaves no active restoration (52.3152ms)
-
 ✔ R4 Opus 4: an internal junction is rejected explicitly even with matching contents (34.0119ms)
-
 ✖ R4 Opus 5: skipped basename duplicates count separately and manual deletion is not reported as reverted (105.5193ms)
-
 ℹ tests 9
-
 ℹ suites 0
-
 ℹ pass 1
-
 ℹ fail 8
-
 ℹ cancelled 0
-
 ℹ skipped 0
-
 ℹ todo 0
-
 ℹ duration_ms 795.5906
-
-
-
 ✖ failing tests:
-
-
-
 test at server\test\undo-round4.test.ts:1:1447
-
 ✖ R4 Opus A: discard restores an interrupted parked file before dropping the journal (72.0997ms)
-
   Error: ENOENT: no such file or directory, open 'C:\Users\Valen\Desktop\Vale\Desarrollo Web\bitacora\.local\undo-r4-yki4lo\agency\presupuesto.txt'
-
       at async open (node:internal/fs/promises:640:25)
-
       at async readFile (node:internal/fs/promises:1287:14)
-
       at async TestContext.<anonymous> (C:\Users\Valen\Desktop\Vale\Desarrollo Web\bitacora\server\test\undo-round4.test.ts:34:18)
-
       at async Test.run (node:internal/test_runner/test:1208:7)
-
       at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
-
     errno: -4058,
-
     code: 'ENOENT',
-
     syscall: 'open',
-
     path: 'C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\bitacora\\.local\\undo-r4-yki4lo\\agency\\presupuesto.txt'
-
   }
-
-
-
 test at server\test\undo-round4.test.ts:1:2402
-
 ✖ R4 Opus B: discard repairs a directory removed before a failed replacement (76.134ms)
-
   Error: ENOENT: no such file or directory, stat 'C:\Users\Valen\Desktop\Vale\Desarrollo Web\bitacora\.local\undo-r4-CwqUKk\agency\report'
-
       at async stat (node:internal/fs/promises:1038:18)
-
       at async TestContext.<anonymous> (C:\Users\Valen\Desktop\Vale\Desarrollo Web\bitacora\server\test\undo-round4.test.ts:47:16)
-
       at async Test.run (node:internal/test_runner/test:1208:7)
-
       at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
-
     errno: -4058,
-
     code: 'ENOENT',
-
     syscall: 'stat',
-
     path: 'C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\bitacora\\.local\\undo-r4-CwqUKk\\agency\\report'
-
   }
-
-
-
 test at server\test\undo-round4.test.ts:1:3246
-
 ✖ R4 Greptile later backups retain bytes for cached unchanged hashes after undo (85.2088ms)
-
   Error: No pude deshacer todavía: la copia está incompleta (unrelated.txt). Podés volver a intentar Deshacer.
-
       at Backups.preflight (C:\Users\Valen\Desktop\Vale\Desarrollo Web\bitacora\server\src\backups.ts:331:23)
-
       at async Backups.undo (C:\Users\Valen\Desktop\Vale\Desarrollo Web\bitacora\server\src\backups.ts:440:7)
-
       at async TestContext.<anonymous> (C:\Users\Valen\Desktop\Vale\Desarrollo Web\bitacora\server\test\undo-round4.test.ts:57:5)
-
       at async Test.run (node:internal/test_runner/test:1208:7)
-
       at async Test.processPendingSubtests (node:internal/test_runner/test:831:7)
-
-
-
 test at server\test\undo-round4.test.ts:1:3910
-
 ✖ R4 Greptile retry recovers a later park even when an earlier action is active (96.2657ms)
-
   Error: ENOENT: no such file or directory, open 'C:\Users\Valen\Desktop\Vale\Desarrollo Web\bitacora\.local\undo-r4-RfSwLd\agency\z.txt'
-
       at async open (node:internal/fs/promises:640:25)
-
       at async readFile (node:internal/fs/promises:1287:14)
-
       at async TestContext.<anonymous> (C:\Users\Valen\Desktop\Vale\Desarrollo Web\bitacora\server\test\undo-round4.test.ts:69:58)
-
       at async Test.run (node:internal/test_runner/test:1208:7)
-
       at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
-
     errno: -4058,
-
     code: 'ENOENT',
-
     syscall: 'open',
-
     path: 'C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\bitacora\\.local\\undo-r4-RfSwLd\\agency\\z.txt'
-
   }
-
-
-
 test at server\test\undo-round4.test.ts:1:4853
-
 ✖ R4 Greptile interrupted read-only step is recovered from disk before retry (35.2956ms)
-
   AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
-
-
-
   'agent' !== 'before'
-
-
-
       at TestContext.<anonymous> (C:\Users\Valen\Desktop\Vale\Desarrollo Web\bitacora\server\test\undo-round4.test.ts:83:12)
-
       at async Test.run (node:internal/test_runner/test:1208:7)
-
       at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
-
     generatedMessage: true,
-
     code: 'ERR_ASSERTION',
-
     actual: 'agent',
-
     expected: 'before',
-
     operator: 'strictEqual',
-
     diff: 'simple'
-
   }
-
-
-
 test at server\test\undo-round4.test.ts:1:5804
-
 ✖ R4 Opus 2: ambiguous NTFS names omit only the ambiguous entries (37.5213ms)
-
   AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
-
-
-
   false !== true
-
-
-
       at TestContext.<anonymous> (C:\Users\Valen\Desktop\Vale\Desarrollo Web\bitacora\server\test\undo-round4.test.ts:91:12)
-
       at async Test.run (node:internal/test_runner/test:1208:7)
-
       at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
-
     generatedMessage: true,
-
     code: 'ERR_ASSERTION',
-
     actual: false,
-
     expected: true,
-
     operator: 'strictEqual',
-
     diff: 'simple'
-
   }
-
-
-
 test at server\test\undo-round4.test.ts:1:6584
-
 ✖ R4 Opus 3: returned original after failed replacement leaves no active restoration (52.3152ms)
-
   AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
-
-
-
   true !== false
-
-
-
       at TestContext.<anonymous> (C:\Users\Valen\Desktop\Vale\Desarrollo Web\bitacora\server\test\undo-round4.test.ts:104:12)
-
       at async Test.run (node:internal/test_runner/test:1208:7)
-
       at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
-
     generatedMessage: true,
-
     code: 'ERR_ASSERTION',
-
     actual: true,
-
     expected: false,
-
     operator: 'strictEqual',
-
     diff: 'simple'
-
   }
-
-
-
 test at server\test\undo-round4.test.ts:1:8124
-
 ✖ R4 Opus 5: skipped basename duplicates count separately and manual deletion is not reported as reverted (105.5193ms)
-
   AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
-
-
-
   1 !== 2
-
-
-
       at TestContext.<anonymous> (C:\Users\Valen\Desktop\Vale\Desarrollo Web\bitacora\server\test\undo-round4.test.ts:126:12)
-
       at async Test.run (node:internal/test_runner/test:1208:7)
-
       at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
-
     generatedMessage: true,
-
     code: 'ERR_ASSERTION',
-
     actual: 1,
-
     expected: 2,
-
     operator: 'strictEqual',
-
     diff: 'simple'
-
   }
-

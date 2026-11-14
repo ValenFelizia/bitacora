@@ -1,7 +1,5 @@
-
 > test
 > tsx --test server/test/*.test.ts
-
 ✔ a work survives restart with transcript and continues the same conversation (158.0716ms)
 ✔ interrupt, automatic titles, quota and account problems are normalized (77.7658ms)
 ✔ concurrent sends never start duplicate turns and empty requests are rejected (46.9702ms)
