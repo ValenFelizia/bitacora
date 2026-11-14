@@ -1,3 +1,4 @@
+import { Backups } from './backups';
 import { mkdir, readFile, writeFile, rename, copyFile, rm } from "node:fs/promises";
 import { WorkspaceFiles, type FileScan } from "./workspace-files";
 import { join } from "node:path";
@@ -8,6 +9,8 @@ import type { FileRef, Work, Snapshot, ClientCommand, ServerMessage } from "./co
 
 type SavedWork = Work & { conversationId: string; pendingFiles?: { messageId: string; before?: Record<string, string> } };
 export class App {
+  private backups?: Backups;
+  private fileRevision = 0;
   private scanning = new Set<string>();
   private scans = new Set<Promise<void>>();
   private notice?: string;
@@ -31,6 +34,10 @@ export class App {
   async start() {
     await mkdir(this.data, { recursive: true });
     await this.workspace?.initialize();
+    if (this.workspace) {
+      try { this.backups = new Backups(this.workspace.root, this.data); await this.backups.initialize(); }
+      catch { this.backups = undefined; this.notice = "No pude preparar las copias. Podés trabajar, pero esta vez no vas a poder deshacer."; }
+    }
     try {
       const saved = JSON.parse(
         await readFile(join(this.data, "works.json"), "utf8"),
@@ -87,6 +94,8 @@ export class App {
         safety: this.engine.executionSafety(),
       },
       notice: this.notice,
+      undo: !this.submitting && !this.works.some(w => w.busy) ? this.backups?.target : undefined,
+      fileRevision: this.fileRevision,
       works: this.works.map(({ conversationId: _, pendingFiles: __, ...work }) => work),
     };
   }
@@ -143,6 +152,8 @@ export class App {
       work.problem = "No pude revisar los resultados de ese pedido. Podés seguir trabajando.";
       work.details = (work.details + String(error) + "\n").slice(-100000);
     } finally {
+      try { if (await this.backups?.finish() === false) this.notice = "No pude guardar la copia de este pedido. Esta vez no vas a poder deshacer."; } catch { this.notice = "No pude guardar la copia de este pedido. Esta vez no vas a poder deshacer."; }
+      this.fileRevision++;
       delete work.pendingFiles;
       try { await rm(this.pendingPath(work), { force: true }); }
       catch (error) { work.details = (work.details + String(error) + "\n").slice(-100000); }
@@ -263,6 +274,18 @@ export class App {
     command: ClientCommand,
     reply: (message: ServerMessage) => void,
   ) {
+    if (command.type === "undo") {
+      if (this.submitting || this.works.some(w => w.busy) || !this.backups) return;
+      this.submitting = true;
+      this.changed();
+      try {
+        await this.backups.undo(command.id);
+        this.notice = "Listo. Tu carpeta volvió a estar como antes de ese pedido.";
+      } catch (error) {
+        this.notice = "No pude completar Deshacer. Revisá tu carpeta antes de seguir trabajando.";
+      } finally { this.fileRevision++; this.submitting = false; this.changed(); }
+      return;
+    }
     if (command.type === "prepareProtection") {
       if (!this.available || this.submitting || this.works.some(w => w.busy)) return;
       await this.engine.prepareProtection();
@@ -346,13 +369,14 @@ export class App {
       }
       attachments = await this.workspace?.attach(work.id, uploads || []) || [];
       const messageId = randomUUID();
-      const before = await this.workspace?.scan();
+      const before = await this.workspace?.scan().catch(() => ({ entries: {}, warnings: ["No pude revisar todos los resultados."], hashedBytes: 0, visited: 0 }));
       if (before) {
         this.scanDetail(work, before);
         await mkdir(join(this.data, 'pending-files'), { recursive: true });
         await writeFile(this.pendingPath(work), JSON.stringify(before), 'utf8');
         work.pendingFiles = { messageId };
       }
+      if (this.backups && !await this.backups.before({ workId: work.id, title: work.title, request: command.text.trim().slice(0, 160) })) this.notice = "No pude guardar la copia de este pedido. Esta vez no vas a poder deshacer.";
       if (newWork) { this.works.unshift(work); this.resumed.add(work.id); }
       committed = true;
       work.messages.push({
@@ -367,7 +391,11 @@ export class App {
       this.changed();
       await this.writes;
       reply({ type: "selected", workId: work.id });
-      await this.engine.send(work.conversationId, command.text.trim(), await Promise.all((attachments || []).map(async f => ({ path: await this.workspace!.safePath(f.path), mime: f.mime }))));
+      await this.engine.send(work.conversationId, command.text.trim(), await Promise.all((attachments || []).map(async f => ({ path: await this.workspace!.safePath(f.path), mime: f.mime }))), { filesReverted: this.backups?.hasNotice(work.id) });
+      if (this.backups?.hasNotice(work.id)) {
+        try { await this.backups.acknowledge(work.id); }
+        catch { work.details += "No pude guardar que el motor recibió el aviso de Deshacer.\n"; }
+      }
     } catch (error) {
       if (error instanceof EngineFailure && error.kind === "disconnected")
         this.accountState = { connected: false };
@@ -392,6 +420,7 @@ export class App {
       throw error;
     } finally {
       this.submitting = false;
+      this.publish({ type: "snapshot", state: this.snapshot() });
     }
   }
   async close() {

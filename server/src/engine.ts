@@ -46,7 +46,7 @@ export interface Engine {
   account(): Promise<Account>;
   createWork(): Promise<{ conversationId: string; title?: string }>;
   resumeWork(conversationId: string): Promise<void>;
-  send(conversationId: string, text: string, files?: EngineFile[]): Promise<void>;
+  send(conversationId: string, text: string, files?: EngineFile[], context?: { filesReverted?: boolean }): Promise<void>;
   interrupt(conversationId: string): Promise<void>;
   subscribe(listener: (event: EngineEvent) => void): () => void;
   close(): Promise<void>;

@@ -402,14 +402,19 @@ export class CodexEngine implements Engine {
         );
       else pending.resolve(message.result);
     } else if (message.method && message.id !== undefined) {
-      // Interactive tools are outside this issue. Reject explicitly; never leave Codex waiting.
-      this.write({
-        id: message.id,
-        error: {
-          code: -32601,
-          message: "Interactive requests are not supported by Bitacora.",
-        },
-      });
+      // Never approve an escalation or surface an interactive request to the user.
+      const responses: Record<string, unknown> = {
+        "item/commandExecution/requestApproval": { decision: "decline" },
+        "item/fileChange/requestApproval": { decision: "decline" },
+        "execCommandApproval": { decision: "abort" },
+        "applyPatchApproval": { decision: "abort" },
+        "item/permissions/requestApproval": { permissions: {}, scope: "turn" },
+        "item/tool/requestUserInput": { answers: {} },
+        "mcpServer/elicitation/request": { action: "decline", content: null, _meta: null },
+        "item/tool/call": { success: false, contentItems: [] },
+      };
+      if (Object.hasOwn(responses, message.method)) this.write({ id: message.id, result: responses[message.method] });
+      else this.write({ id: message.id, error: { code: -32601, message: "Interactive requests are not supported by Bitacora." } });
     } else if (message.method) this.notification(message as ServerNotification);
   }
   private notification(n: ServerNotification) {
@@ -586,9 +591,13 @@ export class CodexEngine implements Engine {
       ...this.settings(),
     });
   }
-  async send(conversationId: string, text: string, files: import("../engine").EngineFile[] = []) {
+  async send(conversationId: string, text: string, files: import("../engine").EngineFile[] = [], context?: { filesReverted?: boolean }) {
     if (!this.available || !this.safety.allowed)
       throw new EngineFailure("other", this.safety.detail);
+    if (context?.filesReverted) await this.rpc("thread/resume", {
+      threadId: conversationId, ...this.settings(),
+      developerInstructions: this.settings().developerInstructions + " La usuaria deshizo los cambios de archivos del pedido anterior. Volvé a revisar la carpeta; no des por hechos esos cambios.",
+    });
     this.interrupted.delete(conversationId);
     const state = { completed: false, interrupt: false };
     this.starting.set(conversationId, state);

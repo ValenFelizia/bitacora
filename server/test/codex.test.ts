@@ -181,8 +181,8 @@ test("stdio handshake, activities, retry and server-initiated rejection", async 
     );
     assert.equal(f.events.filter((e) => e.type === "problem").length, 1);
     assert.equal(
-      (await f.records()).find((m) => m.id === "server-request").error.code,
-      -32601,
+      Object.keys((await f.records()).find((m) => m.id === "server-request").result.answers).length,
+      0,
     );
   } finally {
     await f.close();
@@ -370,5 +370,23 @@ test("generic files become local images and named relative document mentions", a
     assert.equal(call.params.input[0].text, 'Describí');
     assert.deepEqual(call.params.input[1], { type: 'mention', name: 'cotización.pdf', path: join('adjuntos', 'cotización.pdf') });
     assert.deepEqual(call.params.input[2], { type: "localImage", path: image });
+  } finally { await f.close(); }
+});
+
+ test("all server initiated requests resolve without user approvals or hangs", async () => {
+  const f = await fixture();
+  try {
+    await f.engine.send('thread-1', 'interactive');
+    await until(() => f.events.some(e => e.type === 'finished'));
+    const replies = (await f.records()).filter(m => String(m.id).startsWith('interactive-'));
+    assert.equal(replies.length, 10);
+    assert.equal(replies[0].result.decision, 'decline');
+    assert.deepEqual(replies[2].result.permissions, {});
+    assert.deepEqual(replies[3].result.answers, {});
+    assert.equal(f.events.filter(e => e.type === 'problem').length, 0);
+    await f.engine.send('thread-1', 'Texto de la usuaria', [], { filesReverted: true });
+    const records = await f.records();
+    assert.match(records.find(m => m.method === 'thread/resume').params.developerInstructions, /deshizo/);
+    assert.equal(records.filter(m => m.method === 'turn/start').at(-1).params.input[0].text, 'Texto de la usuaria');
   } finally { await f.close(); }
 });

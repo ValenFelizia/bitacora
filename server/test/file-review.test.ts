@@ -64,21 +64,25 @@ for (const status of ['interrupted', 'failed'] as const) test(`results after ${s
   } finally { await app.close(); await f.cleanup(); }
 });
 
-test('preflight failures roll back attachments and do not create empty work', async () => {
+test('result preflight failure does not block send; attachment failure does not create empty work', async () => {
   const f = await fixture();
   const scan = f.files.scan.bind(f.files);
   const app = new App(new FakeEngine(), join(f.dir, 'data'), () => {}, undefined, f.files);
   try {
     await app.start();
     f.files.scan = async () => { throw new Error('preflight failed'); };
-    await assert.rejects(app.command({ type: 'send', text: 'Prueba', attachments: [{ name: 'nota.txt', data: 'SG9sYQ==' }] }, () => {}), /preflight failed/);
-    assert.equal(app.snapshot().works.length, 0);
-    for (const directory of await readdir(join(f.files.root, 'adjuntos'))) assert.deepEqual(await readdir(join(f.files.root, 'adjuntos', directory)), []);
+    await app.command({ type: 'send', text: 'Prueba', attachments: [{ name: 'nota.txt', data: 'SG9sYQ==' }] }, () => {});
+    assert.equal(app.snapshot().works.length, 1);
+    await app.close();
+    // Separate instance to verify the independent attachment preflight failure.
     f.files.scan = scan;
     await rm(join(f.files.root, 'adjuntos'), { recursive: true });
     await writeFile(join(f.files.root, 'adjuntos'), 'not a directory');
-    await assert.rejects(app.command({ type: 'send', text: 'Prueba', attachments: [{ name: 'nota.txt', data: 'SG9sYQ==' }] }, () => {}));
-    assert.equal(app.snapshot().works.length, 0);
+    const clean = new App(new FakeEngine(), join(f.dir, 'clean-data'), () => {}, undefined, f.files);
+    await clean.start();
+    await assert.rejects(clean.command({ type: 'send', text: 'Prueba', attachments: [{ name: 'nota.txt', data: 'SG9sYQ==' }] }, () => {}));
+    assert.equal(clean.snapshot().works.length, 0);
+    await clean.close();
   } finally { f.files.scan = scan; await app.close(); await f.cleanup(); }
 });
 

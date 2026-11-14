@@ -19,8 +19,11 @@ export type Snapshot = {
   engine: { available: boolean; exhausted?: boolean; safety: ExecutionSafety };
   notice?: string;
   fileToken?: string;
+  undo?: import("./backups").UndoTarget;
+  fileRevision?: number;
 };
 export type ClientCommand =
+  | { type: "undo"; id: string }
   | { type: "connect" }
   | { type: "retry" }
   | { type: "prepareProtection" }
