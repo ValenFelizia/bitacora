@@ -15,3 +15,4 @@ choca con ellos, frená y avisá.
 - Solo Windows. Leé y escribí archivos en UTF-8.
 - Las APIs de Codex y Tauri cambian seguido: verificá en la documentación
   oficial o en el binario instalado antes de asumir cómo funcionan.
+- Antes de mergear un PR se espera la revisión de Greptile sobre el último commit y se responde cada uno de sus comentarios (arreglado, ya cubierto, o por qué no aplica). Greptile revisa solo al abrir el PR: después de subir cambios hay que pedirle otra revisión comentando `@greptileai` en el PR. Antes de entregar una ronda, leé sus comentarios con `gh api repos/ValenFelizia/bitacora/pulls/<n>/comments`.
