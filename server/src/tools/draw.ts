@@ -2,6 +2,7 @@ import { AgencyFiles } from './paths';
 import { withPage } from './page';
 
 export async function dibujar(files: AgencyFiles, input: { html: string; destination: string; width: number; height: number }) {
+  await files.protectInputs([input.html],[...Array.from({length:12},(_,i)=>`${input.destination}/pieza-${i+1}.png`),`${input.destination}/piezas.pdf`,`${input.destination}/todas.png`],'La salida');
   return withPage(files, input.html, async page => {
     const diagnostics = await page.evaluate(({width, height}) => {
       const errors: string[] = [], warnings: string[] = [];
@@ -44,7 +45,8 @@ export async function dibujar(files: AgencyFiles, input: { html: string; destina
       const path = `${input.destination}/pieza-${i + 1}.png`;
       await files.write(path, await piece.screenshot()); outputs.push(path);
     }
-    await page.evaluate(content => { const style = document.createElement("style"); style.textContent = content; document.head.append(style); }, `@page {size:${input.width}px ${input.height}px;margin:0} @media print {body{margin:0!important;display:block!important} [data-piece]{break-after:page;margin:0!important} }`);
+    await page.emulateMedia({media:'screen'});
+    await page.evaluate(content => { const style = document.createElement("style"); style.textContent = content; document.head.append(style); }, `@page {size:${input.width}px ${input.height}px;margin:0} body{margin:0!important;display:block!important} [data-piece]{break-after:page;margin:0!important}`);
     const pdf = `${input.destination}/piezas.pdf`;
     await files.write(pdf, await page.pdf({ printBackground: true, preferCSSPageSize: true })); outputs.push(pdf);
     const overview = `${input.destination}/todas.png`;
