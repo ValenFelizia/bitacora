@@ -12,6 +12,7 @@ import { AgencyFiles } from '../src/tools/paths';
 import { allowedUrlsPath, readAllowedUrls } from '../src/allowed-urls';
 import { FakeEngine } from './fake-engine';
 import type { Snapshot } from '../src/contracts';
+import { photoFixture } from './photo-fixture';
 
 // Intentionally retain fixture data under issue6: the operator owns its cleanup.
 export async function verifyKitIntegration(evidence?: string) {
@@ -19,7 +20,7 @@ export async function verifyKitIntegration(evidence?: string) {
   await mkdir(base,{recursive:true});
   const dir=await mkdtemp(join(base,'integración ñ ')), workspace=join(dir,'agencia'), data=join(dir,'datos');
   const files=new AgencyFiles(workspace);
-  const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=','base64');
+  const png=photoFixture();
   const operator=createServer((req,res)=>{
     if(req.url==='/foto') {res.writeHead(200,{'content-type':'application/octet-stream'}).end(png);return;}
     res.writeHead(200,{'content-type':'text/html; charset=utf-8'}).end('<h1>Oferta de prueba</h1><p>7 noches, desde USD 1.250 por persona en base doble, más tasas.</p><img src="/foto">');
@@ -67,7 +68,7 @@ export async function verifyKitIntegration(evidence?: string) {
       await files.write('ejemplo/no-mostrar.png',png);
       await writeFile(join(workspace,'.kit-guard-test.png'),png);
       await writeFile(join(workspace,'.kit-test.tmp'),'temporal de prueba');
-      engine.emit({type:'message',conversationId,id:'answer',text:'Preparé las piezas y el PDF de la oferta.',delta:false});
+      engine.emit({type:'message',conversationId,id:'answer',text:`Preparé las piezas. [Descargar PNG](propuestas/prueba/salida/pieza-1.png) · [Sitio del operador](${url}) · [Correo](mailto:agencia@example.test)`,delta:false});
       engine.emit({type:'finished',conversationId,status:'completed'});
     };
     const baseUrl=`http://127.0.0.1:${server.port}`;
@@ -101,6 +102,9 @@ export async function verifyKitIntegration(evidence?: string) {
       await page.getByRole('navigation',{name:'Trabajos anteriores'}).getByRole('button').first().click();
       const region=page.getByRole('region',{name:'Resultados del pedido'});
       await region.getByText('pieza-1.png',{exact:true}).waitFor();
+      assert.equal(await page.locator('.markdown').getByRole('link',{name:'Descargar PNG',exact:true}).count(),0);
+      assert.equal(await page.locator('.markdown').getByRole('link',{name:'Correo',exact:true}).count(),0);
+      assert.equal(await page.locator('.markdown').getByRole('link',{name:'Sitio del operador',exact:true}).count(),1);
       assert.equal(await region.getByText('imagen-1.png',{exact:true}).count(),0);
       await page.screenshot({path:join(evidence,'conversation.png'),fullPage:true});
       await page.getByRole('button',{name:'Galería',exact:true}).click();

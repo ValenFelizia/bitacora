@@ -13,6 +13,7 @@ import { controlar } from '../src/tools/check';
 import { dibujar } from '../src/tools/draw';
 import { initializeKit } from '../src/tools/kit';
 import { allowedUrlsPath, rememberUserUrls } from '../src/allowed-urls';
+import { photoFixture } from './photo-fixture';
 
 const base = join(process.env.LOCALAPPDATA!, 'Bitacora-dev', 'issue6');
 async function fixture() {
@@ -39,7 +40,7 @@ test('fetch with explicit test-only local grant, photos, append, SSRF and redire
   const f = await fixture();
   const server = createServer((req,res) => {
     if (req.url === '/redirect') { res.writeHead(302,{location:'http://127.0.0.2/secret'}).end(); return; }
-    if (req.url === '/photo') { res.writeHead(200,{'content-type':'image/png'}).end(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jN1kAAAAASUVORK5CYII=','base64')); return; }
+    if (req.url === '/photo') { res.writeHead(200,{'content-type':'image/png'}).end(photoFixture()); return; }
     res.writeHead(200,{'content-type':'text/html; charset=utf-8'}).end('<h1>Viaje</h1><table><tr><td>Hotel A</td><td>7 noches</td><td>USD 1.250</td></tr></table><img src="/photo">');
   });
   await new Promise<void>(r => server.listen(0,'127.0.0.1',r));

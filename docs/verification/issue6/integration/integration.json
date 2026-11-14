@@ -1,7 +1,7 @@
 {
-  "workspace": "C:\\Users\\Valen\\AppData\\Local\\Bitacora-dev\\issue6\\integración ñ KTMyf9\\agencia",
+  "workspace": "C:\\Users\\Valen\\AppData\\Local\\Bitacora-dev\\issue6\\integración ñ 1Xhx1t\\agencia",
   "allowedUrls": [
-    "http://127.0.0.1:51340/oferta"
+    "http://127.0.0.1:63439/oferta"
   ],
   "calls": {
     "traer": {
@@ -48,52 +48,52 @@
     },
     "works": [
       {
-        "id": "89446c91-4fd7-4a01-b561-c73d114e957e",
-        "title": "Prepará esta oferta: http://127.0.0.1:51340/oferta",
-        "createdAt": "2026-11-13T22:12:33.918Z",
-        "updatedAt": "2026-11-13T22:12:36.246Z",
+        "id": "61095977-ee79-4df4-9fe1-e2f2ebea2603",
+        "title": "Prepará esta oferta: http://127.0.0.1:63439/oferta",
+        "createdAt": "2026-11-14T13:48:16.365Z",
+        "updatedAt": "2026-11-14T13:48:18.183Z",
         "messages": [
           {
-            "id": "05d60995-d64b-486f-9aed-10c10c0431cd",
+            "id": "74933dd3-568b-48bd-aa11-d62dd8d7814d",
             "attachments": [
               {
-                "id": "65276cd6-eb42-4208-adbe-d6c80100527a",
-                "path": "adjuntos\\89446c91-4fd7-4a01-b561-c73d114e957e\\65276cd6-eb42-4208-adbe-d6c80100527a-www.nombre-adjunto.example.txt",
+                "id": "0ceab030-d19a-43ca-b925-6343171241d1",
+                "path": "adjuntos\\61095977-ee79-4df4-9fe1-e2f2ebea2603\\0ceab030-d19a-43ca-b925-6343171241d1-www.nombre-adjunto.example.txt",
                 "name": "www.nombre-adjunto.example.txt",
                 "mime": "text/plain",
-                "createdAt": "2026-11-13T22:12:33.922Z"
+                "createdAt": "2026-11-14T13:48:16.368Z"
               }
             ],
             "role": "user",
-            "text": "Prepará esta oferta: http://127.0.0.1:51340/oferta",
+            "text": "Prepará esta oferta: http://127.0.0.1:63439/oferta",
             "results": [
               {
-                "id": "c1f2553b-a695-48b3-94ba-242e16152a7b",
+                "id": "55b22149-8775-4cdb-965a-9b1eddb22ce7",
                 "path": "propuestas\\prueba\\salida\\pieza-1.png",
                 "name": "pieza-1.png",
                 "mime": "image/png",
-                "createdAt": "2026-11-13T22:12:36.256Z"
+                "createdAt": "2026-11-14T13:48:18.193Z"
               },
               {
-                "id": "7251b480-c796-405b-9d73-2f2fa7989bef",
+                "id": "7b92b8f8-a7a8-412f-b007-1c7604db5645",
                 "path": "propuestas\\prueba\\salida\\piezas.pdf",
                 "name": "piezas.pdf",
                 "mime": "application/pdf",
-                "createdAt": "2026-11-13T22:12:36.256Z"
+                "createdAt": "2026-11-14T13:48:18.193Z"
               },
               {
-                "id": "d14a3347-df9b-4adc-a3dd-d7d897d0aec5",
+                "id": "3cc59273-125c-4569-b45c-1ca841ec1ebb",
                 "path": "propuestas\\prueba\\salida\\todas.png",
                 "name": "todas.png",
                 "mime": "image/png",
-                "createdAt": "2026-11-13T22:12:36.256Z"
+                "createdAt": "2026-11-14T13:48:18.193Z"
               }
             ]
           },
           {
             "id": "answer",
             "role": "assistant",
-            "text": "Preparé las piezas y el PDF de la oferta."
+            "text": "Preparé las piezas. [Descargar PNG](propuestas/prueba/salida/pieza-1.png) · [Sitio del operador](http://127.0.0.1:63439/oferta) · [Correo](mailto:agencia@example.test)"
           }
         ],
         "details": "",

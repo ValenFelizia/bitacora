@@ -98,6 +98,11 @@ El servidor MCP es un envoltorio de los módulos neutrales de `server/src/tools/
 - **Traer:** recibe `url` y `destination`. Guarda `fuente.md` y hasta 12 fotos
   (JPEG, PNG o WebP). Límite de página: 2 MB; por foto: 5 MB; operación: 45 s;
   las fotos se guardan en `<destino>/fotos/operador/` como material de entrada.
+  Prioriza imágenes grandes de contenido (incluidos data-src, srcset, picture,
+  data-bg-image y fondos CSS del HTML), evita logos/botones y descarta imágenes
+  menores de 1500 bytes, con lado corto menor de 400 px o lado largo menor de
+  800 px, o relación de lados mayor de 4. Devuelve ruta, origen, bytes y dimensiones
+  en `photoDetails`; si no hay fotos útiles pide que la usuaria aporte fotos.
   hasta 5 redirecciones. Valida cada destino y fija la dirección DNS validada
   al conectar (incluida la resolución de nombres en Node 24). Decodifica el
   charset de la cabecera o del meta HTML y decide el tipo de cada foto por sus
@@ -117,6 +122,10 @@ El servidor MCP es un envoltorio de los módulos neutrales de `server/src/tools/
   afirmaciones de experiencia personal. La correspondencia de hotel, unidad,
   base y fecha todavía exige revisión del agente: la coincidencia numérica
   no prueba esas relaciones ni la veracidad de la fuente.
+  Los números partidos entre nodos en línea se leen juntos; la cita completa va
+  en el ancestro común que abarca todo el número. Bloques, br, celdas y separación
+  visible separan números. El informe no puede coincidir con sus entradas, aun
+  usando mayúsculas, separadores distintos o segmentos ./ y ../ equivalentes.
 - **Dibujar:** recibe `html`, `destination`, `width` y `height` (por defecto
   1080 × 1920). Lee un archivo HTML estático con piezas `data-piece`, sin
   ejecutar sus scripts. Se rechazan shadow DOM declarativo, paneles internos
@@ -129,6 +138,9 @@ El servidor MCP es un envoltorio de los módulos neutrales de `server/src/tools/
   genera un PNG por pieza, PDF y `todas.png`. Rechaza recursos que no sean
   archivos dentro de la agencia. Usá una carpeta nueva para cada dibujo:
   las salidas existentes no se sobrescriben.
+  El PDF usa el mismo medio de pantalla que se controló, para evitar que reglas
+  de impresión oculten o cambien las piezas. También se rechaza una salida que
+  coincida con el archivo de entrada del dibujo.
 
 La app extrae los links http/https escritos en el texto de cada pedido de la usuaria y los
 guarda en `allowed-urls.json` en la carpeta de **datos**, fuera de la agencia.
@@ -201,6 +213,8 @@ enlaces. Los adjuntos se copian a `adjuntos/<trabajo>/` dentro de la agencia,
 con nombres únicos para conservar los anteriores.
 
 Al terminar cada pedido aparecen las imágenes y PDFs nuevos o modificados.
+El agente no debe escribir rutas ni enlaces a archivos: sus botones aparecen
+solos. Los enlaces de respuestas que no sean http/https se muestran como texto.
 **Copiar** lleva la imagen al portapapeles para pegar en WhatsApp Web;
 **Guardar** la descarga con su nombre. Los PDFs tienen **Abrir** y **Guardar**.
 En **Galería** están agrupados por trabajo, con los resultados más nuevos

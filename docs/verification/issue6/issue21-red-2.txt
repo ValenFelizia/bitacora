@@ -1,0 +1,100 @@
+▶ control report rejects Windows-equivalent input paths before changing any input
+  ✖ source.md (759.2336ms)
+  ✖ rules.md (671.8102ms)
+  ✖ piece.md (626.3914ms)
+✖ control report rejects Windows-equivalent input paths before changing any input (2058.4735ms)
+✖ draw rejects outputs that alias its input before rendering (626.2861ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 0
+ℹ fail 5
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3556.5753
+
+✖ failing tests:
+
+test at server\test\kit-greptile.test.ts:36:134
+✖ source.md (759.2336ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async TestContext.<anonymous> (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\test\kit-greptile.test.ts:42:5)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async TestContext.<anonymous> (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\test\kit-greptile.test.ts:36:126)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /informe.*entrada/i,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at server\test\kit-greptile.test.ts:36:134
+✖ rules.md (671.8102ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async TestContext.<anonymous> (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\test\kit-greptile.test.ts:42:5)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async TestContext.<anonymous> (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\test\kit-greptile.test.ts:36:126)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /informe.*entrada/i,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at server\test\kit-greptile.test.ts:36:134
+✖ piece.md (626.3914ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /informe.*entrada/i. Input:
+  
+  'Error: page.goto: Download is starting\n' +
+    'Call log:\n' +
+    '\x1B[2m  - navigating to "file:///C:/Users/Valen/AppData/Local/Bitacora-dev/issue6/greptile%20%C3%B1%20NkTXDG/piece.md", waiting until "load"\x1B[22m\n'
+  
+      at async TestContext.<anonymous> (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\test\kit-greptile.test.ts:42:5)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async TestContext.<anonymous> (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\test\kit-greptile.test.ts:36:126)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: page.goto: Download is starting
+    Call log:
+    [2m  - navigating to "file:///C:/Users/Valen/AppData/Local/Bitacora-dev/issue6/greptile%20%C3%B1%20NkTXDG/piece.md", waiting until "load"[22m
+    
+        at withPage (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\src\tools\page.ts:37:16)
+        at async controlar (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\src\tools\check.ts:21:25)
+        at async TestContext.<anonymous> (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\test\kit-greptile.test.ts:42:5)
+        at async TestContext.<anonymous> (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\test\kit-greptile.test.ts:36:126),
+    expected: /informe.*entrada/i,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at server\test\kit-greptile.test.ts:46:1
+✖ draw rejects outputs that alias its input before rendering (626.2861ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /salida.*entrada/i. Input:
+  
+  'Error: page.goto: Download is starting\n' +
+    'Call log:\n' +
+    '\x1B[2m  - navigating to "file:///C:/Users/Valen/AppData/Local/Bitacora-dev/issue6/greptile%20%C3%B1%20UjKL8d/out/PIEZAS.pdf", waiting until "load"\x1B[22m\n'
+  
+      at async TestContext.<anonymous> (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\test\kit-greptile.test.ts:48:3)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: page.goto: Download is starting
+    Call log:
+    [2m  - navigating to "file:///C:/Users/Valen/AppData/Local/Bitacora-dev/issue6/greptile%20%C3%B1%20UjKL8d/out/PIEZAS.pdf", waiting until "load"[22m
+    
+        at withPage (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\src\tools\page.ts:37:16)
+        at async TestContext.<anonymous> (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\test\kit-greptile.test.ts:48:3),
+    expected: /salida.*entrada/i,
+    operator: 'rejects',
+    diff: 'simple'
+  }

@@ -11,6 +11,7 @@ import { dibujar } from '../src/tools/draw';
 import { initializeKit } from '../src/tools/kit';
 import { App } from '../src/app';
 import { FakeEngine } from './fake-engine';
+import { photoFixture } from './photo-fixture';
 
 const base = join(process.env.LOCALAPPDATA!, 'Bitacora-dev/issue6');
 async function fixture() {
@@ -51,7 +52,7 @@ test('allowed URLs are exact after URL normalization, external and read-only for
 });
 test('hostname DNS pinning, Windows-1252 headers/meta, byte signatures and transfer limits', async () => {
   const f = await fixture();
-  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jN1kAAAAASUVORK5CYII=','base64');
+  const png = photoFixture();
   const hosts: string[] = [];
   const server = createServer((req,res) => {
     assert.match(req.headers['user-agent'] || '',/Mozilla/);
@@ -66,7 +67,7 @@ test('hostname DNS pinning, Windows-1252 headers/meta, byte signatures and trans
       case '/fake-photo': res.writeHead(200,{'content-type':'image/png'}).end('<html>no es foto</html>'); return;
       case '/mismatch': res.writeHead(200,{'content-type':'image/jpeg'}).end(png); return;
       case '/binary': res.writeHead(200,{'content-type':'application/octet-stream'}).end(png); return;
-      case '/jpg-alias': res.writeHead(200,{'content-type':'image/jpg'}).end(Buffer.from([255,216,255,224])); return;
+      case '/jpg-alias': res.writeHead(200,{'content-type':'image/jpg'}).end(png); return;
       case '/photos': res.writeHead(200,{'content-type':'text/html'}).end(Array.from({length:14},(_,i)=>`<img src="/photo?${i}">`).join('')); return;
       case '/bad-photos': res.writeHead(200,{'content-type':'text/html'}).end('<img src="/big-photo"><img src="/fake-photo"><img src="/mismatch"><img src="/binary"><img src="/jpg-alias">'); return;
       case '/redirect': res.writeHead(302,{location:'/header'}).end(); return;
