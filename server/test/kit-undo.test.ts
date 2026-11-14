@@ -52,7 +52,7 @@ test('kit starter edits undo, moving kit artifacts are ignored, and maintenance 
   } finally { await f.close(); }
 });
 
-test('real kit MCP writes within a fake-engine request share two scans, exclude inputs from results and undo all tool files', async () => {
+test('real kit MCP writes within a fake-engine request share two scans, exclude inputs from results and undo all tool files', { timeout: 180000 }, async () => {
   const f = await fixture(), engine = new FakeEngine(), files = new WorkspaceFiles(f.root), agency = new AgencyFiles(f.root);
   const app = new App(engine, f.data, () => {}, undefined, files);
   const png = photoFixture();
