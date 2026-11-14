@@ -322,9 +322,11 @@ test("stable operation resets the restart budget", async () => {
   const f = await fixture(80, { scheduleTimer: clock.scheduleTimer });
   try {
     for (let i = 1; i <= 7; i++) {
-      clock.runNext();
+      // The stability window must be the configured one, and once it elapses the
+      // backoff starts over from the first delay instead of growing.
+      assert.equal(clock.runNext(), 80);
       await assert.rejects(f.engine.send("thread-1", "crash"));
-      clock.runNext();
+      assert.equal(clock.runNext(), 30);
       await until(() => f.events.filter(e => e.type === "availability" && e.available).length === i + 1);
     }
     assert.ok(!f.events.some(e => e.type === "availability" && e.exhausted));
