@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, writeFile, readFile, rm, symlink, readdir, truncate, open } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile, readFile, rm, symlink, readdir, truncate, open, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { WebSocket } from 'ws';
 import { WorkspaceFiles, MAX_RESULT, SCAN_LIMITS } from '../src/workspace-files';
@@ -61,6 +61,26 @@ for (const status of ['interrupted', 'failed'] as const) test(`results after ${s
     await writeFile(join(f.files.root, 'old.png'), 'same');
     const after = await f.files.scan(before);
     assert.equal(after.entries['old.png'].hash, before.entries['old.png'].hash);
+  } finally { await app.close(); await f.cleanup(); }
+});
+
+test('a result above the serving limit stays in the backup but is not offered as a card', async () => {
+  const f = await fixture(); const engine = new FakeEngine();
+  const app = new App(engine, join(f.dir, 'data'), () => {}, undefined, f.files);
+  try {
+    await app.start(); await app.command({ type: 'send', text: 'Hacé un plano grande' }, () => {});
+    await writeFile(join(f.files.root, 'plano-grande.png'), '');
+    await truncate(join(f.files.root, 'plano-grande.png'), MAX_RESULT + 1);
+    await writeFile(join(f.files.root, 'chico.pdf'), '%PDF-1.4');
+    engine.emit({ type: 'finished', conversationId: 'conversation-1', status: 'completed' });
+    await wait(() => !app.snapshot().works[0].busy);
+    const work = app.snapshot().works[0];
+    assert.deepEqual(work.messages[0].results?.map(r => r.name), ['chico.pdf']);
+    assert.match(work.problem!, /plano-grande\.png/);
+    assert.equal(work.problem!.includes(f.files.root), false);
+    // The backup still covers the file, so Deshacer stays available.
+    assert.ok(app.snapshot().undo);
+    assert.equal((await stat(join(f.files.root, 'plano-grande.png'))).size, MAX_RESULT + 1);
   } finally { await app.close(); await f.cleanup(); }
 });
 

@@ -1,7 +1,7 @@
 import { Backups, BACKUP_LIMITS, RestoreProblem, pathKey } from './backups';
 import { mkdir, readFile, writeFile, rename, copyFile, rm } from "node:fs/promises";
-import { WorkspaceFiles, type FileScan } from "./workspace-files";
-import { join } from "node:path";
+import { WorkspaceFiles, MAX_RESULT, type FileScan } from "./workspace-files";
+import { basename, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { rememberUserUrls } from './allowed-urls';
 import { initializeKit } from './tools/kit';
@@ -162,7 +162,17 @@ export class App {
       this.scanDetail(work, after);
       const message = work.messages.find(m => m.id === pending.messageId);
       const previous = new Map(Object.entries(before.entries).map(([p, entry]) => [pathKey(p), entry.hash]));
-      if (message) message.results = Object.keys(after.entries).filter(p => this.workspace!.isResult(p) && after.entries[p].hash !== previous.get(pathKey(p))).map(p => this.workspace!.result(p));
+      const changed = Object.keys(after.entries).filter(p => this.workspace!.isResult(p) && after.entries[p].hash !== previous.get(pathKey(p)));
+      // The backup keeps files up to its own limit, but a result the app cannot
+      // serve must not become a card the user cannot open.
+      const tooBig = changed.filter(p => after.entries[p].size > MAX_RESULT).map(p => basename(p));
+      if (message) message.results = changed.filter(p => after.entries[p].size <= MAX_RESULT).map(p => this.workspace!.result(p));
+      if (tooBig.length) {
+        const notice = tooBig.length === 1
+          ? `Se generó ${tooBig[0]}, pero es demasiado grande para mostrarlo acá.`
+          : `Se generaron ${tooBig.join(', ')}, pero son demasiado grandes para mostrarlos acá.`;
+        work.problem = work.problem ? `${work.problem} ${notice}` : notice;
+      }
     } catch (error) {
       work.problem = "No pude revisar los resultados de ese pedido. Podés seguir trabajando.";
       work.details = (work.details + String(error) + "\n").slice(-100000);
