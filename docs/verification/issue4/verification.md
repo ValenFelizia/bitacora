@@ -1,5 +1,10 @@
 # Verificación del issue #4
 
+**Informe histórico del primer PR (`ecfafed`).** El diseño de restauración y sus
+limitaciones fueron reemplazados por el [retrabajo](rework.md). Las capturas de
+pantalla se actualizaron y ya corresponden al diseño nuevo. La investigación beta
+de lecturas y `permissions.json` no se modificaron.
+
 2026-11-13. Windows nativo, Codex fijado 0.168.0. Sin login, inferencia,
 administrador, cambios al home personal ni acceso total. Sólo esta copia del repo.
 

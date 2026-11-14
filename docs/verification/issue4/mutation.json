@@ -1,0 +1,12 @@
+{
+  "mutation": "Remove all restore path checks from disposable module",
+  "expected": {
+    "rejected": true,
+    "witness": "after"
+  },
+  "actual": {
+    "rejected": false,
+    "witness": "before"
+  },
+  "mutationKilled": true
+}

@@ -123,35 +123,63 @@ Requiere libres los puertos 5173 y 4317. La evidencia y los límites están en
 
 Antes de cada pedido se guarda una copia en `backups/` dentro de la carpeta de
 datos de Bitácora, fuera de la agencia. No necesita Git ni otros programas.
-Cada contenido se guarda una sola vez por SHA-256; tamaño y fechas evitan
-volver a leer archivos intactos. Se conserva el estado previo al último pedido
-que cambió archivos y una caché del estado actual. Los contenidos sin referencias
-se eliminan. No se usan enlaces duros.
+Cada contenido se guarda una sola vez por SHA-256 y en flujo, sin cargar archivos
+enteros en memoria. Tamaño y fechas evitan volver a leer archivos intactos. La
+copia y la detección de resultados comparten un único recorrido antes del pedido
+y otro al terminar. Se conservan ambas fotos del último pedido con cambios y una
+caché del estado actual. No se usan enlaces duros.
 
 **Deshacer** se ofrece cuando no hay pedidos en curso. La confirmación identifica
-el trabajo y pedido y explica que vuelve toda la carpeta a ese estado, aunque
-estés en otro trabajo. Recupera archivos borrados o modificados, quita los nuevos
-y conserva subcarpetas vacías. Sólo hay un nivel; otro clic no vuelve a deshacer.
-Retomar una conversación no cambia los archivos. Después de deshacer, el motor
-recibe un aviso separado del texto de la usuaria en el siguiente pedido de ese trabajo.
+el trabajo y pedido, aunque estés en otro trabajo. Sólo revierte las rutas que
+cambiaron entre las fotos de antes y después de ese pedido, y cuyo estado actual
+todavía coincide con la foto de después. Lo que agregaste, editaste, moviste o
+borraste a mano después no se toca, incluso si enviaste otro pedido sin cambios.
+La pantalla informa cuántos cambios revirtió y cuántos dejó sin tocar, con sus
+nombres, sin rutas. Sólo hay un nivel de Deshacer.
 
-Se excluyen componentes que empiezan con punto, `node_modules`, `adjuntos` y
-enlaces/junctions. Deshacer tampoco borra esos elementos. Los adjuntos originales
-se conservan. Topes por recorrido: 20.000 entradas, 5.000 archivos de cualquier
-tipo, 64 niveles, 256 MiB por archivo y 2 GiB en total, incluso usando la caché.
-Ante un tope, archivo bloqueado, carpeta ilegible o falta de espacio, el pedido
-sigue y se avisa que esa vez no hay copia. Se invalida la opción anterior para
-no ofrecer una restauración que atraviese un pedido sin copia.
+Retomar una conversación no cambia archivos. En el siguiente pedido del trabajo
+revertido se envía un aviso al motor como otra entrada de ese único turno; no se
+agrega al mensaje guardado de la usuaria ni a las instrucciones de la conversación.
+Los resultados del pedido revertido muestran «Este archivo ya no está disponible»
+en conversación y galería; otros resultados anteriores recuperados siguen accesibles.
 
-Las rutas se comprueban por componentes y ruta real al copiar y restaurar.
-Antes de restaurar se revisan los destinos y los hashes guardados. Se reemplazan
-archivos sin truncar enlaces duros. Si la restauración se interrumpe o falla,
-puede quedar parcial: se avisa, se consume la opción y no se reintenta sola.
-No editar la carpeta simultáneamente desde otro programa durante una restauración;
-las comprobaciones no son una transacción del sistema de archivos.
+Se excluyen componentes que empiezan con punto, `node_modules` y `adjuntos`
+(sin distinguir mayúsculas), enlaces simbólicos y junctions. Deshacer nunca borra
+ni pisa esos elementos, incluidos enlaces creados por el agente y adjuntos originales.
+Se guarda el atributo de sólo lectura de los archivos incluidos.
+
+Topes: 20.000 entradas, 64 niveles, 5.000 archivos incluidos, 256 MiB por archivo
+y 2 GiB de contenido por foto, incluso con caché. Los archivos que superan los
+topes de archivo/cantidad/bytes quedan fuera, y el resto conserva Deshacer. Si el
+pedido cambió un archivo omitido se avisa por nombre; no se repite la advertencia
+en pedidos que no lo cambiaron. Ante un recorrido incompleto (cantidad de entradas,
+profundidad, carpeta ilegible o error de copia), el pedido sigue con un aviso y sin
+Deshacer para ese pedido. No se ofrece una copia anterior que atraviese esa falla.
+
+Antes de cambiar archivos al restaurar se verifican hashes necesarios, destinos,
+enlaces por cada componente, conflictos archivo/carpeta con todos sus restos y
+acceso de escritura hasta donde Node permite comprobarlo. Un bloqueo conocido
+impide empezar. Se guarda un plan en la carpeta de datos y se preparan temporales
+en el destino; cada archivo se reemplaza por renombre, sin borrar antes el original
+ni truncar enlaces duros. Se vuelven a comprobar las rutas en cada operación.
+
+Si aparece una falla durante la restauración, se conserva el plan, el progreso y
+ambas copias. **Reintentar deshacer** continúa sin repetir operaciones terminadas,
+también después de reiniciar. No se pueden enviar pedidos nuevos hasta terminar
+esa restauración. La opción se consume recién al completar y guardar el cierre;
+recién entonces se limpian contenidos sin referencias. Los temporales incompletos
+se reconstruyen desde la copia. Los avisos se limpian con el siguiente pedido.
+
+No es una transacción atómica de toda la carpeta: un error nuevo puede dejar un
+avance parcial, que sigue siendo retomable. No se certifica una carrera entre una
+comprobación y la llamada al sistema ni la supervivencia a un corte físico de energía.
+Si falta la foto de después al reiniciar un pedido interrumpido, no se inventa
+esa foto a partir de posibles cambios manuales posteriores y no se ofrece Deshacer.
+Las copias del esquema anterior del PR se conservan como manifiestos `legacy-*`,
+pero no se ofrecen porque no tenían la foto de después.
 
 Para otra instancia de desarrollo, `BITACORA_WEB_PORT` cambia el puerto de Vite
 y `BITACORA_PORT` cambia el servidor y el destino de ambos proxies. Se conservan
 5173/4317 por defecto. Configurar también `BITACORA_WEB_ORIGIN` para el nuevo origen.
 
-Evidencia, mediciones y límites de las pruebas: [issue #4](docs/verification/issue4/verification.md).
+Evidencia, mediciones y límites actuales: [retrabajo del issue #4](docs/verification/issue4/rework.md).
