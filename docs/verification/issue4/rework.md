@@ -1,5 +1,9 @@
 # Retrabajo del PR #18
 
+**Informe histórico de la segunda ronda (`b69dc14`).** El tratamiento de nombres,
+fallas previas, omisiones y la salida de una restauración parcial se actualizó en
+la [tercera ronda](round3.md). Sus mediciones no certifican los cambios posteriores.
+
 2026-11-14. Se reprodujeron primero los bloqueantes contra `ecfafed`:
 `npx tsx --test server/test/undo-review.test.ts` dio **0/2**. Se borraron
 `foto.jpg` (agregada a mano) y `new.txt` (antes de fallar por el documento bloqueado).

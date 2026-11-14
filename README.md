@@ -129,6 +129,15 @@ copia y la detección de resultados comparten un único recorrido antes del pedi
 y otro al terminar. Se conservan ambas fotos del último pedido con cambios y una
 caché del estado actual. No se usan enlaces duros.
 
+Antes de tomar la copia se escribe una marca de invalidación independiente de
+`state.json`. Cada pedido recibe además un identificador que la app guarda con
+los trabajos antes de enviarlo al motor. Al arrancar, sólo se acepta una copia si
+su identificador, la marca y el último pedido guardado coinciden. Así, un archivo
+de estado bloqueado no hace reaparecer un Deshacer viejo. Si tampoco se puede
+escribir la marca, Deshacer queda deshabilitado durante esa ejecución; los pedidos
+pueden seguir si se pueden guardar sus trabajos. Sin prueba independiente del
+último pedido, las copias anteriores no se vuelven a ofrecer al reiniciar.
+
 **Deshacer** se ofrece cuando no hay pedidos en curso. La confirmación identifica
 el trabajo y pedido, aunque estés en otro trabajo. Sólo revierte las rutas que
 cambiaron entre las fotos de antes y después de ese pedido, y cuyo estado actual
@@ -136,6 +145,14 @@ todavía coincide con la foto de después. Lo que agregaste, editaste, moviste o
 borraste a mano después no se toca, incluso si enviaste otro pedido sin cambios.
 La pantalla informa cuántos cambios revirtió y cuántos dejó sin tocar, con sus
 nombres, sin rutas. Sólo hay un nivel de Deshacer.
+
+Las comparaciones de nombres respetan mayúsculas equivalentes de Windows y usan
+una agrupación Unicode conservadora (NFC y mayúsculas). Si el pedido renombró algo
+sólo por mayúsculas o por la forma de un acento, Deshacer se niega antes de tocar
+nada y deja seguir trabajando. Si ese renombrado fue manual, conserva esa entrada.
+Los nombres reales se comprueban en disco antes de mover o borrar. No se fusionan
+archivos: en esta máquina `ñ` compuesta y descompuesta pueden ser nombres distintos;
+si ambos coexisten, la copia ambigua se rechaza y ninguno se modifica.
 
 Retomar una conversación no cambia archivos. En el siguiente pedido del trabajo
 revertido se envía un aviso al motor como otra entrada de ese único turno; no se
@@ -152,27 +169,45 @@ Topes: 20.000 entradas, 64 niveles, 5.000 archivos incluidos, 256 MiB por archiv
 y 2 GiB de contenido por foto, incluso con caché. Los archivos que superan los
 topes de archivo/cantidad/bytes quedan fuera, y el resto conserva Deshacer. Si el
 pedido cambió un archivo omitido se avisa por nombre; no se repite la advertencia
-en pedidos que no lo cambiaron. Ante un recorrido incompleto (cantidad de entradas,
-profundidad, carpeta ilegible o error de copia), el pedido sigue con un aviso y sin
-Deshacer para ese pedido. No se ofrece una copia anterior que atraviese esa falla.
+en cada pedido. También quedan fuera los archivos y carpetas ilegibles, sin apagar
+las copias del resto. Los topes de entradas/profundidad marcan áreas desconocidas:
+no se confunde lo que no se alcanzó a mirar con un archivo borrado. Se avisa al
+aparecer la limitación y se recuerda lo omitido al deshacer, sin repetir el mismo
+aviso en todos los pedidos. Una falla de todo el almacén sigue avisando que esa vez
+no se pudo guardar copia; no bloquea por sí misma el motor.
 
 Antes de cambiar archivos al restaurar se verifican hashes necesarios, destinos,
 enlaces por cada componente, conflictos archivo/carpeta con todos sus restos y
 acceso de escritura hasta donde Node permite comprobarlo. Un bloqueo conocido
-impide empezar. Se guarda un plan en la carpeta de datos y se preparan temporales
-en el destino; cada archivo se reemplaza por renombre, sin borrar antes el original
-ni truncar enlaces duros. Se vuelven a comprobar las rutas en cada operación.
+impide empezar y no deja un Deshacer pendiente que bloquee pedidos. Se comprueba
+también que los padres existan o estén previstos, y se trata el atributo de sólo
+lectura por separado de un bloqueo. Sólo después de superar esas comprobaciones
+se preparan temporales y se registra la intención de cada operación. El original
+se aparta a un nombre privado antes de instalar el reemplazo; si falla la instalación,
+se intenta devolverlo sin pisar otro archivo. No se truncan enlaces duros ni se
+comparten con ellos los contenidos de las copias. Se comprueban las rutas reales
+inmediatamente antes y después de escribir o renombrar; las escrituras usan un
+archivo abierto para evitar seguir un enlace nuevo en cada bloque de contenido.
 
 Si aparece una falla durante la restauración, se conserva el plan, el progreso y
 ambas copias. **Reintentar deshacer** continúa sin repetir operaciones terminadas,
-también después de reiniciar. No se pueden enviar pedidos nuevos hasta terminar
-esa restauración. La opción se consume recién al completar y guardar el cierre;
+también después de reiniciar. Una intención sin avance no se ofrece como
+restauración pendiente. Si ya hubo cambios, también se ofrece **Dejar la carpeta
+como está**: con confirmación, descarta ese Deshacer y permite enviar pedidos nuevos.
+El resumen dice qué quedó revertido y qué no, por nombre. Mientras tanto se
+conserva el contenido necesario para reintentar o decidir. Una eliminación manual
+entre falla y reintento se respeta; no alcanza con que una operación figurara iniciada.
+La opción se consume recién al completar y guardar el cierre, o al descartarla;
 recién entonces se limpian contenidos sin referencias. Los temporales incompletos
 se reconstruyen desde la copia. Los avisos se limpian con el siguiente pedido.
 
 No es una transacción atómica de toda la carpeta: un error nuevo puede dejar un
 avance parcial, que sigue siendo retomable. No se certifica una carrera entre una
 comprobación y la llamada al sistema ni la supervivencia a un corte físico de energía.
+Los desvíos detectados intentan revertir la escritura o el movimiento propio sin
+sobrescribir un destino nuevo. Sin una API nativa con acceso relativo a una carpeta
+abierta no hay una garantía atómica contra carreras arbitrarias; si la corrección
+no puede terminar, se conserva la recuperación y sigue disponible descartar.
 Si falta la foto de después al reiniciar un pedido interrumpido, no se inventa
 esa foto a partir de posibles cambios manuales posteriores y no se ofrece Deshacer.
 Las copias del esquema anterior del PR se conservan como manifiestos `legacy-*`,
@@ -182,4 +217,5 @@ Para otra instancia de desarrollo, `BITACORA_WEB_PORT` cambia el puerto de Vite
 y `BITACORA_PORT` cambia el servidor y el destino de ambos proxies. Se conservan
 5173/4317 por defecto. Configurar también `BITACORA_WEB_ORIGIN` para el nuevo origen.
 
-Evidencia, mediciones y límites actuales: [retrabajo del issue #4](docs/verification/issue4/rework.md).
+Evidencia y límites actuales: [tercera ronda](docs/verification/issue4/round3.md).
+Mediciones históricas: [segunda ronda](docs/verification/issue4/rework.md).

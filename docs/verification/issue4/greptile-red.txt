@@ -1,0 +1,37 @@
+✖ Greptile: failed copy and locked invalidation save cannot resurrect the previous undo (224.483ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 419.5208
+
+✖ failing tests:
+
+test at server\test\undo-greptile.test.ts:8:1
+✖ Greptile: failed copy and locked invalidation save cannot resurrect the previous undo (224.483ms)
+  AssertionError [ERR_ASSERTION]: the old host receipt cannot override the independent invalidation marker
+  + actual - expected
+  
+  + {
+  +   id: '396dfee8-7424-40eb-9d7a-fbfca41c2f26',
+  +   messageId: undefined,
+  +   request: 'Cambiar',
+  +   retry: false,
+  +   title: 'Prueba',
+  +   workId: 'work'
+  + }
+  - undefined
+  
+      at TestContext.<anonymous> (C:\Users\Valen\Desktop\Vale\Desarrollo Web\bitacora\server\test\undo-greptile.test.ts:21:12)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: { id: '396dfee8-7424-40eb-9d7a-fbfca41c2f26', workId: 'work', title: 'Prueba', request: 'Cambiar', messageId: undefined, retry: false },
+    expected: undefined,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
