@@ -14,6 +14,7 @@ export type Work = {
   problem?: string;
 };
 export type Snapshot = {
+  hasBrand?: boolean;
   account: Account;
   works: Work[];
   engine: { available: boolean; exhausted?: boolean; safety: ExecutionSafety };

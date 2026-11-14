@@ -14,9 +14,11 @@ export const normalizeNumber = (s: string) => {
   return s.replace(/[.,](?=\d{3}(?:[.,]|$))/g, '').replace(',', '.');
 };
 export type Rules = { operatorNames?: string[]; noEmoji?: boolean; warnExperience?: boolean };
-export async function controlar(files: AgencyFiles, input: { html: string; source: string; report: string; rules?: string }) {
-  await files.protectInputs([input.source,input.html,...(input.rules ? [input.rules] : [])],[input.report],'El informe');
+export async function controlar(files: AgencyFiles, input: { html: string; source: string; report: string; brand?: string; rules?: string }) {
+  await files.protectInputs([input.source,input.html,...(input.brand ? [input.brand] : []),...(input.rules ? [input.rules] : [])],[input.report],'El informe');
   if (extname(input.source).toLowerCase() !== '.md' || extname(input.report).toLowerCase() !== '.md') throw new Error('La fuente y el informe deben ser archivos con terminación .md.');
+  if (input.brand && extname(input.brand).toLowerCase() !== '.md') throw new Error('Los datos de marca deben ser un archivo con terminación .md.');
+  const brand = input.brand ? (await files.read(input.brand)).split(/\r?\n/) : undefined;
   const source = (await files.read(input.source)).split(/\r?\n/);
   const rules: Rules = input.rules ? JSON.parse((await files.read(input.rules)).replace(/^\uFEFF/, '')) : {};
   const {texts,whole} = await withPage(files, input.html, async page => ({texts:await visibleTexts(page),whole:await page.evaluate(() => document.body.innerText)}));
@@ -33,14 +35,19 @@ export async function controlar(files: AgencyFiles, input: { html: string; sourc
     for (const number of skipNumbers ? [] : numbers(text)) {
       const line = cites?.[number];
       used.add(`${citationId}:${number}`);
-      const quoted = Number.isInteger(line) && line > 0 ? source[line - 1] : undefined;
+      const isBrand = typeof line === 'string' && line.startsWith('m:');
+      const lineNumber = isBrand && /^m:[1-9]\d*$/.test(line) ? Number(line.slice(2)) : line;
+      const sourceFile = isBrand ? input.brand : input.source;
+      const lines = isBrand ? brand : source;
+      if (isBrand && !brand) errors.push(`${where}: la cita ${line} necesita el parámetro brand con los datos de la agencia.`);
+      const quoted = typeof lineNumber === 'number' && Number.isSafeInteger(lineNumber) && lineNumber > 0 ? lines?.[lineNumber - 1] : undefined;
       const ok = !!quoted && numbers(quoted).some(n => normalizeNumber(n) === normalizeNumber(number));
       if (!ok) errors.push(`${where}: ${number} no está respaldado por la línea citada (${line ?? 'sin cita'}).`);
       const esc = (s: string) => s.replace(/\|/g, '\\|').replace(/[\r\n]/g, ' ');
-      rows.push(`| ${number} | ${esc(where)} | ${line ?? 'sin cita'} | ${esc(quoted ?? 'No encontrada')} | ${ok ? 'Sí' : 'No'} |`);
+      rows.push(`| ${number} | ${esc(where)} | ${esc(sourceFile ?? 'Marca no indicada')} | ${line ?? 'sin cita'} | ${esc(quoted ?? 'No encontrada')} | ${ok ? 'Sí' : 'No'} |`);
     }
   }
   for (const [key,message] of cited) if (!used.has(key)) warnings.push(message);
-  await files.write(input.report, ['# Control de los números', '', `Fuente: ${input.source}`, '', '| Número | Dónde se ve | Línea | Texto de la fuente | Respaldado |', '| --- | --- | --- | --- | --- |', ...rows, '', '## Errores', ...errors.map(s => `- ${s}`), '', '## Avisos', ...warnings.map(s => `- ${s}`)].join('\n'), false);
+  await files.write(input.report, ['# Control de los números', '', `Fuente: ${input.source}`, ...(input.brand ? [`Marca: ${input.brand}`] : []), '', '| Número | Dónde se ve | Archivo | Línea | Texto de la fuente | Respaldado |', '| --- | --- | --- | --- | --- | --- |', ...rows, '', '## Errores', ...errors.map(s => `- ${s}`), '', '## Avisos', ...warnings.map(s => `- ${s}`)].join('\n'), false);
   return { ok: errors.length === 0, checked: rows.length, errors, warnings, report: input.report };
 }

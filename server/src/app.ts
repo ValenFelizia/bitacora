@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile, rename, copyFile, rm } from "node:fs/promises";
 import { WorkspaceFiles, type FileScan } from "./workspace-files";
 import { join } from "node:path";
@@ -89,6 +90,7 @@ export class App {
         exhausted: this.exhausted,
         safety: this.engine.executionSafety(),
       },
+      hasBrand: this.workspace ? existsSync(join(this.workspace.root, "marca")) : undefined,
       notice: this.notice,
       works: this.works.map(({ conversationId: _, pendingFiles: __, ...work }) => work),
     };

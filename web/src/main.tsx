@@ -372,6 +372,11 @@ function App() {
               </pre>
             </details>
           )}
+          {state.works.length === 0 && state.hasBrand === false && <button className={`${buttonPrimary} mb-4`}
+            disabled={!online || !state.engine.available || !state.engine.safety.allowed || !state.account.connected || pending || readingFiles || busy}
+            onClick={() => { setPending(true); send({ type: "send", text: "Ayudame a armar mi marca y mis plantillas para empezar." }); }}>
+            Armar mi agencia
+          </button>}
           <form
             className="bg-[#fffefa] border border-[#cdd4c8] rounded-xl py-[14px] px-[18px]"
             onSubmit={(e) => {
