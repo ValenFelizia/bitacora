@@ -4,6 +4,7 @@ import ipaddr from 'ipaddr.js';
 import { load } from 'cheerio';
 import { AgencyFiles } from './paths';
 import { requireAllowedUrl } from '../allowed-urls';
+import { selectPhotos, photoDimensions } from './photos';
 
 export type FetchOptions = {
   allowedUrls: string;
@@ -86,21 +87,26 @@ export async function traer(files: AgencyFiles, input: { url?: string; destinati
   const page = await follow(new URL(input.url), signal, options, 2_000_000);
   if (!/text\/html/i.test(page.type)) throw new Error('La dirección no devuelve una página HTML.');
   const $ = load(decodePage(page.data, page.type));
-  const photos = [...new Set($('img').toArray().map(el => $(el).attr('src') || $(el).attr('data-src')).filter((s): s is string => !!s))];
+  const photos = selectPhotos($,page.url);
   $('script,style,noscript,svg,nav,footer').remove();
   $('td,th').append(' | '); $('p,div,tr,li,h1,h2,h3,h4,section,br').prepend('\n');
   const lines = $('body').text().split('\n').map(s => s.replace(/\s+/g, ' ').trim()).filter(Boolean);
   const text = `# Fuente\nURL: ${page.url.href}\nConsultada: ${new Date().toISOString()}\n\n${lines.join('\n')}\n` + (input.notes ? `\n## Datos aportados por la usuaria — ${new Date().toISOString()}\n${input.notes}\n` : '');
   await files.write(source, text);
   const saved: string[] = [], warnings: string[] = [];
+  const photoDetails:{path:string;url:string;width:number;height:number;bytes:number}[]=[];
   for (const [i, src] of photos.slice(0, 12).entries()) {
     try {
       const photo = await follow(new URL(src, page.url), signal, options);
       const ext = photoExtension(photo.data);
+      const {width,height}=photoDimensions(photo.data,ext);
+      if(photo.data.length<1500 || Math.max(width,height)<800 || Math.min(width,height)<400 || Math.max(width,height)/Math.min(width,height)>4) continue;
       const path = `${input.destination}/fotos/operador/imagen-${i + 1}.${ext}`;
       await files.write(path, photo.data); saved.push(path);
+      photoDetails.push({path,url:photo.url.href,width,height,bytes:photo.data.length});
     } catch (e) { warnings.push(`No se guardó la foto ${i + 1}: ${String(e)}`); }
   }
   if (photos.length > 12) warnings.push('Se guardan como máximo 12 fotos por página.');
-  return { source, lines: text.split('\n').length, photos: saved, warnings, preview: lines.slice(0, 8) };
+  const photoSummary=saved.length ? `Guardé ${saved.length} fotos de contenido; revisá sus dimensiones y elegí las que sirven.` : 'No encontré fotos útiles del contenido. Pedile fotos del destino o del hotel a la usuaria.';
+  return { source, lines: text.split('\n').length, photos: saved, photoDetails, photoSummary, warnings, preview: lines.slice(0, 8) };
 }
