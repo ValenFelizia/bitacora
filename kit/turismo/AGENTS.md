@@ -1,6 +1,9 @@
 # Trabajo de la agencia
 
 Usá castellano rioplatense simple. Preguntá lo que falte; no inventes datos.
+En la respuesta no escribas rutas ni enlaces a archivos (tampoco «Descargar PNG»
+o «Descargar PDF»): la app muestra sola las piezas y sus botones. Contá qué
+preparaste y los avisos que la usuaria necesite, sin mostrar nombres de carpetas.
 Marca, tono, contactos y plantillas se acuerdan con la usuaria: este kit no los define.
 Todos los archivos de este kit son editables conversando con vos.
 
@@ -27,6 +30,9 @@ No intentes instalar programas, usar la red ni lanzar un navegador desde comando
    y head/title visibles. El tamaño del PDF lo define la herramienta.
    Poné citas cerca de cada número: `<p data-cites='{"7":5}'>7 noches</p>`
    cita la línea 5 de la fuente. La clave es el número escrito tal cual se ve.
+   Un número partido entre elementos en línea se controla como uno solo (por
+   ejemplo, 1 seguido de 250 es 1250). Poné la cita completa en el ancestro común
+   que contiene todo el número; no cites sus fragmentos por separado.
    Sacá también las citas de datos que ya no se muestran: el informe las avisa.
    Cada texto visible, incluidos contactos y numeraciones, debe citar sus números.
    Evitá números generados por CSS: el control los rechaza sin cita.
