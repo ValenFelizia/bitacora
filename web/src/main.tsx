@@ -276,10 +276,10 @@ function App() {
           {state.undo && !busy && <>
             <p className="text-sm">Último pedido con cambios en tu carpeta: {state.undo.title} · «{state.undo.request}»</p>
             {confirmUndo === state.undo.id ? <div role="group" aria-label="Confirmar Deshacer">
-              <p className="my-2">Voy a dejar tu carpeta como estaba antes de este pedido. Se van a quitar los archivos nuevos y recuperar los anteriores, aunque estés en otro trabajo.</p>
+              <p className="my-2">Voy a deshacer los cambios de este pedido, aunque estés en otro trabajo. Lo que agregaste o cambiaste a mano después no se toca.</p>
               <button className={buttonPrimary} disabled={!online} onClick={() => { send({ type: "undo", id: state.undo!.id }); setConfirmUndo(undefined); }}>Sí, deshacer</button>
               <button className={buttonSecondary} onClick={() => setConfirmUndo(undefined)}>Cancelar</button>
-            </div> : <button className={buttonSecondary} disabled={!online} onClick={() => setConfirmUndo(state.undo!.id)}>Deshacer</button>}
+            </div> : <button className={buttonSecondary} disabled={!online} onClick={() => setConfirmUndo(state.undo!.id)}>{state.undo.retry ? 'Reintentar deshacer' : 'Deshacer'}</button>}
           </>}
           {state.notice && <p role="status" className="text-sm my-2">{state.notice}</p>}
         </section>
