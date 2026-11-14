@@ -43,8 +43,8 @@ como prueba roja antes de corregirlo: [greptile-red.txt](greptile-red.txt).
 La prueba empieza con la carpeta vacía, guarda el primer resultado y luego bloquea
 `state.json` con un proceso propio de PowerShell. La siguiente copia y los dos
 intentos de guardado fallan; el pedido sin copia no puede rehabilitar el Deshacer
-anterior al reiniciar. En la prueba adicional se inyecta también el fallo de la
-marca: el identificador guardado en `works.json` demuestra cuál fue el último pedido
+anterior al reiniciar. En la prueba adicional se bloquea también la marca con otro
+proceso propio de PowerShell: el identificador guardado en `works.json` demuestra cuál fue el último pedido
 que pudo enviarse, aunque el archivo de copia siga viejo. Si tampoco se pudieran
 guardar los trabajos, el contrato existente no envía ese pedido al motor.
 

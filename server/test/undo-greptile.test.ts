@@ -28,7 +28,7 @@ test('Greptile: failed copy and locked invalidation save cannot resurrect the pr
 test('Greptile: failure of both marker and state writes stays disabled and host proof rejects stale undo at startup', async () => {
   await mkdir('.local', { recursive: true }); const dir = await mkdtemp(resolve('.local/undo-greptile-host-'));
   const root = join(dir, 'agency'), data = join(dir, 'data'); const engine = new FakeEngine(), files = new WorkspaceFiles(root);
-  let app = new App(engine, data, () => {}, undefined, files), unlock: (() => Promise<void>) | undefined;
+  let app = new App(engine, data, () => {}, undefined, files), unlock: (() => Promise<void>) | undefined, unlockMarker: (() => Promise<void>) | undefined;
   engine.send = async (id, text) => {
     engine.sent.push(text); await writeFile(join(root, `${text}.txt`), text);
     engine.emit({ type: 'finished', conversationId: id, status: 'completed' });
@@ -38,17 +38,17 @@ test('Greptile: failure of both marker and state writes stays disabled and host 
     await app.start(); await app.command({ type: 'send', text: 'first' }, () => {}); await idle(); assert.ok(app.snapshot().undo);
     const oldHostReceipt = JSON.parse(await readFile(join(data, 'works.json'), 'utf8')).backupReceipt;
     unlock = await lockForWriting(join(data, 'backups/state.json'));
-    (app as any).backups.writeInvalidation = async () => { throw new Error('marker cannot be written'); };
+    unlockMarker = await lockForWriting(join(data, 'backup-invalidation.json'));
     await app.command({ type: 'send', text: 'second' }, () => {}); await idle();
     assert.deepEqual(engine.sent, ['first', 'second']); assert.equal(app.snapshot().undo, undefined);
     const newHostReceipt = JSON.parse(await readFile(join(data, 'works.json'), 'utf8')).backupReceipt;
     assert.notEqual(oldHostReceipt, newHostReceipt);
-    await app.close(); await unlock(); unlock = undefined;
+    await app.close(); await unlock(); unlock = undefined; await unlockMarker(); unlockMarker = undefined;
     app = new App(engine, data, () => {}, undefined, files); await app.start();
     assert.equal(app.snapshot().undo, undefined);
     assert.equal(await readFile(join(root, 'first.txt'), 'utf8'), 'first'); assert.equal(await readFile(join(root, 'second.txt'), 'utf8'), 'second');
     await app.command({ type: 'send', text: 'third' }, () => {}); await idle(); assert.equal(engine.sent.at(-1), 'third');
-  } finally { await unlock?.(); await app.close(); await rm(dir, { recursive: true, force: true }); }
+  } finally { await unlock?.(); await unlockMarker?.(); await app.close(); await rm(dir, { recursive: true, force: true }); }
 });
 test('Greptile: startup without independent host proof never offers a saved undo', async () => {
   await mkdir('.local', { recursive: true }); const dir = await mkdtemp(resolve('.local/undo-greptile-proof-'));
