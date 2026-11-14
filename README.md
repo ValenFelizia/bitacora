@@ -194,8 +194,10 @@ Si aparece una falla durante la restauración, se conserva el plan, el progreso 
 ambas copias. **Reintentar deshacer** continúa sin repetir operaciones terminadas,
 también después de reiniciar. Una intención sin avance no se ofrece como
 restauración pendiente. Si ya hubo cambios, también se ofrece **Dejar la carpeta
-como está**: primero repone las rutas que Deshacer dejó faltantes con su versión
-apartada. Si no puede reponer alguna, explica el motivo y conserva el reintento.
+como está**: sólo repone una ruta faltante por un reemplazo sin terminar, con su
+versión apartada y la copia de reemplazo todavía preparada. Respeta las
+eliminaciones ya completadas y las que hiciste a mano después. Si no puede
+reponer un reemplazo interrumpido, explica el motivo y conserva el reintento.
 Recién después descarta ese Deshacer y permite enviar pedidos nuevos.
 El resumen dice qué quedó revertido y qué no, por nombre. Mientras tanto se
 conserva el contenido necesario para reintentar o decidir. Una eliminación manual
@@ -221,6 +223,8 @@ La purga es independiente: sólo puede borrar una entrada cuando pasaron **al
 menos siete días y tres pedidos posteriores con copia completada correctamente**.
 No purga entradas del Deshacer disponible o pendiente; las transferencias
 incompletas se conservan. Se ejecuta después de una copia posterior correcta.
+Si falla el contador de copias correctas, la copia y Deshacer siguen disponibles;
+esa vuelta no avanza la retención ni ejecuta la purga.
 El almacén de contenidos tampoco se limpia al deshacer, reintentar ni descartar:
 sólo después de otra copia correcta, respetando referencias de copias y papelera.
 La caché sólo reutiliza una huella si sus bytes siguen guardados.

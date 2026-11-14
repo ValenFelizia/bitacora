@@ -82,7 +82,7 @@ test('R4 property: every process-exit cut conserves pre-undo contents through re
     await writeFile(join(f.root, 'a.txt'), 'before-a'); await writeFile(join(f.root, 'report'), 'before-report'); await writeFile(join(f.root, 'z.txt'), 'before-z');
     await b.before(target); await writeFile(join(f.root, 'a.txt'), 'agent-a'); await chmod(join(f.root, 'a.txt'), 0o444);
     await unlink(join(f.root, 'report')); await mkdir(join(f.root, 'report')); await writeFile(join(f.root, 'report/child'), 'agent-child'); await writeFile(join(f.root, 'z.txt'), 'agent-z');
-    await b.finish(); await writeFile(join(f.root, 'manual.txt'), 'personal'); return { ...f, receipt: b.receipt! };
+    await writeFile(join(f.root, 'new.png'), 'agent-new'); await b.finish(); await writeFile(join(f.root, 'manual.txt'), 'personal'); return { ...f, receipt: b.receipt! };
   };
   const run = (f: Awaited<ReturnType<typeof setup>>, cut: number) => spawnSync(process.execPath, ['--import', 'tsx', resolve('server/test/undo-cut-worker.ts'), f.root, f.data, f.receipt, String(cut)], { encoding: 'utf8', timeout: 15000 });
   const baseline = await setup(); let total = 0;
@@ -92,13 +92,35 @@ test('R4 property: every process-exit cut conserves pre-undo contents through re
     const f = await setup();
     try {
       const result = run(f, cut); assert.equal(result.status, 73, `cut ${cut}: ${result.stderr}`);
-      await conserved(f, ['agent-a', 'agent-child', 'agent-z', 'personal']);
+      await conserved(f, ['agent-a', 'agent-child', 'agent-z', 'agent-new', 'personal']);
       const b = new Backups(f.root, f.data); await b.initialize(f.receipt);
+      const expected = new Map<string, string>();
+      if (mode === 'discard') {
+        // Simulate deleting a file ourselves after its replacement completed.
+        if (await readFile(join(f.root, 'a.txt'), 'utf8').catch(() => '') === 'before-a') await unlink(join(f.root, 'a.txt'));
+        const state = JSON.parse(await readFile(join(f.data, 'backups/state.json'), 'utf8'));
+        for (const p of ['a.txt', 'z.txt', 'report', 'report/child', 'new.png', 'manual.txt']) {
+          const path = join(f.root, p), s = await stat(path).catch(() => undefined);
+          let wanted = s?.isDirectory() ? 'directory' : s ? await readFile(path, 'utf8') : 'missing';
+          const index = state.plan?.actions.findIndex((a: { path: string }) => a.path === p);
+          // A replacement is unfinished only while its prepared file is still
+          // present. A completed deletion or installation leaves no such gap.
+          if (!s && b.restoring && index >= 0 && ['a.txt', 'z.txt', 'report'].includes(p) &&
+              await stat(join(f.root, `.bitacora-undo-${state.undo.id}-${index}.tmp`)).catch(() => undefined)) {
+            wanted = p === 'report' ? 'directory' : `agent-${p[0]}`;
+          }
+          expected.set(p, wanted);
+        }
+      }
       if (b.target) {
         if (mode === 'discard' && b.restoring) await b.discard(b.target.id);
         else if (mode === 'retry') await b.undo(b.target.id);
       }
-      await conserved(f, ['agent-a', 'agent-child', 'agent-z', 'personal']);
+      await conserved(f, ['agent-a', 'agent-child', 'agent-z', 'agent-new', 'personal']);
+      for (const [p, wanted] of expected) {
+        const path = join(f.root, p), s = await stat(path).catch(() => undefined);
+        assert.equal(s?.isDirectory() ? 'directory' : s ? await readFile(path, 'utf8') : 'missing', wanted, `discard changed ${p} at cut ${cut}`);
+      }
       assert.equal(await readFile(join(f.root, 'manual.txt'), 'utf8'), 'personal');
       assert.equal(b.restoring, false, `${mode} cut ${cut} must have an exit`);
       assert.equal(await b.before(target), true);

@@ -205,9 +205,11 @@ export class Backups {
         // Retention bookkeeping must never invalidate the saved request copy.
         let advanced = false;
         try { await this.trash.completedCopy(); advanced = true; } catch { /* Keep retention unchanged and skip this purge. */ }
-        if (advanced) await this.purgeTrash().catch(() => {});
-        // Collection failure cannot invalidate a correctly saved request copy.
-        this.collectionAllowed = true; await this.clean().catch(() => {});
+        if (advanced) {
+          await this.purgeTrash().catch(() => {});
+          // Collection failure cannot invalidate a correctly saved request copy.
+          this.collectionAllowed = true; await this.clean().catch(() => {});
+        }
       }
       return true;
     } catch { delete this.state.undo; delete this.state.cache; delete this.state.pending; await this.save(); return false; }
