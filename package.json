@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "concurrently -k -n server,web \"npm run dev -w server\" \"npm run dev -w web\"",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test server/test/*.test.ts",
+    "test": "tsx --test --test-timeout=60000 server/test/*.test.ts",
     "build": "npm run build -w web",
     "generate:protocol": "node scripts/generate-protocol.mjs"
   },

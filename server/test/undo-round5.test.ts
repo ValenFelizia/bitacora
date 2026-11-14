@@ -39,10 +39,16 @@ test('R5 a locked trash counter does not invalidate a saved copy or advance rete
     await unlock(); unlock = undefined; await f.b.undo(f.b.target!.id); assert.equal(await readFile(join(f.root, 'a.txt'), 'utf8'), 'before');
   } finally { await unlock?.(); await f.close(); }
 });
-test('R5 historical mutation runners start and detect their mutations', () => {
-  for (const script of ['verify-undo-round3-mutations', 'verify-undo-mutation']) {
-    const env = { ...process.env }; delete env.NODE_TEST_CONTEXT;
-    const result = spawnSync(process.execPath, ['--import', 'tsx', `scripts/${script}.ts`], { encoding: 'utf8', timeout: 30000, env });
-    assert.equal(result.status, 0, result.stdout + result.stderr); assert.match(result.stdout, /PASS:/);
-  }
+test('R5 historical mutation runners start and detect their mutations', async () => {
+  // The runners rewrite their evidence; point them at a scratch folder so the
+  // test run never modifies tracked files under docs/.
+  await mkdir('.local', { recursive: true });
+  const evidence = await mkdtemp(resolve('.local/mutation-evidence-'));
+  try {
+    for (const script of ['verify-undo-round3-mutations', 'verify-undo-mutation']) {
+      const env: NodeJS.ProcessEnv = { ...process.env, BITACORA_EVIDENCE_DIR: evidence }; delete env.NODE_TEST_CONTEXT;
+      const result = spawnSync(process.execPath, ['--import', 'tsx', `scripts/${script}.ts`], { encoding: 'utf8', timeout: 30000, env });
+      assert.equal(result.status, 0, result.stdout + result.stderr); assert.match(result.stdout, /PASS:/);
+    }
+  } finally { await rm(evidence, { recursive: true, force: true }); }
 });

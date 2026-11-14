@@ -13,7 +13,7 @@ async function fixture() {
   const base=join(process.env.LOCALAPPDATA!,'Bitacora-dev/issue6');await mkdir(base,{recursive:true});
   return new AgencyFiles(await mkdtemp(join(base,'visibility ñ ')));
 }
-test('text requires citations unless hidden by the closed certainty list',async t=>{
+test('text requires citations unless hidden by the closed certainty list',{timeout:180000},async t=>{
   const cases=[
     ['contents','<span style="display:contents">999</span>',1],
     ['nested','<span style="display:contents"><span style="display:contents">999</span></span>',1],

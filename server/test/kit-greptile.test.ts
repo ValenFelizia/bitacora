@@ -15,7 +15,7 @@ async function fixture() {
   const base=join(process.env.LOCALAPPDATA!,'Bitacora-dev/issue6');await mkdir(base,{recursive:true});
   return new AgencyFiles(await mkdtemp(join(base,'greptile ñ ')));
 }
-test('visible numeric tokens span adjacent inline nodes and use a common citation ancestor',async t=>{
+test('visible numeric tokens span adjacent inline nodes and use a common citation ancestor',{timeout:180000},async t=>{
   const cases=[
     ['split span','<p data-cites=\'{"1":3,"250":4}\'>1<span>250</span></p>',false],
     ['split thousands','<p data-cites=\'{"1":3,"670":5}\'>1.<b>670</b></p>',false],
