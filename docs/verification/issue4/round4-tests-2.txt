@@ -1,126 +1,252 @@
-
-> test
-> tsx --test server/test/*.test.ts
-
-✔ a work survives restart with transcript and continues the same conversation (106.4442ms)
-✔ interrupt, automatic titles, quota and account problems are normalized (88.0384ms)
-✔ concurrent sends never start duplicate turns and empty requests are rejected (41.638ms)
-✔ restart marks unfinished work as stopped and quarantines corrupt JSON (58.8017ms)
-✔ failed persistence does not poison the next write (33.8737ms)
-✔ fragments publish incremental messages and persist at completion (35.4056ms)
-✔ engine restart releases busy work and clears resumed conversations (66.172ms)
-✔ workspace and engine data cannot overlap (0.6364ms)
-✔ an ambiguous send failure stays saved, clears busy state and is never retried (61.9092ms)
-✔ app rejects unsafe sends even when the fake engine would accept them (73.5993ms)
-✔ persistence retries EPERM once or twice before succeeding (298.4631ms)
-✔ corrupt quarantine retries then copies, and still starts if copying also fails (470.3974ms)
-✔ final flush includes events delivered during engine shutdown (54.9188ms)
-✔ a Windows exclusive lock omits only that file without hanging (459.3723ms)
-✔ deduplicated copies restore create/modify/delete, unicode, empty directories, restart, cleanup and one undo (817.6351ms)
-✔ junctions outside are skipped; restoring through a substituted junction fails before touching outside (139.5673ms)
-✔ excluded content survives undo; limits and unreadable folders invalidate copies (400.7465ms)
-✔ fake engine sees pre-request copy; global undo survives restart, results refresh, context is separate, failed copy still sends (329.7189ms)
-✔ ready unelevated remains blocked (230.7072ms)
-✔ read and probe failures retry checks without administrative preparation (279.6243ms)
-✔ saved MXC is probed again by each new engine; unavailable is not ready (175.5211ms)
-✔ automatic MXC setup caches the successful probe across reload (329.2397ms)
-✔ interrupted preparation remains retryable (642.632ms)
-✔ setupStart timeout unlocks retry as a read, not another UAC (325.5803ms)
-✔ reload cancels pending RPC and start failure goes through restart/retry (1289.6902ms)
-✔ stdio handshake, activities, retry and server-initiated rejection (120.4595ms)
-✔ completion before start reply never leaves a stale interrupt target; early pause is delivered (201.5968ms)
-✔ child exit rejects the pending turn and restarts with a fresh handshake (261.6121ms)
-✔ child environment drops inherited Codex settings and API secrets and forces its home (99.3629ms)
-✔ missing Windows protection blocks before turn/start (101.6636ms)
-✔ restart backoff grows, exhausts explicitly and allows manual retry (1801.6359ms)
-✔ stable operation resets the restart budget (1924.6729ms)
-✔ started notification before start reply delivers only one pause (170.6461ms)
-✔ protection setup: success, sends stay blocked until readiness (280.3481ms)
-✔ protection setup: failure, sends stay blocked until readiness (326.5797ms)
-✔ protection setup: restart, sends stay blocked until readiness (326.2847ms)
-✔ protection setup: mxc, sends stay blocked until readiness (170.2758ms)
-✔ generic files become local images and named relative document mentions (72.0781ms)
-✔ all server initiated requests resolve without user approvals or hangs (101.1196ms)
-✔ denied subfolder does not block subsequent requests or restart (real Windows ACL) (436.4406ms)
-✔ whole scan failure releases pending marker, keeps warning and permits send and restart (404.0307ms)
-✔ results after interrupted, unchanged hashes and separate pending state (295.8363ms)
-✔ results after failed, unchanged hashes and separate pending state (108.6646ms)
-✔ result preflight failure does not block send; attachment failure does not create empty work (96.3852ms)
-✔ long filenames preserve extension and clean the truncated stem (5.9216ms)
-✔ scan skips broken links, junction loops and external junctions and enforces budgets (61.5206ms)
-✔ registered HTTP files enforce paths, headers, HEAD and streaming size cap (206.4513ms)
-✔ a partial attachment write failure removes already created files (14.8877ms)
-✔ exclusive Windows file lock is skipped with technical detail (323.7201ms)
-✔ separate pending snapshot restores results after app closure (73.5699ms)
-✔ only an active scan delays sends; completing it releases the gate (97.8674ms)
-✔ attachments validate formats, content, limits and safe unique names without overwriting (218.0718ms)
-✔ new and modified results exclude inputs, hidden directories and dependencies, persist per request and survive deletion (591.9442ms)
-✔ HTTP files require session token, local host, allowed origin and registered real workspace path (213.2268ms)
-✔ localhost websocket serves snapshots, connects an account and blocks foreign origins (91.9354ms)
-✔ Greptile: failed copy and locked invalidation save cannot resurrect the previous undo (562.6265ms)
-✔ Greptile: failure of both marker and state writes stays disabled and host proof rejects stale undo at startup (952.3578ms)
-✔ Greptile: startup without independent host proof never offers a saved undo (84.1491ms)
-✔ Greptile: a proven later unchanged request legitimately retains the previous changed request undo (219.7607ms)
-✔ Greptile: failure to write the independent marker disables undo for the rest of that execution (88.278ms)
-✔ review blocker 1: manual additions and edits survive undo, including a later unchanged request (473.61ms)
-✔ review blocker 2: write-locked file prevents all mutations, preserves undo and retries (873.6052ms)
-✔ manual edits, moves and deletion of agent-modified files are skipped by name (297.163ms)
-✔ journal resumes after process death between rename and journal update; cleanup retains both snapshots (324.6993ms)
-✔ file/directory conflict with hidden contents is rejected before any mutation (67.7233ms)
-✔ individual oversized file is omitted without disabling other undo, and unchanged omissions do not repeat (166.7138ms)
-✔ junction introduced DURING restoration cannot redirect a later mutation outside (466.6508ms)
-✔ tampered manifest or journal cannot escape the workspace; corrupt content fails preflight (132.9106ms)
-✔ restore preserves original read-only attribute (154.313ms)
-✔ App uses one scan per moment; context is sent once only to its work; reverted result stays unavailable (296.5335ms)
-✔ failed atomic replacement never removes the destination; partial staging is rebuilt on retry (241.7393ms)
-✔ file/directory swaps without leftovers restore; new directories with manual files survive (336.4998ms)
-✔ completion journal failure preserves retry even after all files were restored (196.1305ms)
-✔ App restart exposes retry and blocks new requests until the journal completes; busy undo explains why (242.5641ms)
-﹣ a file symlink introduced during restoration is rejected without touching its external target (5.9283ms) # Windows does not permit file symlinks for this non-admin process
-✔ N1 agent case-only rename preserves file (186.6696ms)
-✔ N1 agent case-only rename preserves directory with user content (198.4525ms)
-✔ N2a agent read-only file can be undone without mistaking its attribute for a lock (531.7726ms)
-✔ N2b preflight junction rejection does not persist a plan or block new requests (121.3027ms)
-✔ N2c replaced parent is rejected before restoring any file and leaves an exit (139.1899ms)
-✔ N3 unreadable file does not disable the rest of the copy (525.6536ms)
-✔ N3 unreadable folder does not disable the rest of the copy (225.7107ms)
-✔ N4 retry does not recreate a file manually deleted after a failed rename (139.264ms)
-✔ N1 manual case rename after the request preserves file (70.8139ms)
-✔ N1 manual case rename after the request preserves folder (73.2803ms)
-✔ N1 Unicode composition-only rename is refused without losing either content or copy (48.9447ms)
-✔ N1 distinct NTFS names with equivalent Unicode stay separate and are individually omitted (45.4127ms)
-✔ N2 partial restore can always be discarded after restart, reports paths by name and accepts a new request (415.9139ms)
-✔ N3 entry/depth limits retain the known subset and warn once without treating unknown files as deleted (235.4467ms)
-✔ N6 a leaf junction is rejected by preflight without admin, changes or a blocking plan (61.5648ms)
-✔ N6 later edits in a directory-to-file change are rejected before restoring another route (84.108ms)
-✔ N5/N6 recheck immediately before write prevents a redirected parent syscall (99.8563ms)
-✔ N5/N6 recheck immediately before rename prevents a redirected parent syscall (161.7635ms)
-✔ N5 recheck after write rolls back an operation redirected outside (107.9223ms)
-✔ N5 recheck after rename rolls back an operation redirected outside (155.419ms)
-✔ N4 a partial-journal retry after restart preserves a manual deletion of a later action (262.5656ms)
-✔ an interrupted park is recognized from its preserved original and can finish after restart (205.4613ms)
-✔ R4 Opus A: discard restores an interrupted parked file before dropping the journal (716.6174ms)
-✔ R4 trash transfer verifies a complete cross-volume copy before removing its source (187.7359ms)
-✔ R4 purge requires both seven days AND three later successful copies, and protects pending undo (142.8817ms)
-✔ R4 store collection is deferred and protects every live trash reference (532.1758ms)
-✔ R4 property: every process-exit cut conserves pre-undo contents through restart, retry and discard (47172.4059ms)
-ℹ 52 operation cuts × retry/discard: 104 real process exits; all pre-undo content hashes conserved
-✔ R4 Opus B: discard repairs a directory removed before a failed replacement (154.5159ms)
-✔ R4 Greptile later backups retain bytes for cached unchanged hashes after undo (168.6465ms)
-✔ R4 Greptile retry recovers a later park even when an earlier action is active (189.9129ms)
-✔ R4 Greptile interrupted read-only step is recovered from disk before retry (122.7333ms)
-✔ R4 Opus 2: ambiguous NTFS names omit only the ambiguous entries (131.5757ms)
-✔ R4 Opus 3: returned original after failed replacement leaves no active restoration (104.6486ms)
-✔ R4 Opus 4: an internal junction is rejected explicitly even with matching contents (45.0611ms)
-✔ R4 containment: an external junction with identical contents cannot redirect restoration (41.1393ms)
-✔ R4 discard cannot drop its journal while a missing original cannot be put back (322.7225ms)
-✔ R4 discard does not claim a manual deletion of a new agent file as its own reversal (115.3389ms)
-✔ R4 Opus 5: skipped basename duplicates count separately and manual deletion is not reported as reverted (138.6562ms)
-ℹ tests 113
-ℹ suites 0
-ℹ pass 112
-ℹ fail 0
-ℹ cancelled 0
-ℹ skipped 1
-ℹ todo 0
-ℹ duration_ms 50629.6215
+
+
+> test
+
+> tsx --test server/test/*.test.ts
+
+
+
+✔ a work survives restart with transcript and continues the same conversation (106.4442ms)
+
+✔ interrupt, automatic titles, quota and account problems are normalized (88.0384ms)
+
+✔ concurrent sends never start duplicate turns and empty requests are rejected (41.638ms)
+
+✔ restart marks unfinished work as stopped and quarantines corrupt JSON (58.8017ms)
+
+✔ failed persistence does not poison the next write (33.8737ms)
+
+✔ fragments publish incremental messages and persist at completion (35.4056ms)
+
+✔ engine restart releases busy work and clears resumed conversations (66.172ms)
+
+✔ workspace and engine data cannot overlap (0.6364ms)
+
+✔ an ambiguous send failure stays saved, clears busy state and is never retried (61.9092ms)
+
+✔ app rejects unsafe sends even when the fake engine would accept them (73.5993ms)
+
+✔ persistence retries EPERM once or twice before succeeding (298.4631ms)
+
+✔ corrupt quarantine retries then copies, and still starts if copying also fails (470.3974ms)
+
+✔ final flush includes events delivered during engine shutdown (54.9188ms)
+
+✔ a Windows exclusive lock omits only that file without hanging (459.3723ms)
+
+✔ deduplicated copies restore create/modify/delete, unicode, empty directories, restart, cleanup and one undo (817.6351ms)
+
+✔ junctions outside are skipped; restoring through a substituted junction fails before touching outside (139.5673ms)
+
+✔ excluded content survives undo; limits and unreadable folders invalidate copies (400.7465ms)
+
+✔ fake engine sees pre-request copy; global undo survives restart, results refresh, context is separate, failed copy still sends (329.7189ms)
+
+✔ ready unelevated remains blocked (230.7072ms)
+
+✔ read and probe failures retry checks without administrative preparation (279.6243ms)
+
+✔ saved MXC is probed again by each new engine; unavailable is not ready (175.5211ms)
+
+✔ automatic MXC setup caches the successful probe across reload (329.2397ms)
+
+✔ interrupted preparation remains retryable (642.632ms)
+
+✔ setupStart timeout unlocks retry as a read, not another UAC (325.5803ms)
+
+✔ reload cancels pending RPC and start failure goes through restart/retry (1289.6902ms)
+
+✔ stdio handshake, activities, retry and server-initiated rejection (120.4595ms)
+
+✔ completion before start reply never leaves a stale interrupt target; early pause is delivered (201.5968ms)
+
+✔ child exit rejects the pending turn and restarts with a fresh handshake (261.6121ms)
+
+✔ child environment drops inherited Codex settings and API secrets and forces its home (99.3629ms)
+
+✔ missing Windows protection blocks before turn/start (101.6636ms)
+
+✔ restart backoff grows, exhausts explicitly and allows manual retry (1801.6359ms)
+
+✔ stable operation resets the restart budget (1924.6729ms)
+
+✔ started notification before start reply delivers only one pause (170.6461ms)
+
+✔ protection setup: success, sends stay blocked until readiness (280.3481ms)
+
+✔ protection setup: failure, sends stay blocked until readiness (326.5797ms)
+
+✔ protection setup: restart, sends stay blocked until readiness (326.2847ms)
+
+✔ protection setup: mxc, sends stay blocked until readiness (170.2758ms)
+
+✔ generic files become local images and named relative document mentions (72.0781ms)
+
+✔ all server initiated requests resolve without user approvals or hangs (101.1196ms)
+
+✔ denied subfolder does not block subsequent requests or restart (real Windows ACL) (436.4406ms)
+
+✔ whole scan failure releases pending marker, keeps warning and permits send and restart (404.0307ms)
+
+✔ results after interrupted, unchanged hashes and separate pending state (295.8363ms)
+
+✔ results after failed, unchanged hashes and separate pending state (108.6646ms)
+
+✔ result preflight failure does not block send; attachment failure does not create empty work (96.3852ms)
+
+✔ long filenames preserve extension and clean the truncated stem (5.9216ms)
+
+✔ scan skips broken links, junction loops and external junctions and enforces budgets (61.5206ms)
+
+✔ registered HTTP files enforce paths, headers, HEAD and streaming size cap (206.4513ms)
+
+✔ a partial attachment write failure removes already created files (14.8877ms)
+
+✔ exclusive Windows file lock is skipped with technical detail (323.7201ms)
+
+✔ separate pending snapshot restores results after app closure (73.5699ms)
+
+✔ only an active scan delays sends; completing it releases the gate (97.8674ms)
+
+✔ attachments validate formats, content, limits and safe unique names without overwriting (218.0718ms)
+
+✔ new and modified results exclude inputs, hidden directories and dependencies, persist per request and survive deletion (591.9442ms)
+
+✔ HTTP files require session token, local host, allowed origin and registered real workspace path (213.2268ms)
+
+✔ localhost websocket serves snapshots, connects an account and blocks foreign origins (91.9354ms)
+
+✔ Greptile: failed copy and locked invalidation save cannot resurrect the previous undo (562.6265ms)
+
+✔ Greptile: failure of both marker and state writes stays disabled and host proof rejects stale undo at startup (952.3578ms)
+
+✔ Greptile: startup without independent host proof never offers a saved undo (84.1491ms)
+
+✔ Greptile: a proven later unchanged request legitimately retains the previous changed request undo (219.7607ms)
+
+✔ Greptile: failure to write the independent marker disables undo for the rest of that execution (88.278ms)
+
+✔ review blocker 1: manual additions and edits survive undo, including a later unchanged request (473.61ms)
+
+✔ review blocker 2: write-locked file prevents all mutations, preserves undo and retries (873.6052ms)
+
+✔ manual edits, moves and deletion of agent-modified files are skipped by name (297.163ms)
+
+✔ journal resumes after process death between rename and journal update; cleanup retains both snapshots (324.6993ms)
+
+✔ file/directory conflict with hidden contents is rejected before any mutation (67.7233ms)
+
+✔ individual oversized file is omitted without disabling other undo, and unchanged omissions do not repeat (166.7138ms)
+
+✔ junction introduced DURING restoration cannot redirect a later mutation outside (466.6508ms)
+
+✔ tampered manifest or journal cannot escape the workspace; corrupt content fails preflight (132.9106ms)
+
+✔ restore preserves original read-only attribute (154.313ms)
+
+✔ App uses one scan per moment; context is sent once only to its work; reverted result stays unavailable (296.5335ms)
+
+✔ failed atomic replacement never removes the destination; partial staging is rebuilt on retry (241.7393ms)
+
+✔ file/directory swaps without leftovers restore; new directories with manual files survive (336.4998ms)
+
+✔ completion journal failure preserves retry even after all files were restored (196.1305ms)
+
+✔ App restart exposes retry and blocks new requests until the journal completes; busy undo explains why (242.5641ms)
+
+﹣ a file symlink introduced during restoration is rejected without touching its external target (5.9283ms) # Windows does not permit file symlinks for this non-admin process
+
+✔ N1 agent case-only rename preserves file (186.6696ms)
+
+✔ N1 agent case-only rename preserves directory with user content (198.4525ms)
+
+✔ N2a agent read-only file can be undone without mistaking its attribute for a lock (531.7726ms)
+
+✔ N2b preflight junction rejection does not persist a plan or block new requests (121.3027ms)
+
+✔ N2c replaced parent is rejected before restoring any file and leaves an exit (139.1899ms)
+
+✔ N3 unreadable file does not disable the rest of the copy (525.6536ms)
+
+✔ N3 unreadable folder does not disable the rest of the copy (225.7107ms)
+
+✔ N4 retry does not recreate a file manually deleted after a failed rename (139.264ms)
+
+✔ N1 manual case rename after the request preserves file (70.8139ms)
+
+✔ N1 manual case rename after the request preserves folder (73.2803ms)
+
+✔ N1 Unicode composition-only rename is refused without losing either content or copy (48.9447ms)
+
+✔ N1 distinct NTFS names with equivalent Unicode stay separate and are individually omitted (45.4127ms)
+
+✔ N2 partial restore can always be discarded after restart, reports paths by name and accepts a new request (415.9139ms)
+
+✔ N3 entry/depth limits retain the known subset and warn once without treating unknown files as deleted (235.4467ms)
+
+✔ N6 a leaf junction is rejected by preflight without admin, changes or a blocking plan (61.5648ms)
+
+✔ N6 later edits in a directory-to-file change are rejected before restoring another route (84.108ms)
+
+✔ N5/N6 recheck immediately before write prevents a redirected parent syscall (99.8563ms)
+
+✔ N5/N6 recheck immediately before rename prevents a redirected parent syscall (161.7635ms)
+
+✔ N5 recheck after write rolls back an operation redirected outside (107.9223ms)
+
+✔ N5 recheck after rename rolls back an operation redirected outside (155.419ms)
+
+✔ N4 a partial-journal retry after restart preserves a manual deletion of a later action (262.5656ms)
+
+✔ an interrupted park is recognized from its preserved original and can finish after restart (205.4613ms)
+
+✔ R4 Opus A: discard restores an interrupted parked file before dropping the journal (716.6174ms)
+
+✔ R4 trash transfer verifies a complete cross-volume copy before removing its source (187.7359ms)
+
+✔ R4 purge requires both seven days AND three later successful copies, and protects pending undo (142.8817ms)
+
+✔ R4 store collection is deferred and protects every live trash reference (532.1758ms)
+
+✔ R4 property: every process-exit cut conserves pre-undo contents through restart, retry and discard (47172.4059ms)
+
+ℹ 52 operation cuts × retry/discard: 104 real process exits; all pre-undo content hashes conserved
+
+✔ R4 Opus B: discard repairs a directory removed before a failed replacement (154.5159ms)
+
+✔ R4 Greptile later backups retain bytes for cached unchanged hashes after undo (168.6465ms)
+
+✔ R4 Greptile retry recovers a later park even when an earlier action is active (189.9129ms)
+
+✔ R4 Greptile interrupted read-only step is recovered from disk before retry (122.7333ms)
+
+✔ R4 Opus 2: ambiguous NTFS names omit only the ambiguous entries (131.5757ms)
+
+✔ R4 Opus 3: returned original after failed replacement leaves no active restoration (104.6486ms)
+
+✔ R4 Opus 4: an internal junction is rejected explicitly even with matching contents (45.0611ms)
+
+✔ R4 containment: an external junction with identical contents cannot redirect restoration (41.1393ms)
+
+✔ R4 discard cannot drop its journal while a missing original cannot be put back (322.7225ms)
+
+✔ R4 discard does not claim a manual deletion of a new agent file as its own reversal (115.3389ms)
+
+✔ R4 Opus 5: skipped basename duplicates count separately and manual deletion is not reported as reverted (138.6562ms)
+
+ℹ tests 113
+
+ℹ suites 0
+
+ℹ pass 112
+
+ℹ fail 0
+
+ℹ cancelled 0
+
+ℹ skipped 1
+
+ℹ todo 0
+
+ℹ duration_ms 50629.6215
+
