@@ -14,7 +14,13 @@ createInterface({ input: process.stdin })
     const m = JSON.parse(line);
     if (process.env.BITACORA_FAKE_LOG)
       appendFileSync(process.env.BITACORA_FAKE_LOG, JSON.stringify(m) + "\n");
-    if (!m.method) return;
+    if (!m.method) {
+      if (String(m.id).startsWith('interactive-')) {
+        if (!m.result && !m.error) process.exit(5);
+        if (m.id === 'interactive-9') notify('turn/completed', { threadId, turn: turn('completed') });
+      }
+      return;
+    }
     const reply = (result) => send({ id: m.id, result });
     switch (m.method) {
       case "initialize":
@@ -70,6 +76,9 @@ createInterface({ input: process.stdin })
         break;
       case "turn/start": {
         const scenario = m.params.input[0].text;
+        if (scenario === "interactive") {
+          ['item/commandExecution/requestApproval', 'item/fileChange/requestApproval', 'item/permissions/requestApproval', 'item/tool/requestUserInput', 'mcpServer/elicitation/request', 'item/tool/call', 'execCommandApproval', 'applyPatchApproval', 'account/chatgptAuthTokens/refresh', 'unknown/request'].forEach((method, i) => send({ id: `interactive-${i}`, method, params: {} }));
+        }
         if (scenario === "crash") {
           process.exit(3);
         }

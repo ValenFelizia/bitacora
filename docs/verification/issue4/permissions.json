@@ -1,0 +1,183 @@
+{
+  "version": "codex-cli 0.168.0",
+  "modelTurns": 0,
+  "records": [
+    {
+      "method": "initialize",
+      "params": {
+        "clientInfo": {
+          "name": "bitacora_issue4",
+          "version": "0.1.0"
+        },
+        "capabilities": {
+          "experimentalApi": false
+        }
+      },
+      "response": {
+        "id": 1,
+        "result": {
+          "userAgent": "bitacora_issue4/0.168.0 (Windows 10.0.26300; x86_64) dumb (bitacora_issue4; 0.1.0)",
+          "codexHome": "C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\bitacora\\.local\\issue4-permissions-uKlvmU\\home",
+          "platformFamily": "windows",
+          "platformOs": "windows"
+        }
+      }
+    },
+    {
+      "method": "command/exec",
+      "params": {
+        "command": [
+          "cmd.exe",
+          "/d",
+          "/c",
+          "echo experimental-gate"
+        ],
+        "cwd": "C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\bitacora\\.local\\issue4-permissions-uKlvmU\\agency",
+        "permissionProfile": "agencia",
+        "timeoutMs": 10000
+      },
+      "response": {
+        "error": {
+          "code": -32600,
+          "message": "command/exec.permissionProfile requires experimentalApi capability"
+        },
+        "id": 2
+      }
+    },
+    {
+      "method": "initialize",
+      "params": {
+        "clientInfo": {
+          "name": "bitacora_issue4",
+          "version": "0.1.0"
+        },
+        "capabilities": {
+          "experimentalApi": true
+        }
+      },
+      "response": {
+        "id": 3,
+        "result": {
+          "userAgent": "bitacora_issue4/0.168.0 (Windows 10.0.26300; x86_64) dumb (bitacora_issue4; 0.1.0)",
+          "codexHome": "C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\bitacora\\.local\\issue4-permissions-uKlvmU\\home",
+          "platformFamily": "windows",
+          "platformOs": "windows"
+        }
+      }
+    },
+    {
+      "method": "permissionProfile/list",
+      "params": {
+        "cwd": "C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\bitacora\\.local\\issue4-permissions-uKlvmU\\agency"
+      },
+      "response": {
+        "id": 4,
+        "result": {
+          "data": [
+            {
+              "id": ":read-only",
+              "description": null,
+              "allowed": true
+            },
+            {
+              "id": ":workspace",
+              "description": null,
+              "allowed": true
+            },
+            {
+              "id": ":danger-full-access",
+              "description": null,
+              "allowed": true
+            },
+            {
+              "id": "agencia",
+              "description": null,
+              "allowed": true
+            }
+          ],
+          "nextCursor": null
+        }
+      }
+    },
+    {
+      "method": "windowsSandbox/readiness",
+      "params": {},
+      "response": {
+        "id": 5,
+        "result": {
+          "status": "ready"
+        }
+      }
+    },
+    {
+      "method": "command/exec",
+      "params": {
+        "command": [
+          "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "Write-Output SIMPLE_OK"
+        ],
+        "cwd": "C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\bitacora\\.local\\issue4-permissions-uKlvmU\\agency",
+        "permissionProfile": "agencia",
+        "timeoutMs": 10000
+      },
+      "response": {
+        "id": 6,
+        "result": {
+          "exitCode": 0,
+          "stdout": "SIMPLE_OK\r\n",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "method": "command/exec",
+      "params": {
+        "command": [
+          "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "Get-Content -LiteralPath 'C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\bitacora\\.local\\issue4-permissions-uKlvmU\\agency\\inside.txt' -ErrorAction Stop"
+        ],
+        "cwd": "C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\bitacora\\.local\\issue4-permissions-uKlvmU\\agency",
+        "permissionProfile": "agencia",
+        "timeoutMs": 10000
+      },
+      "response": {
+        "id": 7,
+        "result": {
+          "exitCode": 0,
+          "stdout": "INSIDE_WITNESS\r\n",
+          "stderr": ""
+        }
+      }
+    },
+    {
+      "method": "command/exec",
+      "params": {
+        "command": [
+          "C:\\WINDOWS\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          "Get-Content -LiteralPath 'C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\bitacora\\.local\\issue4-permissions-uKlvmU\\outside.txt' -ErrorAction Stop"
+        ],
+        "cwd": "C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\bitacora\\.local\\issue4-permissions-uKlvmU\\agency",
+        "permissionProfile": "agencia",
+        "timeoutMs": 10000
+      },
+      "response": {
+        "id": 8,
+        "result": {
+          "exitCode": 1,
+          "stdout": "",
+          "stderr": "Get-Content : Access to the path 'C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo \r\nWeb\\bitacora\\.local\\issue4-permissions-uKlvmU\\outside.txt' is denied.\r\nAt line:1 char:1\r\n+ Get-Content -LiteralPath 'C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\ ...\r\n+ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\r\n    + CategoryInfo          : PermissionDenied: (C:\\Users\\Valen\\...vmU\\outside.txt:String) [Get-Content], Unauthorized \r\n   AccessException\r\n    + FullyQualifiedErrorId : GetContentReaderUnauthorizedAccessError,Microsoft.PowerShell.Commands.GetContentCommand\r\n \r\n"
+        }
+      }
+    }
+  ],
+  "stderr": ""
+}
