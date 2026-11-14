@@ -1,0 +1,85 @@
+✖ R5 discard preserves an undo deletion already completed (306.4442ms)
+✖ R5 discard preserves a manual deletion of an already restored file (2136.2819ms)
+✖ R5 a locked trash counter does not invalidate a saved copy or advance retention (1775.576ms)
+✖ R5 historical mutation runners start and detect their mutations (344.9248ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 0
+ℹ fail 4
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 6520.9066
+✖ failing tests:
+test at server\test\undo-round5.test.ts:1:1058
+✖ R5 discard preserves an undo deletion already completed (306.4442ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async TestContext.<anonymous> (C:\Users\Valen\Desktop\Vale\Desarrollo Web\bitacora\server\test\undo-round5.test.ts:27:5)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: { code: 'ENOENT' },
+    operator: 'rejects',
+    diff: 'simple'
+  }
+test at server\test\undo-round5.test.ts:1:1058
+✖ R5 discard preserves a manual deletion of an already restored file (2136.2819ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async TestContext.<anonymous> (C:\Users\Valen\Desktop\Vale\Desarrollo Web\bitacora\server\test\undo-round5.test.ts:27:5)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: { code: 'ENOENT' },
+    operator: 'rejects',
+    diff: 'simple'
+  }
+test at server\test\undo-round5.test.ts:1:1994
+✖ R5 a locked trash counter does not invalidate a saved copy or advance retention (1775.576ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  false !== true
+      at TestContext.<anonymous> (C:\Users\Valen\Desktop\Vale\Desarrollo Web\bitacora\server\test\undo-round5.test.ts:38:12)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+test at server\test\undo-round5.test.ts:1:2699
+✖ R5 historical mutation runners start and detect their mutations (344.9248ms)
+  AssertionError [ERR_ASSERTION]: node:internal/modules/run_main:107
+      triggerUncaughtException(
+      ^
+  AssertionError [ERR_ASSERTION]: Mutant survived or failed for a non-assertion reason: remove descendant-later-change guard
+  (node:33824) Warning: node:test run() is being called recursively within a test file. skipping running files.
+  (Use `node --trace-warnings ...` to show where the warning was created)
+      at <anonymous> (C:\Users\Valen\Desktop\Vale\Desarrollo Web\bitacora\scripts\verify-undo-round3-mutations.ts:38:12) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+  Node.js v24.15.0
+  1 !== 0
+      at TestContext.<anonymous> (C:\Users\Valen\Desktop\Vale\Desarrollo Web\bitacora\server\test\undo-round5.test.ts:45:12)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1201:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:831:18)
+      at Test.postRun (node:internal/test_runner/test:1330:19)
+      at Test.run (node:internal/test_runner/test:1258:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

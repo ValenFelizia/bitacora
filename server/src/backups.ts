@@ -202,8 +202,10 @@ export class Backups {
       }
       this.state.cache = after; delete this.state.pending; this.validate(); await this.save();
       if (pending) {
-        await this.trash.completedCopy();
-        await this.purgeTrash().catch(() => {});
+        // Retention bookkeeping must never invalidate the saved request copy.
+        let advanced = false;
+        try { await this.trash.completedCopy(); advanced = true; } catch { /* Keep retention unchanged and skip this purge. */ }
+        if (advanced) await this.purgeTrash().catch(() => {});
         // Collection failure cannot invalidate a correctly saved request copy.
         this.collectionAllowed = true; await this.clean().catch(() => {});
       }
@@ -594,19 +596,14 @@ export class Backups {
     const copy = this.state.undo, plan = this.state.plan;
     if (!copy || copy.id !== id || !plan?.active) throw new RestoreProblem('', 'no hay una restauración pendiente');
     await this.recoverProgress(plan); await this.save();
-    // Put back every route our interrupted operation left absent. Directories
-    // first, so their preserved children have a safe parent. Never overwrite a
-    // later manual entry, and do not discard until all missing routes are repaired.
+    // Only repair the gap in an unfinished replacement. Completed deletions and
+    // later manual deletions stay absent; their originals go to retained trash.
     const ordered = plan.actions.map((a, i) => ({ a, i })).sort((x, y) => x.a.path.length - y.a.path.length);
     for (const { a, i } of ordered) {
-      if (!a.started || a.from.kind === 'missing') continue;
+      if (!a.started || a.done || a.from.kind === 'missing' || a.to.kind === 'missing') continue;
       const preserved = await this.preserved(a, i);
-      let current = await this.current(a.path);
-      if (a.from.kind === 'directory' && current.kind === 'file' && equal(current, a.to) &&
-          plan.actions.some(child => child.started && beneath(child.path, a.path) && child.path !== a.path && child.from.kind !== 'missing')) {
-        await this.archive(await this.path(a.path), a.path, 'prepared', i); current = { kind: 'missing' };
-      }
-      if (current.kind !== 'missing') continue;
+      const current = await this.current(a.path);
+      if (!await this.canResumeMissing(a, i, current)) continue;
       if (!preserved) {
         // No parked original means a manual deletion after installation, or an
         // action which never removed anything. It is deliberately left absent.

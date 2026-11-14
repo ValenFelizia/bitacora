@@ -10,7 +10,13 @@ try {
   const start = source.indexOf('  private async path('), end = source.indexOf('  private async capture(', start);
   assert.ok(start > 0 && end > start);
   const modulePath = join(base, 'mutant.ts');
-  await writeFile(modulePath, (source.slice(0, start) + '  private async path(path: string, missing = false) { return join(this.root, path); }\n' + source.slice(end)).replace("'./workspace-files'", JSON.stringify(pathToFileURL(resolve('server/src/workspace-files.ts')).href)));
+  let mutant = source.slice(0, start) + '  private async path(path: string, missing = false) { return join(this.root, path); }\n' + source.slice(end);
+  // Restoration now has a second component/containment guard. This historical
+  // mutant promises to remove ALL route checks, so remove that guard as well.
+  const checkStart = mutant.indexOf('  private async checkAbsolute('), checkEnd = mutant.indexOf('  private async checkedRename(', checkStart);
+  assert.ok(checkStart > 0 && checkEnd > checkStart);
+  mutant = mutant.slice(0, checkStart) + '  private async checkAbsolute(path: string) { return realpath(dirname(path)); }\n' + mutant.slice(checkEnd);
+  await writeFile(modulePath, mutant.replace("'./workspace-files'", JSON.stringify(pathToFileURL(resolve('server/src/workspace-files.ts')).href)).replace("'./backup-trash'", JSON.stringify(pathToFileURL(resolve('server/src/backup-trash.ts')).href)));
   const { Backups, BACKUP_LIMITS } = await import(pathToFileURL(modulePath).href);
   const root = join(base, 'agency'), outside = join(base, 'outside'); await mkdir(root); await mkdir(outside); await mkdir(join(root, 'folder'));
   await writeFile(join(outside, 'victim.txt'), 'after'); await writeFile(join(root, 'a.txt'), 'before'); await writeFile(join(root, 'folder/victim.txt'), 'before');

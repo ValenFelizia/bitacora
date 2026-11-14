@@ -22,7 +22,7 @@ try {
   for (const [i, variant] of variants.entries()) {
     const modulePath = join(base, `mutant-${i}.ts`), testPath = join(base, `case-${i}.test.ts`);
     const changed = variant.mutate(source); assert.notEqual(changed, source);
-    await writeFile(modulePath, changed.replace("'./workspace-files'", JSON.stringify(pathToFileURL(resolve('server/src/workspace-files.ts')).href)));
+    await writeFile(modulePath, changed.replace("'./workspace-files'", JSON.stringify(pathToFileURL(resolve('server/src/workspace-files.ts')).href)).replace("'./backup-trash'", JSON.stringify(pathToFileURL(resolve('server/src/backup-trash.ts')).href)));
     let test = originalTest.replace("'../src/backups'", JSON.stringify(pathToFileURL(modulePath).href));
     for (const spec of ['../src/app', '../src/workspace-files', '../test/fake-engine']) {
       const actualSpec = spec === '../test/fake-engine' ? './fake-engine' : spec;
