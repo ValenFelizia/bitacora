@@ -7,7 +7,7 @@ import { AgencyFiles } from './paths';
 
 function validateMarkup(html: string) {
   const markup = load(html);
-  const unsupported = markup('template[shadowrootmode],iframe,object,embed,input,textarea,select,button,form,output,meter,progress');
+  const unsupported = markup('template[shadowrootmode],iframe,object,embed,input,textarea,select,button,form,output,meter,progress,svg text,svg tspan,svg foreignObject');
   if (unsupported.length) throw new Error(`Sacá de la pieza estas construcciones: ${[...new Set(unsupported.toArray().map(el => el.tagName))].join(', ')}. Usá texto y fotos en el HTML principal, sin paneles internos ni formularios.`);
 }
 
@@ -42,7 +42,9 @@ export async function withPage<T>(files: AgencyFiles, html: string, run: (page: 
       for (const el of document.querySelectorAll('*')) {
         if (getComputedStyle(el).display === 'list-item' && !['none','disc','circle','square'].includes(getComputedStyle(el).listStyleType)) return 'listas con numeración o texto generado (list-style-type)';
         for (const pseudo of ['::before','::after','::marker']) {
-        if (/counters?\s*\(/i.test(getComputedStyle(el,pseudo).content)) return 'content con counter o counters';
+          const content=getComputedStyle(el,pseudo).content;
+          if(getComputedStyle(el).display==='contents' && content && !['none','normal','""'].includes(content)) return 'pseudo-elementos en display:contents';
+          if (/counters?\s*\(/i.test(content)) return 'content con counter o counters';
         }
       }
       const pending = Array.from(document.styleSheets).flatMap(sheet => Array.from(sheet.cssRules));
@@ -84,7 +86,21 @@ export async function visibleTexts(page: Page) {
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
       const el = node.parentElement!;
       const raw=node.textContent || '';
-      if (!raw || el.closest('script,style,noscript') || !el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) continue;
+      if (!raw || el.closest('script,style,noscript') || ['hidden','collapse'].includes(getComputedStyle(el).visibility)) continue;
+      const range=document.createRange();range.selectNodeContents(node);
+      let rectangles=Array.from(range.getClientRects()).filter(r=>r.width>0 && r.height>0).map(r=>({left:r.left,right:r.right,top:r.top,bottom:r.bottom}));
+      for(let ancestor:Element|null=el;ancestor && rectangles.length;ancestor=ancestor.parentElement) {
+        const style=getComputedStyle(ancestor);
+        if(style.display==='none' || Number(style.opacity)===0){rectangles=[];break;}
+        if(style.display==='contents')continue;
+        const clipX=['hidden','clip','scroll','auto'].includes(style.overflowX);
+        const clipY=['hidden','clip','scroll','auto'].includes(style.overflowY);
+        if(clipX||clipY){
+          const box=ancestor.getBoundingClientRect();
+          rectangles=rectangles.map(r=>({left:clipX?Math.max(r.left,box.left):r.left,right:clipX?Math.min(r.right,box.right):r.right,top:clipY?Math.max(r.top,box.top):r.top,bottom:clipY?Math.min(r.bottom,box.bottom):r.bottom})).filter(r=>r.right>r.left && r.bottom>r.top);
+        }
+      }
+      if(!rectangles.length)continue;
       let block:Element=el;
       while(block.parentElement && ['inline','inline-block','inline-flex','inline-grid','contents'].includes(getComputedStyle(block).display) && !['TD','TH'].includes(block.tagName)) block=block.parentElement;
       const first=document.createRange(),last=document.createRange();

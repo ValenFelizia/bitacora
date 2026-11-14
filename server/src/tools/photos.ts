@@ -14,8 +14,7 @@ export function selectPhotos($:CheerioAPI,base:URL) {
       try {
         const url=new URL(source,base);
         if(!['http:','https:'].includes(url.protocol) || /logo|favicon|spinner|button|icon/i.test(url.pathname)) continue;
-        const w=Number(attrs.width),h=Number(attrs.height);
-        if(w && h && (Math.max(w,h)<800 || Math.min(w,h)<400) && !widths[0]?.score && !attrs['data-src']) continue;
+        const w=Number(attrs.width); // Display size is only a ranking hint, never the file dimensions.
         const key=url.origin+url.pathname.replace(/-\d+x\d+(?=\.[^.]+$)/,'')+url.search;
         const score=(item.closest('main,article,[role="main"]').length?10000:0)+(/-\d+x\d+\./.test(url.pathname)?0:2000)+(widths[0]?.score||w||900);
         if(!selected.has(key)||selected.get(key)!.score<score) selected.set(key,{url:url.href,score});
