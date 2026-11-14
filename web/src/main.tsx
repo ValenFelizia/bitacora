@@ -115,6 +115,28 @@ function App() {
     setProblem(undefined);
     socket.current.send(JSON.stringify(command));
   }
+  // One send path: the draft and the attachments always travel together.
+  function submitRequest(opening?: string) {
+    const typed = text.trim();
+    if (
+      (!typed && !attachments.length && !opening) ||
+      readingFiles ||
+      busy ||
+      pending ||
+      !online ||
+      !state.engine.available ||
+      !state.engine.safety.allowed ||
+      !state.account.connected
+    )
+      return;
+    setPending(true);
+    send({
+      type: "send",
+      workId: selected,
+      text: [opening, typed].filter(Boolean).join("\n\n") || "Revisá los archivos adjuntos.",
+      attachments,
+    });
+  }
   async function addFiles(files: File[]) {
     if (readingFiles || pending) return;
     setReadingFiles(true);
@@ -374,26 +396,14 @@ function App() {
           )}
           {state.works.length === 0 && state.hasBrand === false && <button className={`${buttonPrimary} mb-4`}
             disabled={!online || !state.engine.available || !state.engine.safety.allowed || !state.account.connected || pending || readingFiles || busy}
-            onClick={() => { setPending(true); send({ type: "send", text: "Ayudame a armar mi marca y mis plantillas para empezar." }); }}>
+            onClick={() => submitRequest("Ayudame a armar mi marca y mis plantillas para empezar.")}>
             Armar mi agencia
           </button>}
           <form
             className="bg-[#fffefa] border border-[#cdd4c8] rounded-xl py-[14px] px-[18px]"
             onSubmit={(e) => {
               e.preventDefault();
-              if (
-                (!text.trim() && !attachments.length) ||
-                readingFiles ||
-                busy ||
-                pending ||
-                !online ||
-                !state.engine.available ||
-                !state.engine.safety.allowed ||
-                !state.account.connected
-              )
-                return;
-              setPending(true);
-              send({ type: "send", workId: selected, text: text.trim() || "Revisá los archivos adjuntos.", attachments });
+              submitRequest();
             }}
           >
             <label className="text-xs font-semibold" htmlFor="request">
