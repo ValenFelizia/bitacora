@@ -96,7 +96,7 @@ export class WorkspaceFiles {
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     }
   }
-  async scan(previous = this.cache, copy?: ScanCopy): Promise<FileScan> {
+  async scan(previous: FileScan | null | undefined = this.cache, copy?: ScanCopy): Promise<FileScan> {
     const found: FileScan = { entries: Object.create(null), warnings: [], hashedBytes: 0, visited: 0, directories: [], omitted: Object.create(null), incomplete: [] };
     const limits = copy?.limits || this.limits;
     const root = await realpath(this.root);
@@ -171,6 +171,19 @@ export class WorkspaceFiles {
       }
     };
     await walk('', 0);
+    if (copy) {
+      // NTFS can store names which our deliberately conservative comparison
+      // folds together. Omit each ambiguous subtree, never merge two entries.
+      const key = (p: string) => p.normalize('NFC').toUpperCase();
+      const groups = new Map<string, string[]>();
+      for (const p of [...Object.keys(found.entries), ...found.directories!]) groups.set(key(p), [...(groups.get(key(p)) || []), p]);
+      const ambiguous = [...groups.values()].filter(paths => paths.length > 1).flat();
+      for (const p of [...Object.keys(found.entries), ...found.directories!]) if (ambiguous.some(a => p === a || p.startsWith(a + '\\') || p.startsWith(a + '/'))) {
+        const entry = found.entries[p];
+        found.omitted![p] = entry ? `${entry.size}:${entry.mtimeMs}:${entry.ctimeMs}` : 'ambiguous directory';
+        delete found.entries[p]; found.directories = found.directories!.filter(d => d !== p);
+      }
+    }
     this.cache = found;
     return found;
   }

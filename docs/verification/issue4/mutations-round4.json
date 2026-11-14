@@ -1,0 +1,40 @@
+{
+  "sourceSha256": "fd78e31a735349d96677242168e88b65c6f6d407294df44324bffb4360482a0a",
+  "records": [
+    {
+      "name": "remove explicit link checks",
+      "pattern": "R4 Opus 4: an internal junction",
+      "exitCode": 1,
+      "mutationKilled": true,
+      "output": "✖ R4 Opus 4: an internal junction is rejected explicitly even with matching contents (74.8975ms)\nℹ tests 1\nℹ suites 0\nℹ pass 0\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 300.2479\n\n✖ failing tests:\n\ntest at .local\\undo-r4-mutants-pRAxD0\\case-0.test.ts:1:12585\n✖ R4 Opus 4: an internal junction is rejected explicitly even with matching contents (74.8975ms)\n  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /enlace/. Input:\n  \n  'Error: No pude deshacer todavía: no puedo leer ese archivo o está abierto (box). Podés volver a intentar Deshacer.'\n  \n      at async TestContext.<anonymous> (C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\bitacora\\.local\\undo-r4-mutants-pRAxD0\\case-0.test.ts:185:5)\n      at async Test.run (node:internal/test_runner/test:1208:7)\n      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: Error: No pude deshacer todavía: no puedo leer ese archivo o está abierto (box). Podés volver a intentar Deshacer.\n        at Backups.current (C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\bitacora\\.local\\undo-r4-mutants-pRAxD0\\mutant-0.ts:256:13)\n        at async Backups.preflight (C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\bitacora\\.local\\undo-r4-mutants-pRAxD0\\mutant-0.ts:409:25)\n        at async Backups.undo (C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\bitacora\\.local\\undo-r4-mutants-pRAxD0\\mutant-0.ts:496:7)\n        at async waitForActual (node:assert:646:5)\n        at async strict.rejects (node:assert:769:25)\n        at async TestContext.<anonymous> (C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\bitacora\\.local\\undo-r4-mutants-pRAxD0\\case-0.test.ts:185:5)\n        at async Test.run (node:internal/test_runner/test:1208:7)\n        at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3),\n    expected: /enlace/,\n    operator: 'rejects',\n    diff: 'simple'\n  }\n"
+    },
+    {
+      "name": "remove explicit link and containment checks",
+      "pattern": "R4 containment:",
+      "exitCode": 1,
+      "mutationKilled": true,
+      "output": "✖ R4 containment: an external junction with identical contents cannot redirect restoration (88.5213ms)\nℹ tests 1\nℹ suites 0\nℹ pass 0\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 309.766\n\n✖ failing tests:\n\ntest at .local\\undo-r4-mutants-pRAxD0\\case-1.test.ts:1:13360\n✖ R4 containment: an external junction with identical contents cannot redirect restoration (88.5213ms)\n  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /enlace/. Input:\n  \n  'Error: No pude deshacer todavía: no puedo leer ese archivo o está abierto (box). Podés volver a intentar Deshacer.'\n  \n      at async TestContext.<anonymous> (C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\bitacora\\.local\\undo-r4-mutants-pRAxD0\\case-1.test.ts:194:5)\n      at async Test.run (node:internal/test_runner/test:1208:7)\n      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: Error: No pude deshacer todavía: no puedo leer ese archivo o está abierto (box). Podés volver a intentar Deshacer.\n        at Backups.current (C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\bitacora\\.local\\undo-r4-mutants-pRAxD0\\mutant-1.ts:256:13)\n        at async Backups.preflight (C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\bitacora\\.local\\undo-r4-mutants-pRAxD0\\mutant-1.ts:409:25)\n        at async Backups.undo (C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\bitacora\\.local\\undo-r4-mutants-pRAxD0\\mutant-1.ts:496:7)\n        at async waitForActual (node:assert:646:5)\n        at async strict.rejects (node:assert:769:25)\n        at async TestContext.<anonymous> (C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\bitacora\\.local\\undo-r4-mutants-pRAxD0\\case-1.test.ts:194:5)\n        at async Test.run (node:internal/test_runner/test:1208:7)\n        at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3),\n    expected: /enlace/,\n    operator: 'rejects',\n    diff: 'simple'\n  }\n"
+    },
+    {
+      "name": "remove descendant later-change guard",
+      "pattern": "N6 later edits in a directory-to-file",
+      "exitCode": 1,
+      "mutationKilled": true,
+      "output": "✖ N6 later edits in a directory-to-file change are rejected before restoring another route (147.049ms)\nℹ tests 1\nℹ suites 0\nℹ pass 0\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 382.9787\n\n✖ failing tests:\n\ntest at .local\\undo-r4-mutants-pRAxD0\\case-2.test.ts:1:11684\n✖ N6 later edits in a directory-to-file change are rejected before restoring another route (147.049ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  'old-a' !== 'after-a'\n  \n      at TestContext.<anonymous> (C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\bitacora\\.local\\undo-r4-mutants-pRAxD0\\case-2.test.ts:168:97)\n      at async Test.run (node:internal/test_runner/test:1208:7)\n      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: 'old-a',\n    expected: 'after-a',\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n"
+    },
+    {
+      "name": "remove immediately-before-open route check",
+      "pattern": "N5/N6 recheck immediately before write",
+      "exitCode": 1,
+      "mutationKilled": true,
+      "output": "✖ N5/N6 recheck immediately before write prevents a redirected parent syscall (92.5524ms)\nℹ tests 1\nℹ suites 0\nℹ pass 0\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 330.5483\n\n✖ failing tests:\n\ntest at .local\\undo-r4-mutants-pRAxD0\\case-3.test.ts:1:12516\n✖ N5/N6 recheck immediately before write prevents a redirected parent syscall (92.5524ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  1 !== 0\n  \n      at TestContext.<anonymous> (C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\bitacora\\.local\\undo-r4-mutants-pRAxD0\\case-3.test.ts:186:56)\n      at async Test.run (node:internal/test_runner/test:1208:7)\n      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: 1,\n    expected: 0,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n"
+    },
+    {
+      "name": "remove immediately-before-rename route checks",
+      "pattern": "N5/N6 recheck immediately before rename",
+      "exitCode": 1,
+      "mutationKilled": true,
+      "output": "✖ N5/N6 recheck immediately before rename prevents a redirected parent syscall (152.2463ms)\nℹ tests 1\nℹ suites 0\nℹ pass 0\nℹ fail 1\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 399.1418\n\n✖ failing tests:\n\ntest at .local\\undo-r4-mutants-pRAxD0\\case-4.test.ts:1:12516\n✖ N5/N6 recheck immediately before rename prevents a redirected parent syscall (152.2463ms)\n  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n  \n  1 !== 0\n  \n      at TestContext.<anonymous> (C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\bitacora\\.local\\undo-r4-mutants-pRAxD0\\case-4.test.ts:186:56)\n      at async Test.run (node:internal/test_runner/test:1208:7)\n      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {\n    generatedMessage: true,\n    code: 'ERR_ASSERTION',\n    actual: 1,\n    expected: 0,\n    operator: 'strictEqual',\n    diff: 'simple'\n  }\n"
+    }
+  ]
+}

@@ -46,7 +46,7 @@ test('deduplicated copies restore create/modify/delete, unicode, empty directori
     assert.equal(await readFile(join(f.root, 'borrar.txt'), 'utf8'), 'original');
     await assert.rejects(readFile(join(f.root, 'nuevo.png')));
     assert.equal(restarted.target, undefined); assert.equal(restarted.hasNotice('work'), true);
-    assert.equal((await readdir(join(f.data, 'backups/objects'))).length, 0);
+    assert.ok((await readdir(join(f.data, 'backups/objects'))).length > 0); // Deferred collection; live trash retains references.
     await assert.rejects(restarted.undo('old'));
     assert.equal(await restarted.before(target), true); await restarted.finish(); assert.equal(restarted.target, undefined);
   } finally { await f.close(); }

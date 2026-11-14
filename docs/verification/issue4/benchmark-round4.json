@@ -1,0 +1,134 @@
+{
+  "files": 2004,
+  "logicalBytes": 99876864,
+  "records": [
+    {
+      "version": "9d72923",
+      "name": "first before",
+      "ms": 6018,
+      "objectsBytes": 99876864,
+      "dataBytes": 100578477,
+      "trashBytes": 0
+    },
+    {
+      "version": "9d72923",
+      "name": "unchanged before + after",
+      "ms": 344,
+      "objectsBytes": 99876864,
+      "dataBytes": 100227733,
+      "trashBytes": 0
+    },
+    {
+      "version": "9d72923",
+      "name": "unchanged before + after",
+      "ms": 350,
+      "objectsBytes": 99876864,
+      "dataBytes": 100227733,
+      "trashBytes": 0
+    },
+    {
+      "version": "9d72923",
+      "name": "unchanged before + after",
+      "ms": 320,
+      "objectsBytes": 99876864,
+      "dataBytes": 100227733,
+      "trashBytes": 0
+    },
+    {
+      "version": "9d72923",
+      "name": "unchanged before + after",
+      "ms": 365,
+      "objectsBytes": 99876864,
+      "dataBytes": 100227733,
+      "trashBytes": 0
+    },
+    {
+      "version": "9d72923",
+      "name": "unchanged before + after",
+      "ms": 391,
+      "objectsBytes": 99876864,
+      "dataBytes": 100227733,
+      "trashBytes": 0
+    },
+    {
+      "version": "9d72923",
+      "name": "one change before + after",
+      "ms": 387,
+      "objectsBytes": 99893248,
+      "dataBytes": 100945487,
+      "trashBytes": 0
+    },
+    {
+      "version": "9d72923",
+      "name": "undo",
+      "ms": 633,
+      "objectsBytes": 0,
+      "dataBytes": 253,
+      "trashBytes": 0
+    },
+    {
+      "version": "round4",
+      "name": "first before",
+      "ms": 6555,
+      "objectsBytes": 99876864,
+      "dataBytes": 100578467,
+      "trashBytes": 0
+    },
+    {
+      "version": "round4",
+      "name": "unchanged before + after",
+      "ms": 378,
+      "objectsBytes": 99876864,
+      "dataBytes": 100227744,
+      "trashBytes": 16
+    },
+    {
+      "version": "round4",
+      "name": "unchanged before + after",
+      "ms": 412,
+      "objectsBytes": 99876864,
+      "dataBytes": 100227744,
+      "trashBytes": 16
+    },
+    {
+      "version": "round4",
+      "name": "unchanged before + after",
+      "ms": 457,
+      "objectsBytes": 99876864,
+      "dataBytes": 100227744,
+      "trashBytes": 16
+    },
+    {
+      "version": "round4",
+      "name": "unchanged before + after",
+      "ms": 389,
+      "objectsBytes": 99876864,
+      "dataBytes": 100227744,
+      "trashBytes": 16
+    },
+    {
+      "version": "round4",
+      "name": "unchanged before + after",
+      "ms": 384,
+      "objectsBytes": 99876864,
+      "dataBytes": 100227744,
+      "trashBytes": 16
+    },
+    {
+      "version": "round4",
+      "name": "one change before + after",
+      "ms": 381,
+      "objectsBytes": 99893248,
+      "dataBytes": 100945502,
+      "trashBytes": 16
+    },
+    {
+      "version": "round4",
+      "name": "undo",
+      "ms": 132,
+      "objectsBytes": 99893248,
+      "dataBytes": 99910508,
+      "trashBytes": 17007
+    }
+  ]
+}

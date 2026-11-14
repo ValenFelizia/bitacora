@@ -71,7 +71,7 @@ test('journal resumes after process death between rename and journal update; cle
     const resumed = new Backups(f.root, f.data); await resumed.initialize(crashed.receipt); assert.equal(resumed.target?.retry, true);
     await assert.rejects(resumed.before(target), /pendiente/);
     await resumed.undo(id); assert.equal(await readFile(join(f.root, 'b.txt'), 'utf8'), 'before-b');
-    assert.equal(resumed.target, undefined); assert.equal((await readdir(join(f.data, 'backups/objects'))).length, 0);
+    assert.equal(resumed.target, undefined); assert.equal((await readdir(join(f.data, 'backups/objects'))).length, 4);
   } finally { await f.close(); }
 });
 test('file/directory conflict with hidden contents is rejected before any mutation', async () => {

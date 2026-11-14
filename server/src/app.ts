@@ -290,6 +290,8 @@ export class App {
         reply({ type: "problem", text: this.backups ? "Esperá a que termine el pedido actual para deshacer." : "No hay una copia disponible para deshacer." }); return;
       }
       this.submitting = true;
+      const undoWork = this.works.find(w => w.id === this.backups!.target?.workId);
+      if (undoWork) undoWork.details += `Papelera de Bitácora: ${this.backups.trashLocation}\n`;
       this.changed();
       try {
         const result = command.type === "discardUndo" ? await this.backups.discard(command.id) : await this.backups.undo(command.id);

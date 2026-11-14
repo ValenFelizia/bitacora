@@ -107,11 +107,11 @@ test('N1 Unicode composition-only rename is refused without losing either conten
     assert.equal(await readFile(join(f.root, 'an\u0303o.txt'), 'utf8'), 'personal'); await retained(f, 'personal'); assert.equal(f.b.restoring, false);
   } finally { await f.close(); }
 });
-test('N1 distinct NTFS names with equivalent Unicode stay separate and their ambiguous copy is refused', async () => {
+test('N1 distinct NTFS names with equivalent Unicode stay separate and are individually omitted', async () => {
   const f = await fixture();
   try {
     await writeFile(join(f.root, 'año.txt'), 'composed'); await writeFile(join(f.root, 'an\u0303o.txt'), 'decomposed');
-    assert.equal(await f.b.before(target), false); assert.equal(f.b.restoring, false);
+    assert.equal(await f.b.before(target), true); assert.equal(f.b.restoring, false);
     assert.equal(await readFile(join(f.root, 'año.txt'), 'utf8'), 'composed'); assert.equal(await readFile(join(f.root, 'an\u0303o.txt'), 'utf8'), 'decomposed');
   } finally { await f.close(); }
 });
