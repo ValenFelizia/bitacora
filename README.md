@@ -74,9 +74,8 @@ Un archivo de trabajos dañado se conserva como `works.corrupt-<fecha>.json` y
 la app abre una lista vacía con un aviso. Si falla un guardado, muestra un aviso
 y el siguiente guardado puede recuperarse.
 
-El aislamiento
-estricto de lecturas, las copias y deshacer corresponden al issue #4 y no
-están implementados. Todavía no hay kit ni instalador.
+Las copias y Deshacer están implementados. El perfil beta de lecturas se probó
+por separado y queda desactivado en la app. Todavía no hay kit ni instalador.
 
 - Qué tiene que hacer el MVP: [`.csdd/specs.md`](.csdd/specs.md)
 - Por qué está armado así: [`.csdd/decisions.md`](.csdd/decisions.md)
@@ -98,7 +97,7 @@ En **Galería** están agrupados por trabajo, con los resultados más nuevos
 primero y **Ir al trabajo** para continuar. Si borraste un archivo, se muestra
 un aviso. La asociación sobrevive al cierre de la app; si un resultado se
 modifica más adelante, las tarjetas muestran el archivo actual, no una copia
-histórica (copias y deshacer pertenecen al issue #4).
+histórica. Deshacer vuelve a consultar los archivos de las tarjetas y la galería.
 
 La detección compara contenido antes y después del pedido; no depende de los
 avisos del motor. Excluye `adjuntos/`, carpetas ocultas, enlaces simbólicos y
@@ -119,3 +118,40 @@ prueba adjuntos, portapapeles, descarga, galería y archivos borrados; guarda
 capturas en `docs/verification/issue5/` y limpia sus datos y procesos al terminar.
 Requiere libres los puertos 5173 y 4317. La evidencia y los límites están en
 [la verificación del issue #5](docs/verification/issue5/verification.md).
+
+## Copias y Deshacer
+
+Antes de cada pedido se guarda una copia en `backups/` dentro de la carpeta de
+datos de Bitácora, fuera de la agencia. No necesita Git ni otros programas.
+Cada contenido se guarda una sola vez por SHA-256; tamaño y fechas evitan
+volver a leer archivos intactos. Se conserva el estado previo al último pedido
+que cambió archivos y una caché del estado actual. Los contenidos sin referencias
+se eliminan. No se usan enlaces duros.
+
+**Deshacer** se ofrece cuando no hay pedidos en curso. La confirmación identifica
+el trabajo y pedido y explica que vuelve toda la carpeta a ese estado, aunque
+estés en otro trabajo. Recupera archivos borrados o modificados, quita los nuevos
+y conserva subcarpetas vacías. Sólo hay un nivel; otro clic no vuelve a deshacer.
+Retomar una conversación no cambia los archivos. Después de deshacer, el motor
+recibe un aviso separado del texto de la usuaria en el siguiente pedido de ese trabajo.
+
+Se excluyen componentes que empiezan con punto, `node_modules`, `adjuntos` y
+enlaces/junctions. Deshacer tampoco borra esos elementos. Los adjuntos originales
+se conservan. Topes por recorrido: 20.000 entradas, 5.000 archivos de cualquier
+tipo, 64 niveles, 256 MiB por archivo y 2 GiB en total, incluso usando la caché.
+Ante un tope, archivo bloqueado, carpeta ilegible o falta de espacio, el pedido
+sigue y se avisa que esa vez no hay copia. Se invalida la opción anterior para
+no ofrecer una restauración que atraviese un pedido sin copia.
+
+Las rutas se comprueban por componentes y ruta real al copiar y restaurar.
+Antes de restaurar se revisan los destinos y los hashes guardados. Se reemplazan
+archivos sin truncar enlaces duros. Si la restauración se interrumpe o falla,
+puede quedar parcial: se avisa, se consume la opción y no se reintenta sola.
+No editar la carpeta simultáneamente desde otro programa durante una restauración;
+las comprobaciones no son una transacción del sistema de archivos.
+
+Para otra instancia de desarrollo, `BITACORA_WEB_PORT` cambia el puerto de Vite
+y `BITACORA_PORT` cambia el servidor y el destino de ambos proxies. Se conservan
+5173/4317 por defecto. Configurar también `BITACORA_WEB_ORIGIN` para el nuevo origen.
+
+Evidencia, mediciones y límites de las pruebas: [issue #4](docs/verification/issue4/verification.md).
