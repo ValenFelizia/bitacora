@@ -13,7 +13,7 @@ async function fixture() {
   const base=join(process.env.LOCALAPPDATA!,'Bitacora-dev/issue6');await mkdir(base,{recursive:true});
   return new AgencyFiles(await mkdtemp(join(base,'visibility ñ ')));
 }
-test('text visibility uses rendered text ranges, including display contents, and excludes hidden text',async t=>{
+test('text requires citations unless hidden by the closed certainty list',async t=>{
   const cases=[
     ['contents','<span style="display:contents">999</span>',1],
     ['nested','<span style="display:contents"><span style="display:contents">999</span></span>',1],
@@ -21,8 +21,15 @@ test('text visibility uses rendered text ranges, including display contents, and
     ['none','<span style="display:none">999</span>',0],
     ['visibility','<span style="display:contents;visibility:hidden">999</span>',0],
     ['hidden','<span hidden>999</span>',0],
-    ['opacity ancestor','<div style="opacity:0"><span style="display:contents">999</span></div>',0],
-    ['clipped','<div style="width:0;height:0;overflow:hidden"><span style="display:contents">999</span></div>',0],
+    ['opacity ancestor','<div style="opacity:0"><span style="display:contents">999</span></div>',1],
+    ['clipped','<div style="width:0;height:0;overflow:hidden"><span style="display:contents">999</span></div>',1],
+    ['absolute escapes clipping','<div style="position:relative"><div style="overflow:hidden;width:0;height:0"><span style="position:absolute;top:20px">999</span></div></div>',1],
+    ['zero text size','<span style="font-size:0">999</span>',1],
+    ['offscreen','<span style="position:absolute;left:-10000px;top:-10000px">999</span>',1],
+    ['clip path','<span style="clip-path:inset(100%)">999</span>',1],
+    ['restored visibility','<div style="visibility:hidden"><span style="visibility:visible">999</span></div>',1],
+    ['ancestor display none','<div style="display:none"><span style="display:contents">999</span></div>',0],
+    ['hidden ancestor','<div hidden><span>999</span></div>',0],
   ] as const;
   for(const [name,body,count] of cases)await t.test(name,async()=>{
     const files=await fixture();await files.write('source.md','Nada');await files.write('piece.html',`<!doctype html><body>${body}</body>`);

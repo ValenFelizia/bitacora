@@ -53,6 +53,7 @@ No intentes instalar programas, usar la red ni lanzar un navegador desde comando
 
 - Todo número visible sale de una línea citada de la fuente, incluso noches,
   equipaje, cuotas, fechas y números dentro del nombre de un hotel.
+- Todo número presente en el HTML necesita cita aunque esté tapado o recortado; lo que no se quiera mostrar se quita del HTML.
 - El control reconoce dígitos Unicode, pero no lee números dentro de imágenes ni
   escritos con palabras. No uses esas formas para precios ni fechas: escribilos
   como texto con dígitos y cita en el HTML.

@@ -86,21 +86,11 @@ export async function visibleTexts(page: Page) {
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
       const el = node.parentElement!;
       const raw=node.textContent || '';
-      if (!raw || el.closest('script,style,noscript') || ['hidden','collapse'].includes(getComputedStyle(el).visibility)) continue;
-      const range=document.createRange();range.selectNodeContents(node);
-      let rectangles=Array.from(range.getClientRects()).filter(r=>r.width>0 && r.height>0).map(r=>({left:r.left,right:r.right,top:r.top,bottom:r.bottom}));
-      for(let ancestor:Element|null=el;ancestor && rectangles.length;ancestor=ancestor.parentElement) {
-        const style=getComputedStyle(ancestor);
-        if(style.display==='none' || Number(style.opacity)===0){rectangles=[];break;}
-        if(style.display==='contents')continue;
-        const clipX=['hidden','clip','scroll','auto'].includes(style.overflowX);
-        const clipY=['hidden','clip','scroll','auto'].includes(style.overflowY);
-        if(clipX||clipY){
-          const box=ancestor.getBoundingClientRect();
-          rectangles=rectangles.map(r=>({left:clipX?Math.max(r.left,box.left):r.left,right:clipX?Math.min(r.right,box.right):r.right,top:clipY?Math.max(r.top,box.top):r.top,bottom:clipY?Math.min(r.bottom,box.bottom):r.bottom})).filter(r=>r.right>r.left && r.bottom>r.top);
-        }
-      }
-      if(!rectangles.length)continue;
+      // Closed exclusion list: uncertain rendering must never hide an unchecked number.
+      if (!raw || el.closest('[hidden],template,script,style,noscript,head') || ['hidden','collapse'].includes(getComputedStyle(el).visibility)) continue;
+      let hidden=false;
+      for(let ancestor:Element|null=el;ancestor;ancestor=ancestor.parentElement) if(getComputedStyle(ancestor).display==='none'){hidden=true;break;}
+      if(hidden)continue;
       let block:Element=el;
       while(block.parentElement && ['inline','inline-block','inline-flex','inline-grid','contents'].includes(getComputedStyle(block).display) && !['TD','TH'].includes(block.tagName)) block=block.parentElement;
       const first=document.createRange(),last=document.createRange();
@@ -109,8 +99,12 @@ export async function visibleTexts(page: Page) {
       let separated=!previous || previous.block!==block;
       if(previous && !separated) {
         const between=document.createRange();between.setStartAfter(previous.node);between.setEndBefore(node);
-        separated=!!between.cloneContents().querySelector('br') || box.left-previous.box.right>1;
-        if(!el.closest('sup,sub') && !previous.node.parentElement?.closest('sup,sub') && box.top>=previous.box.bottom-1) separated=true;
+        separated=!!between.cloneContents().querySelector('br');
+        // Geometry can separate known text runs, never exclude text from control.
+        if(box.width>0 && box.height>0 && previous.box.width>0 && previous.box.height>0) {
+          if(box.left-previous.box.right>1)separated=true;
+          if(!el.closest('sup,sub') && !previous.node.parentElement?.closest('sup,sub') && box.top>=previous.box.bottom-1) separated=true;
+        }
       }
       if(separated) groups.push({text:'',parts:[]});
       const group=groups.at(-1)!;
@@ -132,7 +126,10 @@ export async function visibleTexts(page: Page) {
     }
     // Generated content is visible too; never silently skip numbers in CSS counters.
     for (const el of document.body.querySelectorAll('*')) {
-      if (!el.checkVisibility()) continue;
+      if(el.closest('[hidden],template,script,style,noscript,head') || ['hidden','collapse'].includes(getComputedStyle(el).visibility))continue;
+      let hidden=false;
+      for(let ancestor:Element|null=el;ancestor;ancestor=ancestor.parentElement)if(getComputedStyle(ancestor).display==='none'){hidden=true;break;}
+      if(hidden)continue;
       if (getComputedStyle(el).display === 'list-item' && /decimal|roman|alpha|latin/i.test(getComputedStyle(el).listStyleType)) result.push({text:'0', where:'Numeración automática de lista: reemplazala por texto con cita', cites:{}});
       for (const pseudo of ['::before', '::after', '::marker']) {
         const content = getComputedStyle(el, pseudo).content;
