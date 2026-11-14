@@ -1,0 +1,137 @@
+▶ visible numeric tokens span adjacent inline nodes and use a common citation ancestor
+  ✖ split span (1703.5148ms)
+  ✖ split thousands (830.7838ms)
+  ✖ split superscript (854.7917ms)
+  ✖ split inline-block (800.2547ms)
+  ✖ whole ancestor citation (726.2958ms)
+  ✖ whole thousands citation (777.051ms)
+  ✔ sibling blocks (764.8818ms)
+  ✔ line break (710.9128ms)
+  ✔ table cells (730.9293ms)
+  ✔ visible spacing (705.4418ms)
+  ✔ whole token only (771.1585ms)
+✖ visible numeric tokens span adjacent inline nodes and use a common citation ancestor (9378.957ms)
+ℹ tests 12
+ℹ suites 0
+ℹ pass 5
+ℹ fail 7
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 10488.1057
+
+✖ failing tests:
+
+test at server\test\kit-greptile.test.ts:26:46
+✖ split span (1703.5148ms)
+  AssertionError [ERR_ASSERTION]: {"ok":true,"checked":2,"errors":[],"warnings":[],"report":"report.md"}
+  
+  true !== false
+  
+      at TestContext.<anonymous> (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\test\kit-greptile.test.ts:31:12)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async TestContext.<anonymous> (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\test\kit-greptile.test.ts:26:38)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: true,
+    expected: false,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at server\test\kit-greptile.test.ts:26:46
+✖ split thousands (830.7838ms)
+  AssertionError [ERR_ASSERTION]: {"ok":true,"checked":2,"errors":[],"warnings":[],"report":"report.md"}
+  
+  true !== false
+  
+      at TestContext.<anonymous> (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\test\kit-greptile.test.ts:31:12)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async TestContext.<anonymous> (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\test\kit-greptile.test.ts:26:38)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: true,
+    expected: false,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at server\test\kit-greptile.test.ts:26:46
+✖ split superscript (854.7917ms)
+  AssertionError [ERR_ASSERTION]: {"ok":true,"checked":2,"errors":[],"warnings":[],"report":"report.md"}
+  
+  true !== false
+  
+      at TestContext.<anonymous> (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\test\kit-greptile.test.ts:31:12)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async TestContext.<anonymous> (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\test\kit-greptile.test.ts:26:38)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: true,
+    expected: false,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at server\test\kit-greptile.test.ts:26:46
+✖ split inline-block (800.2547ms)
+  AssertionError [ERR_ASSERTION]: {"ok":true,"checked":2,"errors":[],"warnings":[],"report":"report.md"}
+  
+  true !== false
+  
+      at TestContext.<anonymous> (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\test\kit-greptile.test.ts:31:12)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async TestContext.<anonymous> (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\test\kit-greptile.test.ts:26:38)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: true,
+    expected: false,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at server\test\kit-greptile.test.ts:26:46
+✖ whole ancestor citation (726.2958ms)
+  AssertionError [ERR_ASSERTION]: {"ok":false,"checked":2,"errors":["p: 1: 1 no está respaldado por la línea citada (sin cita).","span: 250: 250 no está respaldado por la línea citada (sin cita)."],"warnings":["span: 250: sobra la cita de 1250 (línea 6)."],"report":"report.md"}
+  
+  false !== true
+  
+      at TestContext.<anonymous> (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\test\kit-greptile.test.ts:31:12)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async TestContext.<anonymous> (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\test\kit-greptile.test.ts:26:38)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at server\test\kit-greptile.test.ts:26:46
+✖ whole thousands citation (777.051ms)
+  AssertionError [ERR_ASSERTION]: {"ok":false,"checked":2,"errors":["p: 1.: 1 no está respaldado por la línea citada (sin cita).","b: 670: 670 no está respaldado por la línea citada (sin cita)."],"warnings":["b: 670: sobra la cita de 1.670 (línea 7)."],"report":"report.md"}
+  
+  false !== true
+  
+      at TestContext.<anonymous> (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\test\kit-greptile.test.ts:31:12)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async TestContext.<anonymous> (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\test\kit-greptile.test.ts:26:38)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

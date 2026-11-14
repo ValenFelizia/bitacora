@@ -1,0 +1,146 @@
+
+> test
+> tsx --test server/test/*.test.ts --test-concurrency=1
+
+✔ a work survives restart with transcript and continues the same conversation (62.5613ms)
+✔ interrupt, automatic titles, quota and account problems are normalized (22.1184ms)
+✔ concurrent sends never start duplicate turns and empty requests are rejected (15.4578ms)
+✔ restart marks unfinished work as stopped and quarantines corrupt JSON (35.0889ms)
+✔ failed persistence does not poison the next write (28.6791ms)
+✔ fragments publish incremental messages and persist at completion (65.317ms)
+✔ engine restart releases busy work and clears resumed conversations (56.7395ms)
+✔ workspace and engine data cannot overlap (0.9508ms)
+✔ an ambiguous send failure stays saved, clears busy state and is never retried (52.6608ms)
+✔ app rejects unsafe sends even when the fake engine would accept them (13.4804ms)
+✔ persistence retries EPERM once or twice before succeeding (269.2663ms)
+✔ corrupt quarantine retries then copies, and still starts if copying also fails (480.7515ms)
+✔ final flush includes events delivered during engine shutdown (47.0921ms)
+✔ ready unelevated remains blocked (175.2137ms)
+✔ read and probe failures retry checks without administrative preparation (320.2553ms)
+✔ saved MXC is probed again by each new engine; unavailable is not ready (142.5979ms)
+✔ automatic MXC setup caches the successful probe across reload (332.7315ms)
+✔ interrupted preparation remains retryable (619.8354ms)
+✔ setupStart timeout unlocks retry as a read, not another UAC (325.0984ms)
+✔ reload cancels pending RPC and start failure goes through restart/retry (1568.6062ms)
+✔ stdio handshake, activities, retry and server-initiated rejection (130.9387ms)
+✔ completion before start reply never leaves a stale interrupt target; early pause is delivered (217.4904ms)
+✔ child exit rejects the pending turn and restarts with a fresh handshake (1131.9917ms)
+✔ child environment drops inherited Codex settings and API secrets and forces its home (119.3193ms)
+✔ missing Windows protection blocks before turn/start (122.9312ms)
+✖ restart backoff grows, exhausts explicitly and allows manual retry (4713.988ms)
+✔ stable operation resets the restart budget (5149.331ms)
+✔ started notification before start reply delivers only one pause (328.5997ms)
+✔ protection setup: success, sends stay blocked until readiness (466.1508ms)
+✔ protection setup: failure, sends stay blocked until readiness (421.1078ms)
+✔ protection setup: restart, sends stay blocked until readiness (407.575ms)
+✔ protection setup: mxc, sends stay blocked until readiness (1043.8872ms)
+✔ generic files become local images and named relative document mentions (528.8884ms)
+✔ denied subfolder does not block subsequent requests or restart (real Windows ACL) (557.1227ms)
+✔ whole scan failure releases pending marker, keeps warning and permits send and restart (505.6446ms)
+✔ results after interrupted, unchanged hashes and separate pending state (437.5363ms)
+✔ results after failed, unchanged hashes and separate pending state (201.0616ms)
+✔ preflight failures roll back attachments and do not create empty work (189.2419ms)
+✔ long filenames preserve extension and clean the truncated stem (10.7212ms)
+✔ scan skips broken links, junction loops and external junctions and enforces budgets (38.9127ms)
+✔ registered HTTP files enforce paths, headers, HEAD and streaming size cap (308.7496ms)
+✔ a partial attachment write failure removes already created files (152.1441ms)
+✔ exclusive Windows file lock is skipped with technical detail (928.8979ms)
+✔ separate pending snapshot restores results after app closure (487.4087ms)
+✔ only an active scan delays sends; completing it releases the gate (176.6957ms)
+✔ attachments validate formats, content, limits and safe unique names without overwriting (217.1733ms)
+✔ new and modified results exclude inputs, hidden directories and dependencies, persist per request and survive deletion (654.0652ms)
+✔ HTTP files require session token, local host, allowed origin and registered real workspace path (289.3823ms)
+✔ write race cannot replace parent before directory creation or temp open; failed temps are removed (67.4512ms)
+✔ production server declares its MCP runtime dependencies (5.6272ms)
+✔ URL extraction handles quotes, balanced parentheses and no scheme without broadening authorization (17.827ms)
+✔ corrupt allowed list fails closed until the app quarantines it and records fresh user URLs (16.9822ms)
+✔ real data/agency aliases are rejected before startup; marker outside agency survives complete deletion (189.6664ms)
+✔ reject uninspectable list/head/page content; count Unicode digits; operator pseudo and format characters (18440.7098ms)
+▶ visible numeric tokens span adjacent inline nodes and use a common citation ancestor
+  ✔ split span (1852.1571ms)
+  ✔ split thousands (1471.6009ms)
+  ✔ split superscript (1875.0186ms)
+  ✔ split inline-block (2361.2286ms)
+  ✔ whole ancestor citation (2212.8192ms)
+  ✔ whole thousands citation (2304.4389ms)
+  ✔ sibling blocks (2692.3881ms)
+  ✔ line break (1936.201ms)
+  ✔ table cells (1738.74ms)
+  ✔ visible spacing (1500.3762ms)
+  ✔ whole token only (1272.1164ms)
+✔ visible numeric tokens span adjacent inline nodes and use a common citation ancestor (21221.186ms)
+✔ fetch selects content photos from lazy, picture, background and srcset instead of logos and tiny images (315.8475ms)
+✔ PDF keeps screen content, page count and exact page dimensions despite print overrides (1365.8131ms)
+▶ control report rejects Windows-equivalent input paths before changing any input
+  ✔ source.md (63.7776ms)
+  ✔ rules.md (48.9162ms)
+  ✔ piece.md (49.1641ms)
+✔ control report rejects Windows-equivalent input paths before changing any input (162.505ms)
+✔ draw rejects outputs that alias its input before rendering (22.2113ms)
+✔ merged app, attachments, MCP tools and request results work end to end (14890.438ms)
+✔ markdown boundaries and all supported result formats exclude operator inputs and kit artifacts (1614.5973ms)
+✔ app records only accepted user URLs before sending to a provider (62.502ms)
+✔ allowed URLs are exact after URL normalization, external and read-only for tools (56.4772ms)
+✔ hostname DNS pinning, Windows-1252 headers/meta, byte signatures and transfer limits (3105.8981ms)
+✔ external junctions cannot read, write, or feed Edge; deleted kit files stay deleted (1480.8019ms)
+✔ unsupported visible constructions fail closed, including declarative shadow roots and counters (4931.5318ms)
+✔ accented experience, split operator, emoji, extra citations and whole-number normalization (1931.8842ms)
+▶ text requires citations unless hidden by the closed certainty list
+  ✔ contents (1720.4049ms)
+  ✔ nested (1537.1718ms)
+  ✔ mixed block (1772.6162ms)
+  ✔ none (2361.5482ms)
+  ✔ visibility (2264.5221ms)
+  ✔ hidden (2437.4943ms)
+  ✔ opacity ancestor (2583.033ms)
+  ✔ clipped (1812.8192ms)
+  ✔ absolute escapes clipping (1734.9007ms)
+  ✔ zero text size (1554.1514ms)
+  ✔ offscreen (1303.0464ms)
+  ✔ clip path (1035.0013ms)
+  ✔ restored visibility (817.549ms)
+  ✔ ancestor display none (688.6362ms)
+  ✔ hidden ancestor (963.1218ms)
+  ✔ svg text (35.0477ms)
+  ✔ contents pseudo (972.7315ms)
+✔ text requires citations unless hidden by the closed certainty list (25598.6733ms)
+✔ real image dimensions override small HTML display dimensions, while real icons are excluded (145.9407ms)
+▶ computed styles determine text and each pseudo-element visibility independently
+  ✔ hidden overridden (735.3446ms)
+  ✔ script shown (734.4629ms)
+  ✔ noscript shown (728.4856ms)
+  ✔ visible pseudo under hidden owner (741.992ms)
+  ✔ pseudo display none (744.5552ms)
+  ✔ pseudo visibility hidden (688.7542ms)
+  ✔ display none still hides pseudo (743.7669ms)
+✔ computed styles determine text and each pseudo-element visibility independently (5118.6043ms)
+✔ path boundaries, Windows names, links and kit preservation (273.9443ms)
+✔ fetch with explicit test-only local grant, photos, append, SSRF and redirect rejection (1225.1436ms)
+✔ real Edge: citation failures, exact PNG, PDF, overflow, broken fonts and blocked resources (18074.9762ms)
+✔ real MCP stdio client discovers and calls all three tools (5232.5274ms)
+✔ localhost websocket serves snapshots, connects an account and blocks foreign origins (96.7432ms)
+✔ repository sources are UTF-8 without BOM or broken Spanish characters (2455.2831ms)
+ℹ tests 114
+ℹ suites 0
+ℹ pass 113
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 33206.0215
+
+✖ failing tests:
+
+test at server\test\codex.test.ts:275:1
+✖ restart backoff grows, exhausts explicitly and allows manual retry (4713.988ms)
+  AssertionError [ERR_ASSERTION]: [775.7865000000002,823.1733000000004,278.1737999999996,1824.5968999999996,705.0882000000001]
+      at TestContext.<anonymous> (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\test\codex.test.ts:286:12)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }

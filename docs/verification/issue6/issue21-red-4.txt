@@ -1,0 +1,27 @@
+node.exe : node:internal/modules/run_main:107
+At line:1 char:1
++ & "C:\Program Files\nodejs/node.exe" "C:\Users\Valen\AppData\Roaming\ ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (node:internal/modules/run_main:107:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+1 !== 0
+
+    at verifyKitIntegration 
+(C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\test\kit-integration.ts:104:14)
+    at async <anonymous> 
+(C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\scripts\verify-kit-integration.ts:3:13) {
+  generatedMessage: true,
+  code: 'ERR_ASSERTION',
+  actual: 1,
+  expected: 0,
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.15.0
