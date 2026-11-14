@@ -37,6 +37,6 @@ try {
     records.push({ name: variant.name, pattern: variant.pattern, exitCode: child.status, mutationKilled: killed, output });
     assert.ok(killed, `Mutant survived or failed for a non-assertion reason: ${variant.name}\n${output}`);
   }
-  await writeFile('docs/verification/issue4/mutations-round3.json', JSON.stringify({ sourceSha256: createHash('sha256').update(source).digest('hex'), records }, null, 2));
+  await writeFile(join(process.env.BITACORA_EVIDENCE_DIR ?? 'docs/verification/issue4', 'mutations-round3.json'), JSON.stringify({ sourceSha256: createHash('sha256').update(source).digest('hex'), records }, null, 2));
   console.log('PASS: 3/3 mutants killed by actual safety assertions');
 } finally { await rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); }

@@ -47,15 +47,18 @@ export function classifyProblem(
   return "other";
 }
 
+/** Schedules `run` and returns a cancel function. Defaults to `setTimeout`. */
+export type ScheduleTimer = (run: () => void, delayMs: number) => () => void;
+
 export class CodexEngine implements Engine {
   private safety: ExecutionSafety = {
     allowed: false,
     detail: "Execution safety has not been checked",
   };
   private available = false;
-  private restartTimer?: NodeJS.Timeout;
+  private restartTimer?: () => void;
   private attempts = 0;
-  private stableTimer?: NodeJS.Timeout;
+  private stableTimer?: () => void;
   private exhausted = false;
   private interrupted = new Set<string>();
   private starting = new Map<
@@ -88,11 +91,17 @@ export class CodexEngine implements Engine {
       args?: string[];
       restartDelayMs?: number;
       stableAfterMs?: number;
+      scheduleTimer?: ScheduleTimer;
       probeProtection?: () => Promise<boolean>;
       requestTimeoutMs?: number;
       setupTimeoutMs?: number;
     },
   ) {}
+  private scheduleTimer(run: () => void, delayMs: number) {
+    if (this.options.scheduleTimer) return this.options.scheduleTimer(run, delayMs);
+    const timer = setTimeout(run, delayMs);
+    return () => clearTimeout(timer);
+  }
   subscribe(listener: (event: EngineEvent) => void) {
     this.listeners.add(listener);
     return () => {
@@ -178,8 +187,8 @@ export class CodexEngine implements Engine {
         throw new Error("Engine stopped during initialization");
       this.available = true;
       this.exhausted = false;
-      clearTimeout(this.stableTimer);
-      this.stableTimer = setTimeout(() => { this.attempts = 0; }, this.options.stableAfterMs ?? 60_000);
+      this.stableTimer?.();
+      this.stableTimer = this.scheduleTimer(() => { this.attempts = 0; }, this.options.stableAfterMs ?? 60_000);
       const account = await this.account();
       if (this.child !== child)
         throw new Error("Engine stopped during account read");
@@ -299,7 +308,7 @@ export class CodexEngine implements Engine {
     this.safety = { ...this.safety, allowed: false };
     this.cancelPending(new Error("Engine reloading protection"));
     clearTimeout(this.setupTimer);
-    clearTimeout(this.stableTimer);
+    this.stableTimer?.();
     this.emit({ type: "availability", available: false, safety: this.safety });
     if (child) await new Promise<void>(resolve => {
       child.once("exit", () => resolve());
@@ -351,7 +360,7 @@ export class CodexEngine implements Engine {
     this.setupPending = false;
     this.safety = { ...this.safety, allowed: false };
     clearTimeout(this.setupTimer);
-    clearTimeout(this.stableTimer);
+    this.stableTimer?.();
     if (!this.stopping) {
       this.emit({
         type: "availability",
@@ -375,7 +384,7 @@ export class CodexEngine implements Engine {
       if (!this.restartTimer && this.attempts < 5) {
         const delay =
           (this.options.restartDelayMs ?? 500) * 2 ** this.attempts++;
-        this.restartTimer = setTimeout(() => {
+        this.restartTimer = this.scheduleTimer(() => {
           this.restartTimer = undefined;
           void this.start().catch((error) => {
             if (this.child) return;
@@ -650,8 +659,8 @@ export class CodexEngine implements Engine {
   async close() {
     this.stopping = true;
     clearTimeout(this.setupTimer);
-    clearTimeout(this.restartTimer);
-    clearTimeout(this.stableTimer);
+    this.restartTimer?.();
+    this.stableTimer?.();
     const child = this.child;
     if (!child) return;
     await new Promise<void>((resolve) => {

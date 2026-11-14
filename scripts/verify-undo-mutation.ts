@@ -31,6 +31,6 @@ try {
   const witness = await readFile(join(outside, 'victim.txt'), 'utf8');
   const killed = !rejected || witness !== 'after';
   assert.equal(killed, true, 'The route-control mutant must fail the real restoration assertion');
-  await writeFile('docs/verification/issue4/mutation.json', JSON.stringify({ mutation: 'Remove all restore path checks from disposable module', expected: { rejected: true, witness: 'after' }, actual: { rejected, witness }, mutationKilled: killed }, null, 2));
+  await writeFile(join(process.env.BITACORA_EVIDENCE_DIR ?? 'docs/verification/issue4', 'mutation.json'), JSON.stringify({ mutation: 'Remove all restore path checks from disposable module', expected: { rejected: true, witness: 'after' }, actual: { rejected, witness }, mutationKilled: killed }, null, 2));
   console.log('PASS: removing restoration path checks breaks the junction-during-restore assertion');
 } finally { await rm(base, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }); }

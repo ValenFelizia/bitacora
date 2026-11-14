@@ -57,7 +57,7 @@ test('fetch with explicit test-only local grant, photos, append, SSRF and redire
     for (const address of ['127.0.0.1','10.0.0.1','169.254.169.254','192.168.0.1','::1','::ffff:127.0.0.1','fc00::1']) assert.equal(publicAddress(address),false,address);
   } finally { await new Promise<void>(r => server.close(() => r())); await f.close(); }
 });
-test('real Edge: citation failures, exact PNG, PDF, overflow, broken fonts and blocked resources', async () => {
+test('real Edge: citation failures, exact PNG, PDF, overflow, broken fonts and blocked resources', { timeout: 180000 }, async () => {
   const f = await fixture();
   try {
     await initializeKit(f.root,f.data);

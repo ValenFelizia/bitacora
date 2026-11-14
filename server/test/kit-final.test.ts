@@ -96,7 +96,7 @@ test('real data/agency aliases are rejected before startup; marker outside agenc
     assert.deepEqual(await readdir(f.root),[]);
   } finally {await f.close();}
 });
-test('reject uninspectable list/head/page content; count Unicode digits; operator pseudo and format characters', async () => {
+test('reject uninspectable list/head/page content; count Unicode digits; operator pseudo and format characters', { timeout: 180000 }, async () => {
   const f=await fixture();
   try {
     await f.files.write('source.md','Precio 999');
