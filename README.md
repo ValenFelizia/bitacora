@@ -255,6 +255,12 @@ copia y la detección de resultados comparten un único recorrido antes del pedi
 y otro al terminar. Se conservan ambas fotos del último pedido con cambios y una
 caché del estado actual. No se usan enlaces duros.
 
+Las fotos que trae el kit en `fotos/operador/` y el ejemplo editable se excluyen
+de los resultados, pero entran en la copia. Deshacer también revierte archivos
+creados por `traer` o `dibujar` durante el pedido, y ediciones de `AGENTS.md` y
+`ejemplo/`. Los temporales `.kit-*` quedan fuera; la marca inicial y la lista de
+links permitidos viven en la carpeta de datos y no se tocan al deshacer ni limpiar.
+
 Antes de tomar la copia se escribe una marca de invalidación independiente de
 `state.json`. Cada pedido recibe además un identificador que la app guarda con
 los trabajos antes de enviarlo al motor. Al arrancar, sólo se acepta una copia si
