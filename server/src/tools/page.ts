@@ -80,14 +80,14 @@ export async function visibleTexts(page: Page) {
       try { result.push({text:'',where:`Cita ${citationId + 1}`,cites:JSON.parse(el.getAttribute('data-cites')!),citationId}); }
       catch { throw new Error('Hay una cita mal escrita en la pieza. Revisá data-cites.'); }
     }
-    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    const walker = document.createTreeWalker(document.documentElement, NodeFilter.SHOW_TEXT);
     const groups: {text:string;parts:{node:Node;start:number;end:number}[]}[]=[];
     let previous: {node:Node;block:Element;box:DOMRect}|undefined;
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
       const el = node.parentElement!;
       const raw=node.textContent || '';
-      // Closed exclusion list: uncertain rendering must never hide an unchecked number.
-      if (!raw || el.closest('[hidden],template,script,style,noscript,head') || ['hidden','collapse'].includes(getComputedStyle(el).visibility)) continue;
+      // Only computed styles can establish that text is certainly hidden.
+      if (!raw || ['hidden','collapse'].includes(getComputedStyle(el).visibility)) continue;
       let hidden=false;
       for(let ancestor:Element|null=el;ancestor;ancestor=ancestor.parentElement) if(getComputedStyle(ancestor).display==='none'){hidden=true;break;}
       if(hidden)continue;
@@ -125,14 +125,14 @@ export async function visibleTexts(page: Page) {
       }
     }
     // Generated content is visible too; never silently skip numbers in CSS counters.
-    for (const el of document.body.querySelectorAll('*')) {
-      if(el.closest('[hidden],template,script,style,noscript,head') || ['hidden','collapse'].includes(getComputedStyle(el).visibility))continue;
+    for (const el of document.querySelectorAll('*')) {
       let hidden=false;
       for(let ancestor:Element|null=el;ancestor;ancestor=ancestor.parentElement)if(getComputedStyle(ancestor).display==='none'){hidden=true;break;}
       if(hidden)continue;
-      if (getComputedStyle(el).display === 'list-item' && /decimal|roman|alpha|latin/i.test(getComputedStyle(el).listStyleType)) result.push({text:'0', where:'Numeración automática de lista: reemplazala por texto con cita', cites:{}});
       for (const pseudo of ['::before', '::after', '::marker']) {
-        const content = getComputedStyle(el, pseudo).content;
+        const style=getComputedStyle(el,pseudo);
+        if(style.display==='none' || ['hidden','collapse'].includes(style.visibility))continue;
+        const content = style.content;
         if (content && !['none', 'normal', '""'].includes(content)) result.push({ text: content, where: el.tagName + pseudo, cites: {} });
       }
     }

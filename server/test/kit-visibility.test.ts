@@ -57,3 +57,20 @@ test('real image dimensions override small HTML display dimensions, while real i
     assert.equal(result.photoDetails?.length,1);assert.equal(result.photoDetails?.[0].width,1600);assert.equal(result.photoDetails?.[0].height,1200);
   }finally{server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));}
 });
+test('computed styles determine text and each pseudo-element visibility independently',async t=>{
+  const cases=[
+    ['hidden overridden','<p hidden style="display:block">999</p>',1],
+    ['script shown','<style>script{display:block}</style><script type="text/plain">999</script>',1],
+    ['noscript shown','<style>noscript{display:block}</style><noscript>999</noscript>',1],
+    ['visible pseudo under hidden owner','<style>div{visibility:hidden}div::before{visibility:visible;content:"999"}</style><div></div>',1],
+    ['pseudo display none','<style>div::before{display:none;content:"999"}</style><div></div>',0],
+    ['pseudo visibility hidden','<style>div::after{visibility:hidden;content:"999"}</style><div></div>',0],
+    ['display none still hides pseudo','<style>div{display:none}div::before{visibility:visible;content:"999"}</style><div></div>',0],
+  ] as const;
+  for(const [name,body,count] of cases)await t.test(name,async()=>{
+    const files=await fixture();await files.write('source.md','Nada');
+    await files.write('piece.html',`<!doctype html><html><head></head><body>${body}</body></html>`);
+    const result=await controlar(files,{html:'piece.html',source:'source.md',report:'report.md'});
+    assert.equal(result.checked,count);assert.equal(result.ok,count===0);
+  });
+});
