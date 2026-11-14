@@ -1,5 +1,5 @@
 import { mkdir, realpath, opendir, lstat, unlink, open } from 'node:fs/promises';
-import { createReadStream } from 'node:fs';
+import { createReadStream, type Stats } from 'node:fs';
 import { join, relative, isAbsolute, extname, basename } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import type { FileRef, Upload } from './contracts';
@@ -10,8 +10,13 @@ const media: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg
 const textTypes: Record<string, string> = { '.txt': 'text/plain', '.md': 'text/plain', '.csv': 'text/plain', '.json': 'text/plain' };
 export const MAX_RESULT = 100 * 1024 * 1024;
 export const SCAN_LIMITS = { entries: 20000, files: 5000, bytes: 512 * 1024 * 1024, depth: 64 };
-type Fingerprint = { size: number; mtimeMs: number; ctimeMs: number; hash: string };
-export type FileScan = { entries: Record<string, Fingerprint>; warnings: string[]; hashedBytes: number; visited: number };
+export type Fingerprint = { size: number; mtimeMs: number; ctimeMs: number; hash: string; mode?: number };
+export type FileScan = { entries: Record<string, Fingerprint>; warnings: string[]; hashedBytes: number; visited: number; directories?: string[]; omitted?: Record<string, string> };
+export type ScanCopy = {
+  limits: typeof SCAN_LIMITS & { fileBytes: number };
+  capture(path: string, stat: Stats): Promise<string>;
+};
+export const excludedFromCopy = (name: string) => name.startsWith('.') || ['adjuntos', 'node_modules'].includes(name.toLowerCase());
 export class FileProblem extends Error {}
 export class WorkspaceFiles {
   private cache?: FileScan;
@@ -91,51 +96,63 @@ export class WorkspaceFiles {
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     }
   }
-  async scan(previous = this.cache): Promise<FileScan> {
-    const found: FileScan = { entries: {}, warnings: [], hashedBytes: 0, visited: 0 };
+  async scan(previous = this.cache, copy?: ScanCopy): Promise<FileScan> {
+    const found: FileScan = { entries: Object.create(null), warnings: [], hashedBytes: 0, visited: 0, directories: [], omitted: Object.create(null) };
+    const limits = copy?.limits || this.limits;
     const root = await realpath(this.root);
-    let files = 0;
+    let files = 0, logicalBytes = 0;
     const warn = (path: string, error: unknown) => {
       if (found.warnings.length < 100) found.warnings.push(`${path || '.'}: ${String(error)}`);
     };
     const walk = async (folder: string, depth: number) => {
-      if (depth > this.limits.depth) { warn(folder, 'depth limit'); return; }
+      if (depth > limits.depth) { warn(folder, 'depth limit'); return; }
       try {
         const target = await realpath(join(root, folder));
         const rel = relative(root, target);
         if (rel.startsWith('..') || isAbsolute(rel)) throw new Error('directory outside workspace');
         for await (const entry of await opendir(target)) {
-          if (++found.visited > this.limits.entries) { warn(folder, 'entry limit'); break; }
-          if (entry.name.startsWith('.') || ['adjuntos', 'node_modules'].includes(entry.name)) continue;
+          if (++found.visited > limits.entries) { warn(folder, 'entry limit'); break; }
+          if (excludedFromCopy(entry.name)) continue;
           const path = join(folder, entry.name);
           if (entry.isSymbolicLink()) { warn(path, 'link skipped'); continue; }
-          if (entry.isDirectory()) await walk(path, depth + 1);
-          else if (entry.isFile() && media[extname(entry.name).toLowerCase()]) {
-            if (++files > this.limits.files) { warn(path, 'file limit'); break; }
+          if (entry.isDirectory()) { found.directories!.push(path); await walk(path, depth + 1); }
+          else if (entry.isFile() && (copy || media[extname(entry.name).toLowerCase()])) {
+            if (++files > limits.files && !copy) { warn(path, 'file limit'); break; }
             try {
               const stat = await lstat(join(root, path));
               if (!stat.isFile()) { warn(path, 'not a regular file'); continue; }
-              if (stat.size > MAX_RESULT) { warn(path, 'file size limit'); continue; }
+              if (copy && files > limits.files) { found.omitted![path] = `${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`; continue; }
+              if (stat.size > (copy?.limits.fileBytes ?? MAX_RESULT)) { found.omitted![path] = `${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`; if (!copy) warn(path, 'file size limit'); continue; }
+              if (copy && logicalBytes + stat.size > limits.bytes) { found.omitted![path] = `${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`; continue; }
+              logicalBytes += stat.size;
               const old = previous?.entries[path];
               let hash = old?.hash;
               if (!old || old.size !== stat.size || old.mtimeMs !== stat.mtimeMs || old.ctimeMs !== stat.ctimeMs) {
-                if (found.hashedBytes + stat.size > this.limits.bytes) { warn(path, 'hash byte limit'); continue; }
+                if (found.hashedBytes + stat.size > limits.bytes) { if (copy) found.omitted![path] = `${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`; else warn(path, 'hash byte limit'); continue; }
+                if (copy) {
+                  // Only one read feeds both the content store and result detection.
+                  const resolved = await realpath(join(root, path));
+                  if (relative(root, resolved).startsWith('..') || isAbsolute(relative(root, resolved)) || (await lstat(join(root, path))).isSymbolicLink()) throw new Error('file outside workspace');
+                  hash = await copy.capture(resolved, stat);
+                  found.hashedBytes += stat.size;
+                } else {
                 const digest = createHash('sha256');
                 let bytes = 0;
                 for await (const chunk of createReadStream(await this.safePath(path))) {
                   bytes += chunk.length;
                   found.hashedBytes += chunk.length;
-                  if (bytes > MAX_RESULT || found.hashedBytes > this.limits.bytes) throw new Error('growing file size limit');
+                  if (bytes > MAX_RESULT || found.hashedBytes > limits.bytes) throw new Error('growing file size limit');
                   digest.update(chunk);
                 }
                 const after = await lstat(join(root, path));
                 if (after.size !== stat.size || after.mtimeMs !== stat.mtimeMs || after.ctimeMs !== stat.ctimeMs) throw new Error('file changed while reading');
                 hash = digest.digest('hex');
+                }
               }
-              found.entries[path] = { size: stat.size, mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs, hash: hash! };
+              found.entries[path] = { size: stat.size, mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs, hash: hash!, mode: stat.mode };
             } catch (error) { warn(path, error); }
           }
-          if (found.visited >= this.limits.entries || files >= this.limits.files) { warn(folder, 'scan count limit reached'); break; }
+          if (found.visited >= limits.entries || (!copy && files >= limits.files)) { warn(folder, 'scan count limit reached'); break; }
         }
       } catch (error) {
         if (!folder) throw error;
@@ -158,6 +175,7 @@ export class WorkspaceFiles {
   result(path: string): FileRef {
     return { id: randomUUID(), path, name: basename(path), mime: media[extname(path).toLowerCase()], createdAt: new Date().toISOString() };
   }
+  isResult(path: string) { return !!media[extname(path).toLowerCase()]; }
   async read(ref: FileRef) {
     const { handle } = await this.openResult(ref);
     try { return await handle.readFile(); } finally { await handle.close(); }

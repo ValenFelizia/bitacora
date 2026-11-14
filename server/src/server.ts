@@ -27,7 +27,7 @@ export async function serve(
       }
       if (url.pathname !== "/files" || !["GET", "HEAD"].includes(req.method || "") || !files) { res.writeHead(404); res.end(); return; }
       const ref = app.file(url.searchParams.get("id") || "");
-      if (!ref) { res.writeHead(404); res.end(); return; }
+      if (!ref || ref.reverted) { res.writeHead(404); res.end(); return; }
       const { handle, size } = await files.openResult(ref);
       try {
         res.writeHead(200, {

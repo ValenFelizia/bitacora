@@ -1,6 +1,6 @@
 import type { Account, ExecutionSafety } from "./engine";
 export type Upload = { name: string; data: string };
-export type FileRef = { id: string; path: string; name: string; mime: string; createdAt: string };
+export type FileRef = { id: string; path: string; name: string; mime: string; createdAt: string; reverted?: boolean };
 export type Message = { id: string; role: "user" | "assistant"; text: string; attachments?: FileRef[]; results?: FileRef[] };
 export type Work = {
   id: string;

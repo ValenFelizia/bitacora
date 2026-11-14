@@ -177,7 +177,7 @@ test('exclusive Windows file lock is skipped with technical detail', { skip: pro
   const path = join(f.files.root, 'locked.png');
   await writeFile(path, 'locked');
   const script = `$s=[System.IO.File]::Open('${path.replace(/'/g, "''")}',[System.IO.FileMode]::Open,[System.IO.FileAccess]::ReadWrite,[System.IO.FileShare]::None);[Console]::WriteLine('LOCKED');[Console]::ReadLine()|Out-Null;$s.Dispose()`;
-  const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  const child = spawn(join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', script], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
   const exited = once(child, 'exit');
   try {
     await new Promise<void>((resolve, reject) => {

@@ -1,4 +1,4 @@
-import { Backups } from './backups';
+import { Backups, BACKUP_LIMITS, RestoreProblem } from './backups';
 import { mkdir, readFile, writeFile, rename, copyFile, rm } from "node:fs/promises";
 import { WorkspaceFiles, type FileScan } from "./workspace-files";
 import { join } from "node:path";
@@ -35,8 +35,9 @@ export class App {
     await mkdir(this.data, { recursive: true });
     await this.workspace?.initialize();
     if (this.workspace) {
-      try { this.backups = new Backups(this.workspace.root, this.data); await this.backups.initialize(); }
+      try { this.backups = new Backups(this.workspace.root, this.data, BACKUP_LIMITS, this.workspace); await this.backups.initialize(); }
       catch { this.backups = undefined; this.notice = "No pude preparar las copias. Podés trabajar, pero esta vez no vas a poder deshacer."; }
+      if (this.backups?.restoring) this.notice = "Quedó un Deshacer pendiente. Tocá Reintentar deshacer para terminarlo antes de seguir trabajando.";
     }
     try {
       const saved = JSON.parse(
@@ -144,15 +145,21 @@ export class App {
       const before = pending.before
         ? { entries: Object.fromEntries(Object.entries(pending.before).map(([p, hash]) => [p, { hash }])) } as FileScan
         : JSON.parse(await readFile(this.pendingPath(work), 'utf8')) as FileScan;
-      const after = await this.workspace.scan(before);
+      let after: FileScan;
+      if (this.backups) {
+        const complete = await this.backups.finish();
+        if (!complete) this.notice = "No pude guardar la copia de este pedido. Esta vez no vas a poder deshacer.";
+        else if (this.backups.latestOmitted.length) this.notice = `No pude guardar copia de ${this.backups.latestOmitted.join(', ')}, así que eso no lo puedo deshacer.`;
+        if (!this.backups.lastScan) throw new Error('File review unavailable');
+        after = this.backups.lastScan;
+      } else after = await this.workspace.scan(before);
       this.scanDetail(work, after);
       const message = work.messages.find(m => m.id === pending.messageId);
-      if (message) message.results = Object.keys(after.entries).filter(p => after.entries[p].hash !== before.entries[p]?.hash).map(p => this.workspace!.result(p));
+      if (message) message.results = Object.keys(after.entries).filter(p => this.workspace!.isResult(p) && after.entries[p].hash !== before.entries[p]?.hash).map(p => this.workspace!.result(p));
     } catch (error) {
       work.problem = "No pude revisar los resultados de ese pedido. Podés seguir trabajando.";
       work.details = (work.details + String(error) + "\n").slice(-100000);
     } finally {
-      try { if (await this.backups?.finish() === false) this.notice = "No pude guardar la copia de este pedido. Esta vez no vas a poder deshacer."; } catch { this.notice = "No pude guardar la copia de este pedido. Esta vez no vas a poder deshacer."; }
       this.fileRevision++;
       delete work.pendingFiles;
       try { await rm(this.pendingPath(work), { force: true }); }
@@ -275,14 +282,20 @@ export class App {
     reply: (message: ServerMessage) => void,
   ) {
     if (command.type === "undo") {
-      if (this.submitting || this.works.some(w => w.busy) || !this.backups) return;
+      if (this.submitting || this.works.some(w => w.busy) || !this.backups) {
+        reply({ type: "problem", text: this.backups ? "Esperá a que termine el pedido actual para deshacer." : "No hay una copia disponible para deshacer." }); return;
+      }
       this.submitting = true;
       this.changed();
       try {
-        await this.backups.undo(command.id);
-        this.notice = "Listo. Tu carpeta volvió a estar como antes de ese pedido.";
+        const result = await this.backups.undo(command.id);
+        this.notice = `Listo. Deshice ${result.restored.length} cambios. Lo que agregaste o cambiaste después quedó como estaba.`;
+        if (result.skipped.length) this.notice += ` Dejé ${result.skipped.length} sin tocar porque cambiaron después: ${result.skipped.join(', ')}.`;
+        if (result.omitted.length) this.notice += ` No pude guardar copia de ${result.omitted.join(', ')}, así que eso no lo puedo deshacer.`;
+        const reverted = this.works.find(w => w.id === result.target.workId)?.messages.find(m => m.id === result.target.messageId);
+        for (const file of reverted?.results || []) if (result.restored.includes(file.path)) file.reverted = true;
       } catch (error) {
-        this.notice = "No pude completar Deshacer. Revisá tu carpeta antes de seguir trabajando.";
+        this.notice = error instanceof RestoreProblem ? error.message : "No pude completar Deshacer. La copia sigue guardada. Tocá Reintentar deshacer para continuar.";
       } finally { this.fileRevision++; this.submitting = false; this.changed(); }
       return;
     }
@@ -311,6 +324,7 @@ export class App {
       command.text.length > 20000
     )
       throw new Error("Invalid request");
+    if (this.backups?.restoring) { reply({ type: "problem", text: "Primero tocá Reintentar deshacer para terminar la restauración pendiente." }); return; }
     if (this.submitting || this.works.some((w) => w.busy)) {
       reply({
         type: "problem",
@@ -369,14 +383,18 @@ export class App {
       }
       attachments = await this.workspace?.attach(work.id, uploads || []) || [];
       const messageId = randomUUID();
-      const before = await this.workspace?.scan().catch(() => ({ entries: {}, warnings: ["No pude revisar todos los resultados."], hashedBytes: 0, visited: 0 }));
+      this.notice = undefined;
+      let before: FileScan | undefined;
+      if (this.backups) {
+        if (!await this.backups.before({ workId: work.id, title: work.title, request: command.text.trim().slice(0, 160), messageId })) this.notice = "No pude guardar la copia de este pedido. Esta vez no vas a poder deshacer.";
+        before = this.backups.lastScan || { entries: {}, warnings: ["No pude revisar todos los resultados."], hashedBytes: 0, visited: 0 };
+      } else before = await this.workspace?.scan().catch(() => ({ entries: {}, warnings: ["No pude revisar todos los resultados."], hashedBytes: 0, visited: 0 }));
       if (before) {
         this.scanDetail(work, before);
         await mkdir(join(this.data, 'pending-files'), { recursive: true });
         await writeFile(this.pendingPath(work), JSON.stringify(before), 'utf8');
         work.pendingFiles = { messageId };
       }
-      if (this.backups && !await this.backups.before({ workId: work.id, title: work.title, request: command.text.trim().slice(0, 160) })) this.notice = "No pude guardar la copia de este pedido. Esta vez no vas a poder deshacer.";
       if (newWork) { this.works.unshift(work); this.resumed.add(work.id); }
       committed = true;
       work.messages.push({

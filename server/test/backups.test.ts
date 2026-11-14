@@ -37,7 +37,8 @@ test('deduplicated copies restore create/modify/delete, unicode, empty directori
     assert.equal((await readdir(join(f.data, 'backups/objects'))).length, 1);
     await writeFile(join(f.root, 'Carpeta ñ/cotización.txt'), 'modificado');
     await unlink(join(f.root, 'borrar.txt')); await writeFile(join(f.root, 'nuevo.png'), 'nuevo');
-    // Pending copy is recovered even if the server stopped before finalization.
+    await f.backups.finish();
+    // Both snapshots survive restart; do not reconstruct an after-state at startup.
     const restarted = new Backups(f.root, f.data); await restarted.initialize();
     assert.ok(restarted.target);
     await restarted.undo(restarted.target!.id);
@@ -59,7 +60,7 @@ test('junctions outside are skipped; restoring through a substituted junction fa
     assert.equal(await f.backups.before(target), true);
     await rm(join(f.root, 'real'), { recursive: true }); await symlink(outside, join(f.root, 'real'), 'junction');
     await writeFile(join(f.root, 'nuevo.txt'), 'nuevo'); await f.backups.finish();
-    await assert.rejects(f.backups.undo(f.backups.target!.id), /Link/);
+    await assert.rejects(f.backups.undo(f.backups.target!.id), /enlace/);
     assert.equal(await readFile(join(outside, 'testigo.txt'), 'utf8'), 'intacto');
     assert.equal(await readFile(join(f.root, 'nuevo.txt'), 'utf8'), 'nuevo');
   } finally { await f.close(); }
@@ -68,9 +69,10 @@ test('excluded content survives undo; limits and unreadable folders invalidate c
   const f = await fixture(); let restore: (() => unknown) | undefined;
   try {
     await writeFile(join(f.root, 'a'), 'a');
-    for (const limits of [{ ...BACKUP_LIMITS, files: 0 }, { ...BACKUP_LIMITS, bytes: 0 }, { ...BACKUP_LIMITS, fileBytes: 0 }, { ...BACKUP_LIMITS, entries: 0 }]) {
-      const b = new Backups(f.root, f.data, limits); await b.initialize(); assert.equal(await b.before(target), false); assert.equal(b.target, undefined);
+    for (const limits of [{ ...BACKUP_LIMITS, files: 0 }, { ...BACKUP_LIMITS, bytes: 0 }, { ...BACKUP_LIMITS, fileBytes: 0 }]) {
+      const b = new Backups(f.root, f.data, limits); await b.initialize(); assert.equal(await b.before(target), true); assert.deepEqual(Object.keys(b.lastScan!.entries), []);
     }
+    const limited = new Backups(f.root, f.data, { ...BACKUP_LIMITS, entries: 0 }); await limited.initialize(); assert.equal(await limited.before(target), false);
     await mkdir(join(f.root, 'denied')); restore = denyRead(join(f.root, 'denied'));
     assert.equal(await f.backups.before(target), false); restore(); restore = undefined;
     assert.equal(await f.backups.before(target), true);
