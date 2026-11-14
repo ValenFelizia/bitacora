@@ -594,10 +594,6 @@ export class CodexEngine implements Engine {
   async send(conversationId: string, text: string, files: import("../engine").EngineFile[] = [], context?: { filesReverted?: boolean }) {
     if (!this.available || !this.safety.allowed)
       throw new EngineFailure("other", this.safety.detail);
-    if (context?.filesReverted) await this.rpc("thread/resume", {
-      threadId: conversationId, ...this.settings(),
-      developerInstructions: this.settings().developerInstructions + " La usuaria deshizo los cambios de archivos del pedido anterior. Volvé a revisar la carpeta; no des por hechos esos cambios.",
-    });
     this.interrupted.delete(conversationId);
     const state = { completed: false, interrupt: false };
     this.starting.set(conversationId, state);
@@ -606,6 +602,7 @@ export class CodexEngine implements Engine {
         threadId: conversationId,
         input: [
           { type: "text", text, text_elements: [] },
+          ...(context?.filesReverted ? [{ type: "text" as const, text: "Aviso de Bitácora (no escrito por la usuaria): se deshicieron los cambios de archivos del pedido anterior. Revisá el estado actual antes de continuar.", text_elements: [] }] : []),
           ...files.filter(f => !f.mime.startsWith("image/")).map(f => ({ type: "mention" as const, name: basename(f.path), path: relative(this.options.workspace, f.path) })),
           ...files.filter(f => f.mime.startsWith("image/")).map(f => ({ type: "localImage" as const, path: f.path })),
         ],

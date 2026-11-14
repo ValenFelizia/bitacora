@@ -386,7 +386,11 @@ test("generic files become local images and named relative document mentions", a
     assert.equal(f.events.filter(e => e.type === 'problem').length, 0);
     await f.engine.send('thread-1', 'Texto de la usuaria', [], { filesReverted: true });
     const records = await f.records();
-    assert.match(records.find(m => m.method === 'thread/resume').params.developerInstructions, /deshizo/);
+    assert.equal(records.filter(m => m.method === 'thread/resume').length, 0);
+    assert.match(records.filter(m => m.method === 'turn/start').at(-1).params.input[1].text, /Aviso de Bitácora/);
+    await f.engine.send('thread-1', 'Siguiente');
+    const following = (await f.records()).filter(m => m.method === 'turn/start').at(-1);
+    assert.equal(following.params.input.length, 1);
     assert.equal(records.filter(m => m.method === 'turn/start').at(-1).params.input[0].text, 'Texto de la usuaria');
   } finally { await f.close(); }
 });
