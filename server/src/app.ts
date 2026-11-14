@@ -3,6 +3,8 @@ import { mkdir, readFile, writeFile, rename, copyFile, rm } from "node:fs/promis
 import { WorkspaceFiles, type FileScan } from "./workspace-files";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { rememberUserUrls } from './allowed-urls';
+import { initializeKit } from './tools/kit';
 import type { Engine, EngineEvent } from "./engine";
 import { problemText, EngineFailure, activityText } from "./engine";
 import type { FileRef, Work, Snapshot, ClientCommand, ServerMessage } from "./contracts";
@@ -35,6 +37,7 @@ export class App {
   async start() {
     await mkdir(this.data, { recursive: true });
     await this.workspace?.initialize();
+    if (this.workspace) await initializeKit(this.workspace.root, this.data);
     try {
       const saved = JSON.parse(
         await readFile(join(this.data, "works.json"), "utf8"),
@@ -419,6 +422,7 @@ export class App {
       this.changed();
       await this.writes;
       reply({ type: "selected", workId: work.id });
+      await rememberUserUrls(this.data, command.text);
       await this.engine.send(work.conversationId, command.text.trim(), await Promise.all((attachments || []).map(async f => ({ path: await this.workspace!.safePath(f.path), mime: f.mime }))), { filesReverted: this.backups?.hasNotice(work.id) });
       if (this.backups?.hasNotice(work.id)) {
         try { await this.backups.acknowledge(work.id); }

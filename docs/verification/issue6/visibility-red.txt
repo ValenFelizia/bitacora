@@ -1,0 +1,129 @@
+▶ text visibility uses rendered text ranges, including display contents, and excludes hidden text
+  ✖ contents (1821.5649ms)
+  ✖ nested (684.1314ms)
+  ✖ mixed block (681.5574ms)
+  ✔ none (681.1587ms)
+  ✔ visibility (710.8408ms)
+  ✔ hidden (665.7916ms)
+  ✔ opacity ancestor (655.0538ms)
+  ✔ clipped (695.2437ms)
+  ✖ svg text (728.2385ms)
+  ✖ contents pseudo (712.6638ms)
+✖ text visibility uses rendered text ranges, including display contents, and excludes hidden text (8038.8372ms)
+✖ real image dimensions override small HTML display dimensions, while real icons are excluded (132.8082ms)
+ℹ tests 12
+ℹ suites 0
+ℹ pass 5
+ℹ fail 7
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 9473.4101
+
+✖ failing tests:
+
+test at server\test\kit-visibility.test.ts:27:48
+✖ contents (1821.5649ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  0 !== 1
+  
+      at TestContext.<anonymous> (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\test\kit-visibility.test.ts:30:12)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async TestContext.<anonymous> (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\test\kit-visibility.test.ts:27:40)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at server\test\kit-visibility.test.ts:27:48
+✖ nested (684.1314ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  0 !== 1
+  
+      at TestContext.<anonymous> (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\test\kit-visibility.test.ts:30:12)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async TestContext.<anonymous> (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\test\kit-visibility.test.ts:27:40)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at server\test\kit-visibility.test.ts:27:48
+✖ mixed block (681.5574ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  2 !== 3
+  
+      at TestContext.<anonymous> (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\test\kit-visibility.test.ts:30:12)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async TestContext.<anonymous> (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\test\kit-visibility.test.ts:27:40)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 2,
+    expected: 3,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at server\test\kit-visibility.test.ts:35:13
+✖ svg text (728.2385ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async TestContext.<anonymous> (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\test\kit-visibility.test.ts:37:5)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async TestContext.<anonymous> (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\test\kit-visibility.test.ts:35:5)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /Sacá/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at server\test\kit-visibility.test.ts:35:13
+✖ contents pseudo (712.6638ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async TestContext.<anonymous> (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\test\kit-visibility.test.ts:37:5)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async TestContext.<anonymous> (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\test\kit-visibility.test.ts:35:5)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /Sacá/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at server\test\kit-visibility.test.ts:40:1
+✖ real image dimensions override small HTML display dimensions, while real icons are excluded (132.8082ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  0 !== 1
+  
+      at TestContext.<anonymous> (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\test\kit-visibility.test.ts:50:12)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 0,
+    expected: 1,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

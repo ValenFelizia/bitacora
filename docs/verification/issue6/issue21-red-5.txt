@@ -1,0 +1,28 @@
+✖ fetch selects content photos from lazy, picture, background and srcset instead of logos and tiny images (137.5611ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1329.6701
+
+✖ failing tests:
+
+test at server\test\kit-greptile.test.ts:40:1
+✖ fetch selects content photos from lazy, picture, background and srcset instead of logos and tiny images (137.5611ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  2 !== 4
+  
+      at TestContext.<anonymous> (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\test\kit-greptile.test.ts:53:12)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 2,
+    expected: 4,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

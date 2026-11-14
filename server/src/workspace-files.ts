@@ -17,6 +17,10 @@ export type ScanCopy = {
   capture(path: string, stat: Stats): Promise<string>;
 };
 export const excludedFromCopy = (name: string) => name.startsWith('.') || ['adjuntos', 'node_modules'].includes(name.toLowerCase());
+const kitInput = (path: string) => {
+  const parts = path.toLowerCase().split(/[\\/]/);
+  return parts[0] === 'ejemplo' || parts.some((part, i) => part === 'fotos' && parts[i + 1] === 'operador');
+};
 export class FileProblem extends Error {}
 export class WorkspaceFiles {
   private cache?: FileScan;
@@ -114,6 +118,8 @@ export class WorkspaceFiles {
           if (++found.visited > limits.entries) { warn(folder, 'entry limit'); found.incomplete!.push(folder); break; }
           if (excludedFromCopy(entry.name)) continue;
           const path = join(folder, entry.name);
+          // Tourism inputs and the editable starter example are not produced results.
+          if (!copy && kitInput(path)) continue;
           if (entry.isSymbolicLink()) { warn(path, 'link skipped'); continue; }
           if (entry.isDirectory()) { found.directories!.push(path); await walk(path, depth + 1); }
           else if (entry.isFile() && (copy || media[extname(entry.name).toLowerCase()])) {
@@ -199,7 +205,7 @@ export class WorkspaceFiles {
   result(path: string): FileRef {
     return { id: randomUUID(), path, name: basename(path), mime: media[extname(path).toLowerCase()], createdAt: new Date().toISOString() };
   }
-  isResult(path: string) { return !!media[extname(path).toLowerCase()]; }
+  isResult(path: string) { return !kitInput(path) && !!media[extname(path).toLowerCase()]; }
   async read(ref: FileRef) {
     const { handle } = await this.openResult(ref);
     try { return await handle.readFile(); } finally { await handle.close(); }

@@ -1,0 +1,55 @@
+﻿
+> test
+> tsx --test server/test/*.test.ts
+
+✔ a work survives restart with transcript and continues the same conversation (35.6308ms)
+✔ interrupt, automatic titles, quota and account problems are normalized (12.1322ms)
+✔ concurrent sends never start duplicate turns and empty requests are rejected (7.4744ms)
+✔ restart marks unfinished work as stopped and quarantines corrupt JSON (24.9661ms)
+✔ failed persistence does not poison the next write (11.5373ms)
+✔ fragments publish incremental messages and persist at completion (12.4556ms)
+✔ engine restart releases busy work and clears resumed conversations (14.8172ms)
+✔ workspace and engine data cannot overlap (0.5978ms)
+✔ an ambiguous send failure stays saved, clears busy state and is never retried (10.7913ms)
+✔ app rejects unsafe sends even when the fake engine would accept them (2.6466ms)
+✔ persistence retries EPERM once or twice before succeeding (152.6857ms)
+✔ corrupt quarantine retries then copies, and still starts if copying also fails (401.3001ms)
+✔ final flush includes events delivered during engine shutdown (30.7493ms)
+✔ ready unelevated remains blocked (124.8255ms)
+✔ read and probe failures retry checks without administrative preparation (161.246ms)
+✔ saved MXC is probed again by each new engine; unavailable is not ready (73.5918ms)
+✔ automatic MXC setup caches the successful probe across reload (170.4011ms)
+✔ interrupted preparation remains retryable (485.7109ms)
+✔ setupStart timeout unlocks retry as a read, not another UAC (282.0015ms)
+✔ reload cancels pending RPC and start failure goes through restart/retry (1340.4911ms)
+✔ stdio handshake, activities, retry and server-initiated rejection (101.3396ms)
+✔ completion before start reply never leaves a stale interrupt target; early pause is delivered (160.6591ms)
+✔ child exit rejects the pending turn and restarts with a fresh handshake (217.6986ms)
+✔ child environment drops inherited Codex settings and API secrets and forces its home (75.1323ms)
+✔ missing Windows protection blocks before turn/start (72.2797ms)
+✔ restart backoff grows, exhausts explicitly and allows manual retry (2362.3634ms)
+✔ stable operation resets the restart budget (2126.1564ms)
+✔ started notification before start reply delivers only one pause (166.3647ms)
+✔ protection setup: success, sends stay blocked until readiness (409.934ms)
+✔ protection setup: failure, sends stay blocked until readiness (328.9106ms)
+✔ protection setup: restart, sends stay blocked until readiness (416.1856ms)
+✔ protection setup: mxc, sends stay blocked until readiness (202.0814ms)
+✔ app records only accepted user URLs before sending to a provider (27.3073ms)
+✔ allowed URLs are exact after URL normalization, external and read-only for tools (14.8929ms)
+✔ hostname DNS pinning, Windows-1252 headers/meta, byte signatures and transfer limits (582.1947ms)
+✔ external junctions cannot read, write, or feed Edge; deleted kit files stay deleted (113.2534ms)
+✔ unsupported visible constructions fail closed, including declarative shadow roots and counters (2891.2036ms)
+✔ accented experience, split operator, emoji, extra citations and whole-number normalization (1174.2068ms)
+✔ path boundaries, Windows names, links and kit preservation (109.932ms)
+✔ fetch with explicit test-only local grant, photos, append, SSRF and redirect rejection (104.1114ms)
+✔ real Edge: citation failures, exact PNG, PDF, overflow, broken fonts and blocked resources (8268.7209ms)
+✔ real MCP stdio client discovers and calls all three tools (3088.0009ms)
+✔ localhost websocket serves snapshots, connects an account and blocks foreign origins (55.902ms)
+ℹ tests 43
+ℹ suites 0
+ℹ pass 43
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 13237.1568

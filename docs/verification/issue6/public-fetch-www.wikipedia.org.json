@@ -1,0 +1,107 @@
+{
+  "date": "2026-11-13T19:08:09.572Z",
+  "node": "v24.15.0",
+  "url": "https://www.wikipedia.org/",
+  "resolved": [
+    {
+      "host": "www.wikipedia.org",
+      "addresses": [
+        {
+          "address": "195.200.68.224",
+          "family": 4
+        }
+      ]
+    },
+    {
+      "host": "www.wikipedia.org",
+      "addresses": [
+        {
+          "address": "195.200.68.224",
+          "family": 4
+        }
+      ]
+    },
+    {
+      "host": "upload.wikimedia.org",
+      "addresses": [
+        {
+          "address": "195.200.68.240",
+          "family": 4
+        }
+      ]
+    },
+    {
+      "host": "upload.wikimedia.org",
+      "addresses": [
+        {
+          "address": "195.200.68.240",
+          "family": 4
+        }
+      ]
+    },
+    {
+      "host": "upload.wikimedia.org",
+      "addresses": [
+        {
+          "address": "195.200.68.240",
+          "family": 4
+        }
+      ]
+    },
+    {
+      "host": "upload.wikimedia.org",
+      "addresses": [
+        {
+          "address": "195.200.68.240",
+          "family": 4
+        }
+      ]
+    },
+    {
+      "host": "upload.wikimedia.org",
+      "addresses": [
+        {
+          "address": "195.200.68.240",
+          "family": 4
+        }
+      ]
+    },
+    {
+      "host": "upload.wikimedia.org",
+      "addresses": [
+        {
+          "address": "195.200.68.240",
+          "family": 4
+        }
+      ]
+    }
+  ],
+  "result": {
+    "source": "oferta/fuente.md",
+    "lines": 126,
+    "photos": [
+      "oferta/fotos/operador-1.png",
+      "oferta/fotos/operador-2.png",
+      "oferta/fotos/operador-3.png",
+      "oferta/fotos/operador-4.png",
+      "oferta/fotos/operador-5.png",
+      "oferta/fotos/operador-6.png",
+      "oferta/fotos/operador-7.png"
+    ],
+    "warnings": [],
+    "preview": [
+      "Wikipedia",
+      "The Free Encyclopedia",
+      "Search Wikipedia",
+      "Afrikaans",
+      "Shqip",
+      "العربية",
+      "Asturianu",
+      "Azərbaycanca"
+    ]
+  },
+  "sourceBytes": 4603,
+  "sourceSha256": "491fb50c546ff9a8ce1760466965c0af147a4bfa5ee200f4f8622c636e9539b4",
+  "excerpt": "# Fuente\nURL: https://www.wikipedia.org/\nConsultada: 2026-11-13T19:08:07.632Z\n\nWikipedia\nThe Free Encyclopedia\nSearch Wikipedia\nAfrikaans\nShqip\nالعربية\nAsturianu\nAzərbaycanca\nБългарски\n閩南語 / Bân-lâm-gú\nবাংলা\nБеларуская\nCatalà\nČeština\nCymraeg\nDansk\nDeutsch\nEesti\nΕλληνικά\nEnglish\nEspañol\nEsperanto\nEuskara\nفارسی\nFrançais\nGalego\n한국어\nHausa\nՀայերեն\nहिन्दी\nHrvatski\nBahasa Indonesia\nItaliano\nעברית\nქართული\nLadin\nLatina\nLatviešu\nLietuvių\nMagyar\nМакедонски\nMalagasy\nमराठी\nمصرى\nBahasa Melayu\nBahaso Minangkabau\nမြန်မာဘာသာ\nNederlands\n日本語\nNorsk (bokmål)\nNorsk (nynorsk)\nНохчийн\nOʻzbekcha / Ўзбекча\nPolski\nPortuguês\nҚазақша / Qazaqşa / قازاقشا\nRomână\nSimple English\nSinugboanong Binisaya\nSlovenčina\nSlovenščina\nСрпски / Srpski\nSrpskohrvatski / Српскохрватски\nSuomi\nSvenska\nKiswahili\nதமிழ்\nТатарча / Tatarça\nతెలుగు\nภาษาไทย\nТоҷикӣ\nتۆرکجه\nTürkçe\nУкраїнська\nاردو\nTiếng Việt\nWinaray\n中文\nРусский\n粵語\nSearch\nDonate now\n|\nI already donated\nThe internet is changing.\nAn important update for readers in the United States.\nYou deserve an explanation, so please don't skip this 1-minute read. This year, Wikipedia has had fewer visitors and fewer new supporters, so your visit today means a lot. We hope that Wikipedia's given you at least $2.75 of knowledge recently. If everyone who found Wikipedia useful gave $2.75, we'd hit our goal in a few hours.\nAfter 25 years, Wikipedia is still the internet we were promised—created by people, not by machines. It's not perfect, but it's not here to push a point of view. It's run ",
+  "modelRequests": 0
+}

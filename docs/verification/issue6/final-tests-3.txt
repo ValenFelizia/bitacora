@@ -1,0 +1,61 @@
+﻿
+> test
+> tsx --test server/test/*.test.ts
+
+✔ a work survives restart with transcript and continues the same conversation (50.0456ms)
+✔ interrupt, automatic titles, quota and account problems are normalized (22.1546ms)
+✔ concurrent sends never start duplicate turns and empty requests are rejected (11.4776ms)
+✔ restart marks unfinished work as stopped and quarantines corrupt JSON (27.3437ms)
+✔ failed persistence does not poison the next write (14.0453ms)
+✔ fragments publish incremental messages and persist at completion (13.7144ms)
+✔ engine restart releases busy work and clears resumed conversations (28.0613ms)
+✔ workspace and engine data cannot overlap (0.6529ms)
+✔ an ambiguous send failure stays saved, clears busy state and is never retried (10.9028ms)
+✔ app rejects unsafe sends even when the fake engine would accept them (2.7506ms)
+✔ persistence retries EPERM once or twice before succeeding (160.525ms)
+✔ corrupt quarantine retries then copies, and still starts if copying also fails (394.171ms)
+✔ final flush includes events delivered during engine shutdown (46.2741ms)
+✔ ready unelevated remains blocked (131.5718ms)
+✔ read and probe failures retry checks without administrative preparation (185.1654ms)
+✔ saved MXC is probed again by each new engine; unavailable is not ready (87.6748ms)
+✔ automatic MXC setup caches the successful probe across reload (177.9549ms)
+✔ interrupted preparation remains retryable (490.0655ms)
+✔ setupStart timeout unlocks retry as a read, not another UAC (299.4276ms)
+✔ reload cancels pending RPC and start failure goes through restart/retry (1459.4085ms)
+✔ stdio handshake, activities, retry and server-initiated rejection (128.2637ms)
+✔ completion before start reply never leaves a stale interrupt target; early pause is delivered (200.8669ms)
+✔ child exit rejects the pending turn and restarts with a fresh handshake (694.3273ms)
+✔ child environment drops inherited Codex settings and API secrets and forces its home (93.2517ms)
+✔ missing Windows protection blocks before turn/start (94.6348ms)
+✔ restart backoff grows, exhausts explicitly and allows manual retry (3155.7436ms)
+✔ stable operation resets the restart budget (3102.8876ms)
+✔ started notification before start reply delivers only one pause (682.2029ms)
+✔ protection setup: success, sends stay blocked until readiness (429.3552ms)
+✔ protection setup: failure, sends stay blocked until readiness (381.3152ms)
+✔ protection setup: restart, sends stay blocked until readiness (357.3607ms)
+✔ protection setup: mxc, sends stay blocked until readiness (197.2554ms)
+✔ write race cannot replace parent before directory creation or temp open; failed temps are removed (44.2976ms)
+✔ production server declares its MCP runtime dependencies (4.2024ms)
+✔ URL extraction handles quotes, balanced parentheses and no scheme without broadening authorization (13.2368ms)
+✔ corrupt allowed list fails closed until the app quarantines it and records fresh user URLs (15.292ms)
+✔ real data/agency aliases are rejected before startup; marker outside agency survives complete deletion (125.9119ms)
+✔ reject uninspectable list/head/page content; count Unicode digits; operator pseudo and format characters (10166.684ms)
+✔ app records only accepted user URLs before sending to a provider (29.6791ms)
+✔ allowed URLs are exact after URL normalization, external and read-only for tools (15.0489ms)
+✔ hostname DNS pinning, Windows-1252 headers/meta, byte signatures and transfer limits (891.0336ms)
+✔ external junctions cannot read, write, or feed Edge; deleted kit files stay deleted (212.3ms)
+✔ unsupported visible constructions fail closed, including declarative shadow roots and counters (3294.5543ms)
+✔ accented experience, split operator, emoji, extra citations and whole-number normalization (1556.9118ms)
+✔ path boundaries, Windows names, links and kit preservation (170.128ms)
+✔ fetch with explicit test-only local grant, photos, append, SSRF and redirect rejection (131.4425ms)
+✔ real Edge: citation failures, exact PNG, PDF, overflow, broken fonts and blocked resources (10855.7687ms)
+✔ real MCP stdio client discovers and calls all three tools (3238.1415ms)
+✔ localhost websocket serves snapshots, connects an account and blocks foreign origins (64.3277ms)
+ℹ tests 49
+ℹ suites 0
+ℹ pass 49
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 16441.4492

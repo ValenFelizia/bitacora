@@ -1,0 +1,77 @@
+﻿
+> test
+> tsx --test server/test/*.test.ts
+
+✔ a work survives restart with transcript and continues the same conversation (38.047ms)
+✔ interrupt, automatic titles, quota and account problems are normalized (18.5169ms)
+✔ concurrent sends never start duplicate turns and empty requests are rejected (21.7097ms)
+✔ restart marks unfinished work as stopped and quarantines corrupt JSON (27.8104ms)
+✔ failed persistence does not poison the next write (14.3839ms)
+✔ fragments publish incremental messages and persist at completion (14.2926ms)
+✔ engine restart releases busy work and clears resumed conversations (26.222ms)
+✔ workspace and engine data cannot overlap (0.6268ms)
+✔ an ambiguous send failure stays saved, clears busy state and is never retried (15.3167ms)
+✔ app rejects unsafe sends even when the fake engine would accept them (3.2483ms)
+✔ persistence retries EPERM once or twice before succeeding (156.5605ms)
+✔ corrupt quarantine retries then copies, and still starts if copying also fails (396.3414ms)
+✔ final flush includes events delivered during engine shutdown (45.9825ms)
+✔ ready unelevated remains blocked (134.4125ms)
+✔ read and probe failures retry checks without administrative preparation (199.8974ms)
+✔ saved MXC is probed again by each new engine; unavailable is not ready (87.8314ms)
+✔ automatic MXC setup caches the successful probe across reload (208.3436ms)
+✔ interrupted preparation remains retryable (539.801ms)
+✔ setupStart timeout unlocks retry as a read, not another UAC (338.0483ms)
+✔ reload cancels pending RPC and start failure goes through restart/retry (1402.192ms)
+✔ stdio handshake, activities, retry and server-initiated rejection (339.3223ms)
+✔ completion before start reply never leaves a stale interrupt target; early pause is delivered (567.1184ms)
+✔ child exit rejects the pending turn and restarts with a fresh handshake (468.7454ms)
+✔ child environment drops inherited Codex settings and API secrets and forces its home (144.9492ms)
+✔ missing Windows protection blocks before turn/start (117.3891ms)
+✖ restart backoff grows, exhausts explicitly and allows manual retry (3148.6949ms)
+✔ stable operation resets the restart budget (3092.3005ms)
+✔ started notification before start reply delivers only one pause (204.473ms)
+✔ protection setup: success, sends stay blocked until readiness (884.7989ms)
+✔ protection setup: failure, sends stay blocked until readiness (364.9872ms)
+✔ protection setup: restart, sends stay blocked until readiness (467.7363ms)
+✔ protection setup: mxc, sends stay blocked until readiness (201.8859ms)
+✔ write race cannot replace parent before directory creation or temp open; failed temps are removed (37.6956ms)
+✔ production server declares its MCP runtime dependencies (3.7725ms)
+✔ URL extraction handles quotes, balanced parentheses and no scheme without broadening authorization (11.9546ms)
+✔ corrupt allowed list fails closed until the app quarantines it and records fresh user URLs (15.281ms)
+✔ real data/agency aliases are rejected before startup; marker outside agency survives complete deletion (122.1448ms)
+✔ reject uninspectable list/head/page content; count Unicode digits; operator pseudo and format characters (10985.0397ms)
+✔ app records only accepted user URLs before sending to a provider (32.7019ms)
+✔ allowed URLs are exact after URL normalization, external and read-only for tools (21.9981ms)
+✔ hostname DNS pinning, Windows-1252 headers/meta, byte signatures and transfer limits (959.9078ms)
+✔ external junctions cannot read, write, or feed Edge; deleted kit files stay deleted (482.9815ms)
+✔ unsupported visible constructions fail closed, including declarative shadow roots and counters (3261.4297ms)
+✔ accented experience, split operator, emoji, extra citations and whole-number normalization (1665.2533ms)
+✔ path boundaries, Windows names, links and kit preservation (151.3623ms)
+✔ fetch with explicit test-only local grant, photos, append, SSRF and redirect rejection (219.3636ms)
+✔ real Edge: citation failures, exact PNG, PDF, overflow, broken fonts and blocked resources (11415.3708ms)
+✔ real MCP stdio client discovers and calls all three tools (4655.7856ms)
+✔ localhost websocket serves snapshots, connects an account and blocks foreign origins (78.2127ms)
+ℹ tests 49
+ℹ suites 0
+ℹ pass 48
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 18763.1287
+
+✖ failing tests:
+
+test at server\test\codex.test.ts:275:1
+✖ restart backoff grows, exhausts explicitly and allows manual retry (3148.6949ms)
+  AssertionError [ERR_ASSERTION]: [568.0774999999994,322.98569999999927,442.0020000000004,721.7469000000001,806.6907999999994]
+      at TestContext.<anonymous> (C:\Users\Valen\.t3\worktrees\bitacora\issue-6-kit-d7c8656a2e97450d\server\test\codex.test.ts:286:12)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
