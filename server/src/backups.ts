@@ -1,4 +1,4 @@
-import { mkdir, realpath, lstat, open, readFile, rename, unlink, rmdir, utimes, chmod, readdir } from 'node:fs/promises';
+import { mkdir, realpath, lstat, open, readFile, rename, unlink, rmdir, readdir } from 'node:fs/promises';
 import { join, relative, isAbsolute, dirname, basename } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import type { Stats } from 'node:fs';
@@ -6,18 +6,25 @@ import { WorkspaceFiles, SCAN_LIMITS, excludedFromCopy, type FileScan, type Fing
 export type UndoTarget = { id: string; workId: string; title: string; request: string; messageId?: string; retry?: boolean };
 type Copy = UndoTarget & { before: FileScan; after?: FileScan };
 type Value = { kind: 'file'; entry: Fingerprint } | { kind: 'directory' } | { kind: 'missing' };
-type Action = { path: string; from: Value; to: Value; started?: boolean; done?: boolean };
-type Plan = { actions: Action[]; skipped: string[]; omitted: string[] };
-type State = { version: 2; root: string; cache?: FileScan; pending?: Copy; undo?: Copy; plan?: Plan; notices: string[] };
+type Action = { path: string; from: Value; to: Value; started?: boolean; done?: boolean; removed?: boolean };
+type Plan = { actions: Action[]; skipped: string[]; omitted: string[]; active?: boolean };
+type State = { version: 2; root: string; cache?: FileScan; pending?: Copy; undo?: Copy; plan?: Plan; notices: string[]; warned?: string[]; receipt?: string };
+type RestoreIO = { rename: typeof rename; afterStep(index: number): Promise<void>; beforeMutation?(path: string, kind: string): Promise<void>; afterMutation?(path: string, kind: string): Promise<void> };
 export const BACKUP_LIMITS = { ...SCAN_LIMITS, bytes: 2 * 1024 ** 3, fileBytes: 256 * 1024 ** 2 };
 const inside = (root: string, target: string) => { const r = relative(root, target); return !isAbsolute(r) && r !== '..' && !r.startsWith('..\\') && !r.startsWith('../'); };
 const readonly = (e: Fingerprint) => (e.mode! & 0o200) === 0;
 const equal = (a: Value, b: Value) => a.kind === b.kind && (a.kind !== 'file' || (b.kind === 'file' && a.entry.hash === b.entry.hash && readonly(a.entry) === readonly(b.entry)));
-const value = (m: FileScan, p: string): Value => Object.hasOwn(m.entries, p) ? { kind: 'file', entry: m.entries[p] } : m.directories?.includes(p) ? { kind: 'directory' } : { kind: 'missing' };
+export const pathKey = (p: string) => p.replaceAll('/', '\\').normalize('NFC').toUpperCase();
+const beneath = (p: string, parent: string) => !parent || pathKey(p) === pathKey(parent) || pathKey(p).startsWith(pathKey(parent) + '\\');
+const value = (m: FileScan, p: string): Value => {
+  const name = Object.hasOwn(m.entries, p) ? p : Object.keys(m.entries).find(n => pathKey(n) === pathKey(p));
+  return name ? { kind: 'file', entry: m.entries[name] } : m.directories?.some(n => pathKey(n) === pathKey(p)) ? { kind: 'directory' } : { kind: 'missing' };
+};
 const names = (paths: string[]) => [...new Set(paths.map(p => basename(p)))];
 export class RestoreProblem extends Error {
-  constructor(path: string, reason: string) { super(`No pude deshacer todavía: ${reason}${path ? ` (${basename(path)})` : ''}. Cerrá el archivo si está abierto y tocá Reintentar deshacer.`); }
+  constructor(path: string, reason: string) { super(`No pude deshacer todavía: ${reason}${path ? ` (${basename(path)})` : ''}. Podés volver a intentar Deshacer.`); }
 }
+class LaterChange extends Error {}
 export class Backups {
   private state!: State;
   private root!: string;
@@ -26,13 +33,17 @@ export class Backups {
   readonly files: WorkspaceFiles;
   lastScan?: FileScan;
   latestOmitted: string[] = [];
+  private disabled = false;
+  private requestReceipt?: string;
+  invalidated = false;
+  get receipt() { return this.requestReceipt; }
   constructor(private workspace: string, private data: string, private limits = BACKUP_LIMITS, files?: WorkspaceFiles,
-    private io = { rename, afterStep: async (_index: number) => {} }) { this.files = files || new WorkspaceFiles(workspace); }
-  get target(): UndoTarget | undefined { const c = this.state?.undo; return c && { id: c.id, workId: c.workId, title: c.title, request: c.request, messageId: c.messageId, retry: !!this.state.plan }; }
-  get restoring() { return !!this.state?.plan; }
+    private io: RestoreIO = { rename, afterStep: async (_index: number) => {} }) { this.files = files || new WorkspaceFiles(workspace); }
+  get target(): UndoTarget | undefined { const c = !this.disabled && this.state?.undo; return c ? { id: c.id, workId: c.workId, title: c.title, request: c.request, messageId: c.messageId, retry: this.restoring } : undefined; }
+  get restoring() { return !!this.state?.plan?.active; }
   hasNotice(workId: string) { return this.state.notices.includes(workId); }
   async acknowledge(workId: string) { this.state.notices = this.state.notices.filter(id => id !== workId); await this.save(); }
-  async initialize() {
+  async initialize(latestRequestReceipt?: string) {
     this.root = await realpath(this.workspace); await mkdir(this.data, { recursive: true });
     const data = await realpath(this.data); if (inside(this.root, data)) throw new Error('Backup data must be outside workspace');
     this.store = join(data, 'backups'); await mkdir(join(this.store, 'objects'), { recursive: true });
@@ -46,9 +57,24 @@ export class Backups {
       if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e;
       this.state = { version: 2, root: this.root, notices: [] };
     }
+    this.requestReceipt = this.state.receipt;
+    if (this.state.undo || this.state.pending || this.state.plan) {
+      let marker: string | undefined;
+      try { marker = JSON.parse(await readFile(join(this.data, 'backup-invalidation.json'), 'utf8')).receipt; } catch { /* Missing/unreadable proof is not authorization. */ }
+      if (!latestRequestReceipt || marker !== latestRequestReceipt || this.state.receipt !== latestRequestReceipt) {
+        this.invalidated = true;
+        delete this.state.undo; delete this.state.pending; delete this.state.plan;
+        await this.save().catch(() => {});
+      }
+    }
     // Startup cannot attribute intervening manual edits to an unfinished request.
     // Keep pending objects until a subsequent successful request supersedes them.
     if (this.state.pending) { delete this.state.undo; delete this.state.pending; await this.save(); }
+    if (this.state.plan && !this.state.plan.active) {
+      await this.recoverProgress(this.state.plan);
+      if (!this.state.plan.active) delete this.state.plan;
+      await this.save();
+    }
   }
   private validPath(path: string) {
     if (typeof path !== 'string' || !path || isAbsolute(path) || path.split(/[\\/]/).some(p => !p || p === '..' || excludedFromCopy(p) || /[:\x00-\x1f]|[. ]$/.test(p) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(p))) throw new Error('Unsafe backup path');
@@ -59,6 +85,12 @@ export class Backups {
       if (!m) continue;
       if (!m.entries || !Array.isArray(m.directories) || !m.omitted || !Array.isArray(m.warnings)) throw new Error('Invalid manifest');
       for (const p of [...Object.keys(m.entries), ...m.directories, ...Object.keys(m.omitted)]) this.validPath(p);
+      for (const p of m.incomplete || []) if (p) this.validPath(p);
+      const seen = new Set<string>();
+      for (const p of [...Object.keys(m.entries), ...m.directories]) {
+        if (seen.has(pathKey(p))) throw new RestoreProblem(p, 'hay nombres que sólo difieren en mayúsculas o en cómo se escribe un acento');
+        seen.add(pathKey(p));
+      }
       for (const e of Object.values(m.entries)) if (!/^[a-f0-9]{64}$/.test(e.hash) || ![e.size, e.mtimeMs, e.ctimeMs, e.mode].every(n => typeof n === 'number' && Number.isFinite(n) && n >= 0)) throw new Error('Invalid file fingerprint');
     }
     if (this.state.undo && !this.state.undo.after) throw new Error('Missing after manifest');
@@ -69,6 +101,7 @@ export class Backups {
         this.validPath(a.path);
         if (!equal(a.from, value(this.state.undo.after!, a.path)) || !equal(a.to, value(this.state.undo.before, a.path)) || equal(a.from, a.to)) throw new Error('Plan does not match manifests');
       }
+      if (new Set(this.state.plan.actions.map(a => pathKey(a.path))).size !== this.state.plan.actions.length) throw new Error('Ambiguous plan');
       for (const p of [...this.state.plan.skipped, ...this.state.plan.omitted]) this.validPath(p);
     }
   }
@@ -79,6 +112,14 @@ export class Backups {
       try { await h.writeFile(content, 'utf8'); await h.sync(); } finally { await h.close(); }
       await rename(join(this.store, 'state.tmp'), join(this.store, 'state.json'));
     }); await this.writes;
+  }
+  private async writeInvalidation(receipt: string) {
+    // Separate from state.json, which may itself be locked. Written BEFORE an
+    // unbacked request can be released. The host log supplies independent proof.
+    const file = join(this.data, 'backup-invalidation.json');
+    const h = await open(file + '.tmp', 'w');
+    try { await h.writeFile(JSON.stringify({ receipt }), 'utf8'); await h.sync(); } finally { await h.close(); }
+    await rename(file + '.tmp', file);
   }
   // Full component checks at preflight AND immediately before each mutation.
   private async path(path: string, missing = false) {
@@ -102,7 +143,7 @@ export class Backups {
       try {
       for await (const chunk of input.createReadStream({ autoClose: false })) {
         bytes += chunk.length; if (bytes > this.limits.fileBytes || bytes > stat.size) throw new Error('Growing file limit');
-        digest.update(chunk); await output.write(chunk);
+        digest.update(chunk); await output.writeFile(chunk);
       }
       const after = await input.stat();
       if (after.size !== stat.size || after.mtimeMs !== stat.mtimeMs || after.ctimeMs !== stat.ctimeMs) throw new Error('File changed during copy');
@@ -116,13 +157,22 @@ export class Backups {
     this.lastScan = await this.files.scan(previous, { limits: this.limits, capture: (p, s) => this.capture(p, s) });
     return this.lastScan;
   }
-  async before(target: Omit<UndoTarget, 'id'>) {
+  async before(target: Omit<UndoTarget, 'id'>, receipt: string = randomUUID()) {
     if (this.restoring) throw new RestoreProblem('', 'hay una restauración pendiente');
+    this.lastScan = undefined;
+    this.requestReceipt = receipt; this.state.receipt = receipt;
+    try { await this.writeInvalidation(receipt); }
+    catch { this.disabled = true; }
+    if (this.disabled) {
+      delete this.state.undo; delete this.state.pending; delete this.state.cache;
+      await this.save().catch(() => {});
+      this.lastScan = await this.files.scan().catch(() => undefined);
+      return false;
+    }
     try {
       const before = await this.scan();
-      if (before.warnings.some(w => !w.endsWith('link skipped'))) throw new Error('Incomplete copy');
       this.state.pending = { ...target, id: randomUUID(), before }; this.state.cache = before;
-      await this.save(); return true;
+      this.validate(); await this.save(); return true;
     } catch {
       delete this.state.pending; delete this.state.undo; delete this.state.cache;
       await this.save().catch(() => {}); return false;
@@ -131,22 +181,51 @@ export class Backups {
   async finish() {
     const pending = this.state.pending;
     this.latestOmitted = [];
+    if (this.disabled) { this.lastScan = await this.files.scan(); return false; }
     try {
       const after = await this.scan(pending?.before);
-      if (after.warnings.some(w => !w.endsWith('link skipped'))) throw new Error('Incomplete copy');
       if (pending) {
-        this.latestOmitted = names(this.omittedChanges(pending.before, after));
-        if (this.difference(pending.before, after).length || this.latestOmitted.length) this.state.undo = { ...pending, after };
+        const exclusions = [...new Set([...Object.keys(pending.before.omitted || {}), ...Object.keys(after.omitted || {}), ...(pending.before.incomplete || []).map(p => p || 'parte de la carpeta'), ...(after.incomplete || []).map(p => p || 'parte de la carpeta')])];
+        this.latestOmitted = names(exclusions.filter(p => !this.state.warned?.some(old => pathKey(old) === pathKey(p))));
+        this.state.warned = exclusions;
+        if (this.difference(pending.before, after).length || this.omittedChanges(pending.before, after).length || this.renamed(pending.before, after)) this.state.undo = { ...pending, after };
       }
-      this.state.cache = after; delete this.state.pending; await this.save(); await this.clean(); return true;
+      this.state.cache = after; delete this.state.pending; this.validate(); await this.save(); await this.clean(); return true;
     } catch { delete this.state.undo; delete this.state.cache; delete this.state.pending; await this.save(); return false; }
   }
   private omittedChanges(before: FileScan, after: FileScan) {
-    return [...new Set([...Object.keys(before.omitted || {}), ...Object.keys(after.omitted || {})])].filter(p => before.omitted?.[p] !== after.omitted?.[p] || before.entries[p]?.hash !== after.entries[p]?.hash);
+    const paths = new Map([...Object.keys(before.omitted || {}), ...Object.keys(after.omitted || {})].map(p => [pathKey(p), p]));
+    const stamp = (m: FileScan, p: string) => {
+      const omitted = Object.keys(m.omitted || {}).find(n => pathKey(n) === pathKey(p));
+      if (omitted) return m.omitted![omitted];
+      const file = value(m, p);
+      return file.kind === 'file' ? `${file.entry.size}:${file.entry.mtimeMs}:${file.entry.ctimeMs}` : file.kind;
+    };
+    return [...paths.values()].filter(p => stamp(before, p) !== stamp(after, p));
+  }
+  private renamed(before: FileScan, after: FileScan) {
+    const a = new Map([...Object.keys(before.entries), ...(before.directories || [])].map(p => [pathKey(p), p]));
+    return [...Object.keys(after.entries), ...(after.directories || [])].some(p => a.has(pathKey(p)) && a.get(pathKey(p)) !== p);
+  }
+  private async actualName(path: string) {
+    await this.path(path, true);
+    let folder = this.root; const parts: string[] = [];
+    for (const expected of path.split(/[\\/]/)) {
+      let entries: string[];
+      try { entries = await readdir(folder); }
+      catch (e) { if (['ENOENT', 'ENOTDIR'].includes((e as NodeJS.ErrnoException).code || '')) return undefined; throw e; }
+      const matches = entries.filter(name => pathKey(name) === pathKey(expected));
+      if (matches.length > 1) throw new RestoreProblem(path, 'hay nombres equivalentes que no puedo distinguir con seguridad');
+      if (!matches.length) return undefined;
+      parts.push(matches[0]); folder = join(folder, matches[0]);
+    }
+    return join(...parts);
   }
   private difference(before: FileScan, after: FileScan) {
-    return [...new Set([...Object.keys(before.entries), ...Object.keys(after.entries), ...(before.directories || []), ...(after.directories || [])])]
-      .filter(p => !before.omitted?.[p] && !after.omitted?.[p] && !equal(value(before, p), value(after, p)));
+    const all = [...Object.keys(before.entries), ...Object.keys(after.entries), ...(before.directories || []), ...(after.directories || [])];
+    const unique = new Map(all.map(p => [pathKey(p), p]));
+    const opaque = (m: FileScan, p: string) => Object.keys(m.omitted || {}).some(folder => beneath(p, folder)) || (value(m, p).kind === 'missing' && m.incomplete?.some(folder => beneath(p, folder)));
+    return [...unique.values()].filter(p => !opaque(before, p) && !opaque(after, p) && !equal(value(before, p), value(after, p)));
   }
   private async current(path: string): Promise<Value> {
     const full = await this.path(path, true);
@@ -161,6 +240,82 @@ export class Backups {
     }
   }
   private stage(a: Action, index: number) { return `.bitacora-undo-${this.state.undo!.id}-${index}.tmp`; }
+  private park(index: number) { return join(this.root, `.bitacora-keep-${this.state.undo!.id}-${index}.tmp`); }
+  private async checkAbsolute(path: string) {
+    if (!inside(this.root, path)) throw new RestoreProblem('', 'la carpeta cambió de lugar');
+    const rel = relative(this.root, path), parent = dirname(rel);
+    if (parent !== '.') await this.path(parent);
+    else if (await realpath(this.workspace) !== this.root) throw new Error('Workspace moved');
+    const folder = await realpath(dirname(path));
+    if (!inside(this.root, folder)) throw new RestoreProblem(rel, 'hay un enlace en el camino');
+    try { if ((await lstat(path)).isSymbolicLink()) throw new RestoreProblem(rel, 'hay un enlace en el archivo'); }
+    catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
+    return folder;
+  }
+  private async checkedRename(from: string, to: string, path: string, expected?: Value) {
+    await this.checkAbsolute(from); await this.checkAbsolute(to);
+    await this.io.beforeMutation?.(path, 'rename');
+    const sourceParent = await this.checkAbsolute(from), targetParent = await this.checkAbsolute(to);
+    if (expected && (!equal(await this.current(path), expected) || await this.actualName(path) !== path.replaceAll('/', '\\'))) throw new LaterChange();
+    try { await lstat(to); throw new RestoreProblem(path, 'apareció otro archivo en el destino'); }
+    catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
+    await this.io.rename(from, to);
+    try {
+      await this.io.afterMutation?.(path, 'rename');
+      if (pathKey(await this.checkAbsolute(from)) !== pathKey(sourceParent) || pathKey(await this.checkAbsolute(to)) !== pathKey(targetParent)) throw new Error('Parent changed');
+    } catch (e) {
+      // A moved item still exists at the unique target name. Restore that move,
+      // without overwriting any new file, using the parents actually on disk.
+      const actualFrom = join(await realpath(dirname(from)), basename(from));
+      const actualTo = join(await realpath(dirname(to)), basename(to));
+      try { await lstat(actualFrom); } catch (missing) {
+        if ((missing as NodeJS.ErrnoException).code === 'ENOENT') await rename(actualTo, actualFrom);
+      }
+      if (!inside(this.root, actualFrom) && basename(from).startsWith(`.bitacora-undo-${this.state.undo!.id}-`)) {
+        const wanted = value(this.state.undo!.before, path);
+        if (wanted.kind === 'file' && !(await lstat(actualFrom)).isSymbolicLink() && await this.digest(actualFrom) === wanted.entry.hash) await unlink(actualFrom);
+      }
+      throw e;
+    }
+  }
+  private async checkedDirectory(path: string, create: boolean) {
+    const target = await this.path(path, true); await this.io.beforeMutation?.(path, create ? 'mkdir' : 'remove');
+    const folder = await this.checkAbsolute(target);
+    if (!create && await this.actualName(path) !== path.replaceAll('/', '\\')) throw new LaterChange();
+    if (create) await mkdir(target); else await rmdir(target);
+    try {
+      await this.io.afterMutation?.(path, create ? 'mkdir' : 'remove');
+      if (pathKey(await this.checkAbsolute(target)) !== pathKey(folder)) throw new Error('Parent changed');
+    } catch (e) {
+      const actual = join(await realpath(dirname(target)), basename(target));
+      if (create) await rmdir(actual); else await mkdir(actual);
+      throw e;
+    }
+  }
+  private async restorePark(a: Action, index: number, original: Value) {
+    if (original.kind !== 'file') return false;
+    const park = this.park(index); await this.checkAbsolute(park);
+    if (await this.digest(park) !== original.entry.hash) return false;
+    const parent = await realpath(dirname(join(this.root, a.path)));
+    const target = join(parent, basename(a.path));
+    try { await lstat(target); return false; }
+    catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
+    // Corrective rollback of the original we moved, even if an external process
+    // redirected its parent. Never overwrite a newly appeared destination.
+    if (readonly(original.entry)) { const h = await open(park, 'r'); try { await h.chmod(0o444); } finally { await h.close(); } }
+    await rename(park, target); return true;
+  }
+  private async attributes(path: string, mode: number, time?: number) {
+    const full = await this.path(path); const h = await open(full, time === undefined ? 'r' : 'r+');
+    const old = await h.stat();
+    try {
+      if (old.nlink > 1) throw new RestoreProblem(path, 'el archivo está compartido con otro lugar');
+      await this.io.beforeMutation?.(path, 'attribute'); await this.checkAbsolute(full);
+      if (time !== undefined) await h.utimes(new Date(), new Date(time)); await h.chmod(mode);
+      try { await this.io.afterMutation?.(path, 'attribute'); await this.checkAbsolute(full); }
+      catch (e) { await h.chmod(old.mode); if (time !== undefined) await h.utimes(old.atime, old.mtime); throw e; }
+    } finally { await h.close(); }
+  }
   private async digest(path: string) {
     const h = await open(path, 'r'); const digest = createHash('sha256');
     try { for await (const chunk of h.createReadStream({ autoClose: false })) digest.update(chunk); return digest.digest('hex'); }
@@ -168,6 +323,7 @@ export class Backups {
   }
   private async preflight(plan: Plan) {
     this.validate();
+    if (this.renamed(this.state.undo!.before, this.state.undo!.after!)) throw new RestoreProblem('', 'el pedido cambió un nombre sólo por mayúsculas o por la forma de un acento; no toqué nada');
     for (const a of plan.actions) {
       await this.path(a.path, true);
       if (a.to.kind === 'file') {
@@ -176,12 +332,15 @@ export class Backups {
       }
     }
     for (const a of plan.actions.filter(a => !a.done && !plan.skipped.includes(a.path))) {
+      const spelling = await this.actualName(a.path);
+      if (spelling && spelling !== a.path.replaceAll('/', '\\')) { plan.skipped.push(a.path); continue; }
       const current = await this.current(a.path);
+      if (!spelling && current.kind !== 'missing') throw new RestoreProblem(a.path, 'no pude confirmar el nombre real del archivo');
       if (a.started && equal(current, a.to)) { a.done = true; continue; }
       const finishing = a.started && current.kind === 'file' && a.to.kind === 'file' && current.entry.hash === a.to.entry.hash;
-      if (!equal(current, a.from) && !finishing && !(a.started && current.kind === 'missing')) { plan.skipped.push(a.path); continue; }
+      if (!equal(current, a.from) && !finishing && !(await this.canResumeMissing(a, plan.actions.indexOf(a), current))) { plan.skipped.push(a.path); continue; }
       if (current.kind === 'file') {
-        try { const h = await open(await this.path(a.path), 'r+'); await h.close(); }
+        try { const h = await open(await this.path(a.path), readonly(current.entry) ? 'r' : 'r+'); await h.close(); }
         catch { throw new RestoreProblem(a.path, 'el archivo está abierto o no se puede reemplazar'); }
       }
     }
@@ -189,13 +348,48 @@ export class Backups {
       if ((await this.current(a.path)).kind !== 'directory') continue;
       for (const child of await readdir(await this.path(a.path))) {
         const path = join(a.path, child);
-        if (!plan.actions.some(other => other.path === path && other.to.kind === 'missing' && !plan.skipped.includes(path))) {
+        if (!plan.actions.some(other => pathKey(other.path) === pathKey(path) && other.to.kind === 'missing')) {
           if (a.to.kind === 'file') throw new RestoreProblem(a.path, 'hay una carpeta con archivos que no debo tocar');
           plan.skipped.push(a.path); break;
         }
       }
     }
-    for (const a of plan.actions) if (a.to.kind === 'file' && a.from.kind === 'directory' && plan.skipped.some(p => p.startsWith(a.path + '\\') || p.startsWith(a.path + '/'))) throw new RestoreProblem(a.path, 'hay cambios posteriores dentro de esa carpeta');
+    for (const a of plan.actions) if (a.to.kind === 'file' && a.from.kind === 'directory' && plan.skipped.some(p => beneath(p, a.path) && pathKey(p) !== pathKey(a.path))) throw new RestoreProblem(a.path, 'hay cambios posteriores dentro de esa carpeta');
+    for (const a of plan.actions) if (a.to.kind === 'missing' && a.from.kind === 'directory' && plan.skipped.some(p => beneath(p, a.path))) plan.skipped.push(a.path);
+    for (const a of plan.actions.filter(a => !a.done && !plan.skipped.includes(a.path) && a.to.kind !== 'missing')) {
+      let parent = dirname(a.path);
+      while (parent !== '.') {
+        const current = await this.current(parent);
+        if (current.kind !== 'directory' && !plan.actions.some(p => pathKey(p.path) === pathKey(parent) && p.to.kind === 'directory' && !plan.skipped.includes(p.path))) throw new RestoreProblem(a.path, 'la carpeta donde iba el archivo ya no está o fue reemplazada');
+        parent = dirname(parent);
+      }
+    }
+  }
+  private async canResumeMissing(a: Action, index: number, current: Value) {
+    if (current.kind !== 'missing' || !a.removed) return false;
+    if (a.to.kind === 'directory') return true;
+    if (a.to.kind !== 'file') return false;
+    try {
+      const parent = dirname(a.path), folder = parent === '.' ? this.root : await this.path(parent);
+      const temp = join(folder, this.stage(a, index)); await this.checkAbsolute(temp);
+      return (await lstat(temp)).isFile() && await this.digest(temp) === a.to.entry.hash;
+    }
+    catch { return false; }
+  }
+  private async recoverProgress(plan: Plan) {
+    for (const [i, a] of plan.actions.entries()) if (a.started) {
+      let parked = false;
+      if (a.from.kind === 'file') {
+        try { const p = this.park(i); await this.checkAbsolute(p); parked = await this.digest(p) === a.from.entry.hash; } catch { /* No proof of a completed park. */ }
+      }
+      const current = await this.current(a.path).catch(() => undefined);
+      if (parked || (current && equal(current, a.to) && !equal(current, a.from))) plan.active = true;
+      if (current?.kind === 'missing' && parked) a.removed = true;
+      if (current?.kind === 'missing' && a.from.kind === 'directory' && a.to.kind === 'file') {
+        const candidate = { ...a, removed: true };
+        if (await this.canResumeMissing(candidate, i, current)) { a.removed = true; plan.active = true; }
+      }
+    }
   }
   private async stageFile(a: Action, index: number) {
     if (a.to.kind !== 'file') return;
@@ -208,78 +402,111 @@ export class Backups {
       await unlink(temporary); // Incomplete staging after disk-full or process exit.
     }
     catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
+    await this.checkAbsolute(temporary); await this.io.beforeMutation?.(a.path, 'write');
+    const initialFolder = await this.checkAbsolute(temporary);
     const output = await open(temporary, 'wx');
+    const identity = await output.stat();
     try {
+      await this.io.afterMutation?.(a.path, 'open'); await this.checkAbsolute(temporary);
       const input = await open(join(this.store, 'objects', a.to.entry.hash), 'r');
       try {
         const hash = createHash('sha256');
-        for await (const chunk of input.createReadStream({ autoClose: false })) { hash.update(chunk); await output.write(chunk); }
+        for await (const chunk of input.createReadStream({ autoClose: false })) {
+          await this.checkAbsolute(temporary); hash.update(chunk); await output.writeFile(chunk);
+          await this.checkAbsolute(temporary);
+        }
         if (hash.digest('hex') !== a.to.entry.hash) throw new RestoreProblem(a.path, 'la copia está incompleta');
         await output.sync();
+        await output.close();
+        await this.io.afterMutation?.(a.path, 'write');
+        if (pathKey(await this.checkAbsolute(temporary)) !== pathKey(initialFolder)) throw new Error('Parent changed');
       }
       finally { await input.close(); }
-    } catch (e) { await output.close(); await unlink(temporary).catch(() => {}); throw e; }
+    } catch (e) {
+      await output.close();
+      const actual = join(await realpath(dirname(temporary)), basename(temporary));
+      const s = await lstat(actual).catch(() => undefined);
+      if (s && !s.isSymbolicLink() && s.ino === identity.ino && s.dev === identity.dev) await unlink(actual);
+      throw e;
+    }
     finally { await output.close(); }
   }
   async undo(id: string) {
+    if (this.disabled) throw new RestoreProblem('', 'no pude confirmar la copia del último pedido');
     this.validate(); const copy = this.state.undo;
     if (!copy || copy.id !== id) throw new RestoreProblem('', 'ese pedido ya no se puede deshacer');
-    if (!this.state.plan) {
-      this.state.plan = { actions: this.difference(copy.before, copy.after!).map(path => ({ path, from: value(copy.after!, path), to: value(copy.before, path) })), skipped: [], omitted: this.omittedChanges(copy.before, copy.after!) };
-      await this.save();
+    const plan: Plan = this.state.plan || { actions: this.difference(copy.before, copy.after!).map(path => ({ path, from: value(copy.after!, path), to: value(copy.before, path) })), skipped: [], omitted: [...new Set([...this.omittedChanges(copy.before, copy.after!), ...Object.keys(copy.before.omitted || {}), ...Object.keys(copy.after!.omitted || {}), ...(copy.before.incomplete || []).map(p => p || 'parte de la carpeta'), ...(copy.after!.incomplete || []).map(p => p || 'parte de la carpeta')])], active: false };
+    try {
+      await this.preflight(plan);
+      for (const [i, a] of plan.actions.entries()) if (!a.done && !plan.skipped.includes(a.path) && a.to.kind === 'file') {
+        try { if ((await lstat(dirname(join(this.root, a.path)))).isDirectory()) await this.stageFile(a, i); }
+        catch (e) { if (!['ENOENT', 'ENOTDIR'].includes((e as NodeJS.ErrnoException).code || '')) throw e; }
+      }
+      return await this.applyPlan(plan);
+    } catch (e) {
+      if (!plan.active && this.state.plan) { await this.recoverProgress(plan); if (plan.active) await this.save(); }
+      if (!plan.active) { await this.cleanupStages(plan); delete this.state.plan; await this.save(); }
+      throw e;
     }
-    const plan = this.state.plan; await this.preflight(plan); await this.save();
-    // Prepare data while all original files are still intact. Missing parents are
-    // created by journalled directory operations before staging their children.
-    for (const [i, a] of plan.actions.entries()) if (!a.done && !plan.skipped.includes(a.path) && a.to.kind === 'file') {
-      try { if ((await lstat(dirname(join(this.root, a.path)))).isDirectory()) await this.stageFile(a, i); }
-      catch (e) { if (!['ENOENT', 'ENOTDIR'].includes((e as NodeJS.ErrnoException).code || '')) throw new RestoreProblem(a.path, 'no pude preparar el archivo'); }
-    }
+  }
+  private async applyPlan(plan: Plan) {
+    const copy = this.state.undo!;
     const ordered = plan.actions.map((a, i) => ({ a, i })).sort((x, y) => {
       const priority = (a: Action) => a.to.kind === 'missing' ? 0 : a.to.kind === 'directory' ? 1 : 2;
       return priority(x.a) - priority(y.a) || (priority(x.a) === 0 ? y.a.path.length - x.a.path.length : x.a.path.length - y.a.path.length);
     });
     for (const { a, i } of ordered) {
       if (a.done || plan.skipped.includes(a.path)) continue;
+      const actual = await this.actualName(a.path);
+      if (actual && actual !== a.path.replaceAll('/', '\\')) { plan.skipped.push(a.path); continue; }
       const current = await this.current(a.path);
+      if (!actual && current.kind !== 'missing') throw new RestoreProblem(a.path, 'no pude confirmar el nombre real del archivo');
       if (a.started && equal(current, a.to)) { a.done = true; await this.save(); continue; }
       const finishing = a.started && current.kind === 'file' && a.to.kind === 'file' && current.entry.hash === a.to.entry.hash;
-      if (!equal(current, a.from) && !finishing && !(a.started && current.kind === 'missing')) { plan.skipped.push(a.path); await this.save(); continue; }
+      if (!equal(current, a.from) && !finishing && !(await this.canResumeMissing(a, i, current))) { plan.skipped.push(a.path); await this.save(); continue; }
       const destination = await this.path(a.path, true);
-      a.started = true; await this.save();
+      a.started = true; this.state.plan = plan; await this.save();
       if (!equal(await this.current(a.path), current)) { plan.skipped.push(a.path); await this.save(); continue; }
       try {
-        if (a.to.kind === 'missing') { if (current.kind === 'directory') await rmdir(destination); else if (current.kind === 'file') await unlink(destination); }
-        else if (a.to.kind === 'directory') { if (current.kind === 'file') await unlink(destination); await mkdir(destination, { recursive: true }); }
+        if (current.kind === 'file' && !finishing) {
+          if (readonly(current.entry)) await this.attributes(a.path, 0o666);
+          const expected: Value = readonly(current.entry) ? { kind: 'file', entry: { ...current.entry, mode: current.entry.mode! | 0o200 } } : current;
+          try { await this.checkedRename(await this.path(a.path), this.park(i), a.path, expected); }
+          catch (e) { if (readonly(current.entry)) await this.attributes(a.path, 0o444); throw e; }
+          a.removed = true; plan.active = true; await this.save();
+        }
+        if (a.to.kind === 'missing') { if (current.kind === 'directory') await this.checkedDirectory(a.path, false); }
+        else if (a.to.kind === 'directory') await this.checkedDirectory(a.path, true);
         else {
           if (!finishing) {
-            if (current.kind === 'directory') await rmdir(destination);
+            if (current.kind === 'directory') { await this.checkedDirectory(a.path, false); a.removed = true; plan.active = true; await this.save(); }
             await this.stageFile(a, i);
-            const expected: Value = current.kind === 'directory' ? { kind: 'missing' } : current;
+            const expected: Value = a.removed ? { kind: 'missing' } : current;
             if (!equal(await this.current(a.path), expected)) { plan.skipped.push(a.path); await this.save(); continue; }
             const temporary = join(dirname(await this.path(a.path, true)), this.stage(a, i));
             if ((await lstat(temporary)).isSymbolicLink()) throw new Error('Link in temporary');
-            await this.io.rename(temporary, await this.path(a.path, true));
+            await this.checkedRename(temporary, await this.path(a.path, true), a.path);
           }
-          await chmod(await this.path(a.path), readonly(a.to.entry) ? 0o444 : 0o666);
-          await utimes(await this.path(a.path), new Date(), new Date(a.to.entry.mtimeMs));
+          await this.attributes(a.path, readonly(a.to.entry) ? 0o444 : 0o666, a.to.entry.mtimeMs);
         }
-      } catch { throw new RestoreProblem(a.path, 'el archivo está abierto o no pude guardar el cambio'); }
-      await this.io.afterStep(i); a.done = true; await this.save();
+      } catch (error) {
+        if (error instanceof LaterChange) { plan.skipped.push(a.path); await this.save(); continue; }
+        if (current.kind === 'file' && a.removed) {
+          try {
+            if (await this.restorePark(a, i, current)) {
+              a.removed = false;
+              await this.save();
+            }
+          } catch { /* Keep the journal and the preserved original for retry/discard. */ }
+        }
+        throw Object.assign(new RestoreProblem(a.path, 'el archivo está abierto o no pude guardar el cambio'), { cause: error });
+      }
+      plan.active = true; await this.save(); await this.io.afterStep(i); a.done = true; await this.save();
     }
     const restored = plan.actions.filter(a => a.done && !plan.skipped.includes(a.path)).map(a => a.path);
     const result = { restored, skipped: names(plan.skipped), omitted: names(plan.omitted), target: this.target! };
-    // Remove only app-generated, verified staging files; never traverse a link.
-    for (const [i, a] of plan.actions.entries()) {
-      if (a.to.kind !== 'file') continue;
-      const parent = dirname(a.path);
-      try {
-        const folder = parent === '.' ? this.root : await this.path(parent);
-        const temp = join(folder, this.stage(a, i));
-        const s = await lstat(temp);
-        if (s.isFile() && !s.isSymbolicLink() && await this.digest(temp) === a.to.entry.hash) await unlink(temp);
-      } catch (e) { if (!['ENOENT', 'ENOTDIR'].includes((e as NodeJS.ErrnoException).code || '')) throw e; }
-    }
+    await this.cleanupStages(plan);
+    await this.cleanupParks(plan);
     const active = this.state;
     this.state = { ...active, undo: undefined, plan: undefined, cache: undefined,
       notices: restored.length && !active.notices.includes(copy.workId) ? [...active.notices, copy.workId] : active.notices };
@@ -287,6 +514,45 @@ export class Backups {
     catch (e) { this.state = active; throw e; }
     // Failure to collect unreferenced objects must not turn a completed restore
     // into a failed operation. The next successful request also runs collection.
+    await this.clean().catch(() => {}); return result;
+  }
+  private async cleanupStages(plan: Plan) {
+    for (const [i, a] of plan.actions.entries()) if (a.to.kind === 'file') {
+      try {
+        const parent = dirname(a.path), folder = parent === '.' ? this.root : await this.path(parent);
+        const temp = join(folder, this.stage(a, i)); await this.checkAbsolute(temp);
+        if (await this.digest(temp) === a.to.entry.hash) { await this.checkAbsolute(temp); await unlink(temp); }
+      } catch { /* Never follow a redirected parent for best-effort cleanup. */ }
+    }
+  }
+  private async cleanupParks(plan: Plan) {
+    for (const [i, a] of plan.actions.entries()) if (a.from.kind === 'file') {
+      const path = this.park(i);
+      try {
+        await this.checkAbsolute(path);
+        if (await this.digest(path) === a.from.entry.hash) { await this.checkAbsolute(path); await unlink(path); }
+      } catch { /* Cleanup is never a reason to trap the user in a pending restore. */ }
+    }
+  }
+  async discard(id: string) {
+    const copy = this.state.undo, plan = this.state.plan;
+    if (!copy || copy.id !== id || !plan?.active) throw new RestoreProblem('', 'no hay una restauración pendiente');
+    const restored: string[] = [], remaining: string[] = [];
+    for (const a of plan.actions) {
+      try {
+        if (!plan.skipped.includes(a.path) && equal(await this.current(a.path), a.to)) restored.push(a.path);
+        else remaining.push(a.path);
+      } catch { remaining.push(a.path); }
+    }
+    const result = { restored, remaining: names(remaining), skipped: names(plan.skipped), omitted: names(plan.omitted), target: this.target! };
+    const previous = this.state;
+    this.state = { ...previous, plan: undefined, undo: undefined, cache: undefined,
+      notices: restored.length && !previous.notices.includes(copy.workId) ? [...previous.notices, copy.workId] : previous.notices };
+    try { await this.save(); } catch (e) { this.state = previous; throw e; }
+    // Do not follow blocked/redirected parents merely to collect temporaries.
+    // The durable choice to continue is already saved, regardless of cleanup.
+    this.state.undo = copy;
+    try { await this.cleanupStages(plan); await this.cleanupParks(plan); } finally { delete this.state.undo; }
     await this.clean().catch(() => {}); return result;
   }
   async clean() {

@@ -89,7 +89,7 @@ export async function serve(
           const command = JSON.parse(String(data)) as ClientCommand;
           if (
             !command ||
-            !["undo", "connect", "retry", "prepareProtection", "send", "interrupt"].includes(command.type)
+            !["discardUndo", "undo", "connect", "retry", "prepareProtection", "send", "interrupt"].includes(command.type)
           )
             throw new Error("Invalid message");
           await app.command(command, (message) => send(ws, message));
@@ -116,6 +116,8 @@ export async function serve(
     throw error;
   }
   return {
+    // Local lifecycle handle; never serialized or exposed over HTTP/WebSocket.
+    app,
     port: (http.address() as { port: number }).port,
     async close() {
       for (const ws of sockets.clients) ws.terminate();

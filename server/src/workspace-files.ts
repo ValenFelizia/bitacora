@@ -11,7 +11,7 @@ const textTypes: Record<string, string> = { '.txt': 'text/plain', '.md': 'text/p
 export const MAX_RESULT = 100 * 1024 * 1024;
 export const SCAN_LIMITS = { entries: 20000, files: 5000, bytes: 512 * 1024 * 1024, depth: 64 };
 export type Fingerprint = { size: number; mtimeMs: number; ctimeMs: number; hash: string; mode?: number };
-export type FileScan = { entries: Record<string, Fingerprint>; warnings: string[]; hashedBytes: number; visited: number; directories?: string[]; omitted?: Record<string, string> };
+export type FileScan = { entries: Record<string, Fingerprint>; warnings: string[]; hashedBytes: number; visited: number; directories?: string[]; omitted?: Record<string, string>; incomplete?: string[] };
 export type ScanCopy = {
   limits: typeof SCAN_LIMITS & { fileBytes: number };
   capture(path: string, stat: Stats): Promise<string>;
@@ -97,7 +97,7 @@ export class WorkspaceFiles {
     }
   }
   async scan(previous = this.cache, copy?: ScanCopy): Promise<FileScan> {
-    const found: FileScan = { entries: Object.create(null), warnings: [], hashedBytes: 0, visited: 0, directories: [], omitted: Object.create(null) };
+    const found: FileScan = { entries: Object.create(null), warnings: [], hashedBytes: 0, visited: 0, directories: [], omitted: Object.create(null), incomplete: [] };
     const limits = copy?.limits || this.limits;
     const root = await realpath(this.root);
     let files = 0, logicalBytes = 0;
@@ -105,13 +105,13 @@ export class WorkspaceFiles {
       if (found.warnings.length < 100) found.warnings.push(`${path || '.'}: ${String(error)}`);
     };
     const walk = async (folder: string, depth: number) => {
-      if (depth > limits.depth) { warn(folder, 'depth limit'); return; }
+      if (depth > limits.depth) { warn(folder, 'depth limit'); found.incomplete!.push(folder); return; }
       try {
         const target = await realpath(join(root, folder));
         const rel = relative(root, target);
         if (rel.startsWith('..') || isAbsolute(rel)) throw new Error('directory outside workspace');
         for await (const entry of await opendir(target)) {
-          if (++found.visited > limits.entries) { warn(folder, 'entry limit'); break; }
+          if (++found.visited > limits.entries) { warn(folder, 'entry limit'); found.incomplete!.push(folder); break; }
           if (excludedFromCopy(entry.name)) continue;
           const path = join(folder, entry.name);
           if (entry.isSymbolicLink()) { warn(path, 'link skipped'); continue; }
@@ -150,13 +150,24 @@ export class WorkspaceFiles {
                 }
               }
               found.entries[path] = { size: stat.size, mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs, hash: hash!, mode: stat.mode };
-            } catch (error) { warn(path, error); }
+            } catch (error) {
+              warn(path, error);
+              if (copy) {
+                try { const s = await lstat(join(root, path)); found.omitted![path] = `${s.size}:${s.mtimeMs}:${s.ctimeMs}`; }
+                catch { found.omitted![path] = 'unreadable'; }
+              }
+            }
           }
-          if (found.visited >= limits.entries || (!copy && files >= limits.files)) { warn(folder, 'scan count limit reached'); break; }
+          if (found.visited >= limits.entries || (!copy && files >= limits.files)) { warn(folder, 'scan count limit reached'); found.incomplete!.push(folder); break; }
         }
       } catch (error) {
-        if (!folder) throw error;
+        if (!folder && !copy) throw error;
         warn(folder, error);
+        found.incomplete!.push(folder);
+        if (folder && copy) {
+          try { const s = await lstat(join(root, folder)); found.omitted![folder] = `directory:${s.mtimeMs}:${s.ctimeMs}`; }
+          catch { found.omitted![folder] = 'unreadable directory'; }
+        }
       }
     };
     await walk('', 0);

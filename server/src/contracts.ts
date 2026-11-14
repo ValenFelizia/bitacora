@@ -24,6 +24,7 @@ export type Snapshot = {
 };
 export type ClientCommand =
   | { type: "undo"; id: string }
+  | { type: "discardUndo"; id: string }
   | { type: "connect" }
   | { type: "retry" }
   | { type: "prepareProtection" }

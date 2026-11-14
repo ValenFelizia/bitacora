@@ -1,4 +1,4 @@
-import { Backups, BACKUP_LIMITS, RestoreProblem } from './backups';
+import { Backups, BACKUP_LIMITS, RestoreProblem, pathKey } from './backups';
 import { mkdir, readFile, writeFile, rename, copyFile, rm } from "node:fs/promises";
 import { WorkspaceFiles, type FileScan } from "./workspace-files";
 import { join } from "node:path";
@@ -10,6 +10,7 @@ import type { FileRef, Work, Snapshot, ClientCommand, ServerMessage } from "./co
 type SavedWork = Work & { conversationId: string; pendingFiles?: { messageId: string; before?: Record<string, string> } };
 export class App {
   private backups?: Backups;
+  private backupReceipt?: string;
   private fileRevision = 0;
   private scanning = new Set<string>();
   private scans = new Set<Promise<void>>();
@@ -34,11 +35,6 @@ export class App {
   async start() {
     await mkdir(this.data, { recursive: true });
     await this.workspace?.initialize();
-    if (this.workspace) {
-      try { this.backups = new Backups(this.workspace.root, this.data, BACKUP_LIMITS, this.workspace); await this.backups.initialize(); }
-      catch { this.backups = undefined; this.notice = "No pude preparar las copias. Podés trabajar, pero esta vez no vas a poder deshacer."; }
-      if (this.backups?.restoring) this.notice = "Quedó un Deshacer pendiente. Tocá Reintentar deshacer para terminarlo antes de seguir trabajando.";
-    }
     try {
       const saved = JSON.parse(
         await readFile(join(this.data, "works.json"), "utf8"),
@@ -57,6 +53,7 @@ export class App {
       )
         throw new SyntaxError("Invalid saved work");
       this.works = saved.works;
+      this.backupReceipt = typeof saved.backupReceipt === "string" ? saved.backupReceipt : undefined;
       for (const work of this.works)
         if (work.busy) {
           work.busy = false;
@@ -79,6 +76,12 @@ export class App {
           : "No pude leer los trabajos guardados ni conservar una copia aparte. Abrí una lista vacía.";
       } else if ((error as NodeJS.ErrnoException).code !== "ENOENT")
         throw error;
+    }
+    if (this.workspace) {
+      try { this.backups = new Backups(this.workspace.root, this.data, BACKUP_LIMITS, this.workspace); await this.backups.initialize(this.backupReceipt); }
+      catch { this.backups = undefined; this.notice = "No pude preparar las copias. Podés trabajar, pero esta vez no vas a poder deshacer."; }
+      if (this.backups?.invalidated) this.notice = "No pude confirmar que la copia sea del último pedido. No voy a ofrecer Deshacer para esa copia.";
+      if (this.backups?.restoring) this.notice = "Quedó un Deshacer pendiente. Podés reintentarlo o dejar la carpeta como está.";
     }
     for (const work of this.works) if (work.pendingFiles) { await this.collectResults(work); this.dirty = true; }
     this.unsubscribe = this.engine.subscribe((event) => this.event(event));
@@ -111,7 +114,7 @@ export class App {
   }
   private changed() {
     this.dirty = false;
-    const content = JSON.stringify({ version: 1, works: this.works }, null, 2);
+    const content = JSON.stringify({ version: 1, works: this.works, backupReceipt: this.backupReceipt }, null, 2);
     this.writes = this.writes
       .catch(() => {})
       .then(async () => {
@@ -155,7 +158,8 @@ export class App {
       } else after = await this.workspace.scan(before);
       this.scanDetail(work, after);
       const message = work.messages.find(m => m.id === pending.messageId);
-      if (message) message.results = Object.keys(after.entries).filter(p => this.workspace!.isResult(p) && after.entries[p].hash !== before.entries[p]?.hash).map(p => this.workspace!.result(p));
+      const previous = new Map(Object.entries(before.entries).map(([p, entry]) => [pathKey(p), entry.hash]));
+      if (message) message.results = Object.keys(after.entries).filter(p => this.workspace!.isResult(p) && after.entries[p].hash !== previous.get(pathKey(p))).map(p => this.workspace!.result(p));
     } catch (error) {
       work.problem = "No pude revisar los resultados de ese pedido. Podés seguir trabajando.";
       work.details = (work.details + String(error) + "\n").slice(-100000);
@@ -281,21 +285,24 @@ export class App {
     command: ClientCommand,
     reply: (message: ServerMessage) => void,
   ) {
-    if (command.type === "undo") {
+    if (command.type === "undo" || command.type === "discardUndo") {
       if (this.submitting || this.works.some(w => w.busy) || !this.backups) {
         reply({ type: "problem", text: this.backups ? "Esperá a que termine el pedido actual para deshacer." : "No hay una copia disponible para deshacer." }); return;
       }
       this.submitting = true;
       this.changed();
       try {
-        const result = await this.backups.undo(command.id);
+        const result = command.type === "discardUndo" ? await this.backups.discard(command.id) : await this.backups.undo(command.id);
         this.notice = `Listo. Deshice ${result.restored.length} cambios. Lo que agregaste o cambiaste después quedó como estaba.`;
+        if ('remaining' in result && Array.isArray(result.remaining)) this.notice = `Dejé la carpeta como está. Podés seguir trabajando. Quedó revertido: ${result.restored.map(p => p.split(/[\\/]/).at(-1)).join(', ') || 'ningún archivo'}. No quedó revertido: ${result.remaining.join(', ') || 'ningún archivo'}.`;
         if (result.skipped.length) this.notice += ` Dejé ${result.skipped.length} sin tocar porque cambiaron después: ${result.skipped.join(', ')}.`;
         if (result.omitted.length) this.notice += ` No pude guardar copia de ${result.omitted.join(', ')}, así que eso no lo puedo deshacer.`;
         const reverted = this.works.find(w => w.id === result.target.workId)?.messages.find(m => m.id === result.target.messageId);
         for (const file of reverted?.results || []) if (result.restored.includes(file.path)) file.reverted = true;
       } catch (error) {
-        this.notice = error instanceof RestoreProblem ? error.message : "No pude completar Deshacer. La copia sigue guardada. Tocá Reintentar deshacer para continuar.";
+        this.notice = error instanceof RestoreProblem ? error.message : this.backups.restoring
+          ? "No pude completar Deshacer. Podés reintentar o dejar la carpeta como está."
+          : "No pude empezar Deshacer. Podés seguir trabajando o volver a intentarlo.";
       } finally { this.fileRevision++; this.submitting = false; this.changed(); }
       return;
     }
@@ -324,7 +331,7 @@ export class App {
       command.text.length > 20000
     )
       throw new Error("Invalid request");
-    if (this.backups?.restoring) { reply({ type: "problem", text: "Primero tocá Reintentar deshacer para terminar la restauración pendiente." }); return; }
+    if (this.backups?.restoring) { reply({ type: "problem", text: "Primero elegí Reintentar deshacer o Dejar la carpeta como está." }); return; }
     if (this.submitting || this.works.some((w) => w.busy)) {
       reply({
         type: "problem",
@@ -383,10 +390,11 @@ export class App {
       }
       attachments = await this.workspace?.attach(work.id, uploads || []) || [];
       const messageId = randomUUID();
+      if (this.workspace) this.backupReceipt = randomUUID();
       this.notice = undefined;
       let before: FileScan | undefined;
       if (this.backups) {
-        if (!await this.backups.before({ workId: work.id, title: work.title, request: command.text.trim().slice(0, 160), messageId })) this.notice = "No pude guardar la copia de este pedido. Esta vez no vas a poder deshacer.";
+        if (!await this.backups.before({ workId: work.id, title: work.title, request: command.text.trim().slice(0, 160), messageId }, this.backupReceipt)) this.notice = "No pude guardar la copia de este pedido. Esta vez no vas a poder deshacer.";
         before = this.backups.lastScan || { entries: {}, warnings: ["No pude revisar todos los resultados."], hashedBytes: 0, visited: 0 };
       } else before = await this.workspace?.scan().catch(() => ({ entries: {}, warnings: ["No pude revisar todos los resultados."], hashedBytes: 0, visited: 0 }));
       if (before) {
