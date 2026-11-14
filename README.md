@@ -152,7 +152,8 @@ sólo por mayúsculas o por la forma de un acento, Deshacer se niega antes de to
 nada y deja seguir trabajando. Si ese renombrado fue manual, conserva esa entrada.
 Los nombres reales se comprueban en disco antes de mover o borrar. No se fusionan
 archivos: en esta máquina `ñ` compuesta y descompuesta pueden ser nombres distintos;
-si ambos coexisten, la copia ambigua se rechaza y ninguno se modifica.
+si ambos coexisten, cada entrada ambigua queda fuera de la copia y ninguna se
+modifica. Lo mismo vale para `ß`/`SS` e `ı`/`I`: el resto conserva Deshacer.
 
 Retomar una conversación no cambia archivos. En el siguiente pedido del trabajo
 revertido se envía un aviso al motor como otra entrada de ese único turno; no se
@@ -193,13 +194,41 @@ Si aparece una falla durante la restauración, se conserva el plan, el progreso 
 ambas copias. **Reintentar deshacer** continúa sin repetir operaciones terminadas,
 también después de reiniciar. Una intención sin avance no se ofrece como
 restauración pendiente. Si ya hubo cambios, también se ofrece **Dejar la carpeta
-como está**: con confirmación, descarta ese Deshacer y permite enviar pedidos nuevos.
+como está**: primero repone las rutas que Deshacer dejó faltantes con su versión
+apartada. Si no puede reponer alguna, explica el motivo y conserva el reintento.
+Recién después descarta ese Deshacer y permite enviar pedidos nuevos.
 El resumen dice qué quedó revertido y qué no, por nombre. Mientras tanto se
 conserva el contenido necesario para reintentar o decidir. Una eliminación manual
 entre falla y reintento se respeta; no alcanza con que una operación figurara iniciada.
 La opción se consume recién al completar y guardar el cierre, o al descartarla;
-recién entonces se limpian contenidos sin referencias. Los temporales incompletos
+sin borrar contenidos en esos caminos. Los temporales incompletos se apartan y
 se reconstruyen desde la copia. Los avisos se limpian con el siguiente pedido.
+
+**Papelera de Bitácora.** Deshacer, reintentar y descartar conservan lo retirado,
+los originales apartados y los temporales en `backups/trash/`, dentro de la carpeta
+de datos y fuera de la agencia. Cada entrada registra origen, pedido, acción,
+fecha y huellas. Su ubicación aparece sólo en el detalle técnico plegado del
+trabajo. Todavía no hay una pantalla para recuperar desde esa papelera.
+La recuperación comprueba archivo, apartado, temporal y papelera en disco para
+cada acción iniciada, aunque el diario no haya alcanzado a marcar el avance.
+También recupera un cambio interrumpido del atributo de sólo lectura.
+
+En un mismo volumen se mueve por renombrado. Entre volúmenes se copia en flujo a
+un temporal privado, se sincroniza y verifica por huellas, y recién entonces se
+quita el origen, comprobando cada archivo. Si se interrumpe, queda el origen, la
+copia completa verificada o ambos; nunca se usa una copia parcial como reemplazo.
+La purga es independiente: sólo puede borrar una entrada cuando pasaron **al
+menos siete días y tres pedidos posteriores con copia completada correctamente**.
+No purga entradas del Deshacer disponible o pendiente; las transferencias
+incompletas se conservan. Se ejecuta después de una copia posterior correcta.
+El almacén de contenidos tampoco se limpia al deshacer, reintentar ni descartar:
+sólo después de otra copia correcta, respetando referencias de copias y papelera.
+La caché sólo reutiliza una huella si sus bytes siguen guardados.
+
+Esto conserva el contenido anterior a tocar Deshacer en la agencia, la papelera
+o el almacén ante las interrupciones probadas. No garantiza restaurar archivos
+excluidos ni una transacción de toda la carpeta. La retención ocupa espacio extra;
+no reemplaza una copia externa frente a rotura del disco.
 
 No es una transacción atómica de toda la carpeta: un error nuevo puede dejar un
 avance parcial, que sigue siendo retomable. No se certifica una carrera entre una
