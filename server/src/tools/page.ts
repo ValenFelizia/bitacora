@@ -72,19 +72,47 @@ export async function withPage<T>(files: AgencyFiles, html: string, run: (page: 
 
 export async function visibleTexts(page: Page) {
   return page.evaluate(() => {
-    const result: { text: string; where: string; cites: Record<string, number>; citationId?: number }[] = [];
+    const result: { text: string; where: string; cites: Record<string, number>; citationId?: number; skipNumbers?: boolean }[] = [];
     const owners = Array.from(document.querySelectorAll('[data-cites]'));
     for (const [citationId,el] of owners.entries()) {
       try { result.push({text:'',where:`Cita ${citationId + 1}`,cites:JSON.parse(el.getAttribute('data-cites')!),citationId}); }
       catch { throw new Error('Hay una cita mal escrita en la pieza. Revisá data-cites.'); }
     }
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    const groups: {text:string;parts:{node:Node;start:number;end:number}[]}[]=[];
+    let previous: {node:Node;block:Element;box:DOMRect}|undefined;
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
       const el = node.parentElement!;
-      if (el.closest('script,style,noscript') || !el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true }) || !node.textContent?.trim()) continue;
-      let cites = {};
-      try { cites = JSON.parse(el.closest('[data-cites]')?.getAttribute('data-cites') || '{}'); } catch { /* Missing citations fail below. */ }
-      result.push({ text: node.textContent, where: `${el.tagName.toLowerCase()}${el.id ? '#' + el.id : ''}: ${node.textContent.trim().slice(0, 100)}`, cites, citationId:owners.indexOf(el.closest('[data-cites]')!) });
+      const raw=node.textContent || '';
+      if (!raw || el.closest('script,style,noscript') || !el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) continue;
+      let block:Element=el;
+      while(block.parentElement && ['inline','inline-block','inline-flex','inline-grid','contents'].includes(getComputedStyle(block).display) && !['TD','TH'].includes(block.tagName)) block=block.parentElement;
+      const first=document.createRange(),last=document.createRange();
+      first.setStart(node,0);first.setEnd(node,1);last.setStart(node,raw.length-1);last.setEnd(node,raw.length);
+      const box=first.getBoundingClientRect();
+      let separated=!previous || previous.block!==block;
+      if(previous && !separated) {
+        const between=document.createRange();between.setStartAfter(previous.node);between.setEndBefore(node);
+        separated=!!between.cloneContents().querySelector('br') || box.left-previous.box.right>1;
+        if(!el.closest('sup,sub') && !previous.node.parentElement?.closest('sup,sub') && box.top>=previous.box.bottom-1) separated=true;
+      }
+      if(separated) groups.push({text:'',parts:[]});
+      const group=groups.at(-1)!;
+      const text=(getComputedStyle(el).whiteSpace.startsWith('pre') ? raw : raw.replace(/\s+/g,' ')).replace(/\p{Cf}/gu,'');
+      group.parts.push({node,start:group.text.length,end:group.text.length+text.length});group.text+=text;
+      previous={node,block,box:last.getBoundingClientRect()};
+    }
+    for(const group of groups) {
+      const where=group.text.trim().slice(0,120);
+      result.push({text:group.text,where,cites:{},skipNumbers:true});
+      for(const match of group.text.matchAll(/\p{Nd}+(?:[.,]\p{Nd}+)*/gu)) {
+        const parts=group.parts.filter(p=>p.end>match.index! && p.start<match.index!+match[0].length);
+        let common=parts[0].node.parentElement!;
+        while(common.parentElement && parts.some(p=>!common.contains(p.node))) common=common.parentElement;
+        const owner=common.closest('[data-cites]');
+        const cites=owner ? JSON.parse(owner.getAttribute('data-cites')!) : {};
+        result.push({text:match[0],where:`${common.tagName.toLowerCase()}: ${where}`,cites,citationId:owners.indexOf(owner!)});
+      }
     }
     // Generated content is visible too; never silently skip numbers in CSS counters.
     for (const el of document.body.querySelectorAll('*')) {

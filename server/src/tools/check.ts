@@ -15,6 +15,7 @@ export const normalizeNumber = (s: string) => {
 };
 export type Rules = { operatorNames?: string[]; noEmoji?: boolean; warnExperience?: boolean };
 export async function controlar(files: AgencyFiles, input: { html: string; source: string; report: string; rules?: string }) {
+  await files.protectInputs([input.source,input.html,...(input.rules ? [input.rules] : [])],[input.report],'El informe');
   if (extname(input.source).toLowerCase() !== '.md' || extname(input.report).toLowerCase() !== '.md') throw new Error('La fuente y el informe deben ser archivos con terminación .md.');
   const source = (await files.read(input.source)).split(/\r?\n/);
   const rules: Rules = input.rules ? JSON.parse((await files.read(input.rules)).replace(/^\uFEFF/, '')) : {};
@@ -25,11 +26,11 @@ export async function controlar(files: AgencyFiles, input: { html: string; sourc
   const operatorText = (s: string) => s.normalize('NFKC').toLocaleLowerCase().replace(/[\s\p{Cf}]/gu,'');
   const visible = operatorText(whole + '\n' + texts.map(t=>t.text).join('\n'));
   if (rules.operatorNames?.some(name => name && visible.includes(operatorText(name)))) errors.push('La pieza nombra al operador.');
-  for (const {text, where, cites, citationId} of texts) {
+  for (const {text, where, cites, citationId, skipNumbers} of texts) {
     for (const number of Object.keys(cites || {})) cited.set(`${citationId}:${number}`, `${where}: sobra la cita de ${number} (línea ${cites[number]}).`);
     if (rules.noEmoji && /\p{Extended_Pictographic}/u.test(text)) errors.push(`${where}: tiene emojis.`);
     if (rules.warnExperience && /(?<!\p{L})(estuve|visit[eé]|conoc[ií]|me hosped[eé])(?!\p{L})/iu.test(text)) warnings.push(`${where}: confirmá con la usuaria si estuvo en ese lugar.`);
-    for (const number of numbers(text)) {
+    for (const number of skipNumbers ? [] : numbers(text)) {
       const line = cites?.[number];
       used.add(`${citationId}:${number}`);
       const quoted = Number.isInteger(line) && line > 0 ? source[line - 1] : undefined;

@@ -9,6 +9,10 @@ type WriteStage = 'beforeDirectoryCreate' | 'beforeTempOpen' | 'afterTempOpen' |
 export class AgencyFiles {
   private canonicalRoot?: Promise<string>;
   constructor(readonly root: string, private writeProbe?: (stage: WriteStage, path: string) => Promise<void>) {}
+  async protectInputs(inputs: string[], outputs: string[], label: string) {
+    const inputPaths=new Set(await Promise.all(inputs.map(async p=>(await this.path(p)).toLowerCase())));
+    for(const output of outputs) if(inputPaths.has((await this.path(output)).toLowerCase())) throw new Error(`${label} no puede reemplazar un archivo de entrada. Elegí otro nombre.`);
+  }
   async path(input: string): Promise<string> {
     if (!input || input.includes(':') || isAbsolute(input) || input.includes('\0')) throw new Error('Usá una ruta relativa dentro de la agencia.');
     const root = await (this.canonicalRoot ??= realpath(this.root));
