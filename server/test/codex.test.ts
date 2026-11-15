@@ -83,8 +83,12 @@ test("interrupted preparation remains retryable", async () => {
 test("setupStart timeout unlocks retry as a read, not another UAC", async () => {
   process.env.BITACORA_FAKE_SAFETY = "notConfigured";
   process.env.BITACORA_FAKE_SETUP_TIMEOUT = "1";
-  const f = await fixture(60000, { requestTimeoutMs: 200 });
+  // The request timeout also covers the handshake, so it must be generous
+  // enough for it: a failed start would skip the cleanup below and leave the
+  // fake app-server ignoring every later setupStart.
+  let f: Awaited<ReturnType<typeof fixture>> | undefined;
   try {
+    f = await fixture(60000, { requestTimeoutMs: 2000 });
     await f.engine.prepareProtection();
     assert.equal(f.engine.executionSafety().status, "failed");
     assert.equal(f.engine.executionSafety().issue, "uncertain");
@@ -94,7 +98,7 @@ test("setupStart timeout unlocks retry as a read, not another UAC", async () => 
   } finally {
     delete process.env.BITACORA_FAKE_SETUP_TIMEOUT;
     delete process.env.BITACORA_FAKE_SAFETY;
-    await f.close();
+    await f?.close();
   }
 });
 
@@ -138,7 +142,17 @@ async function fixture(stableAfterMs = 60_000, options: Partial<ConstructorParam
   });
   const events: EngineEvent[] = [];
   engine.subscribe((e) => events.push(e));
-  await engine.start();
+  try {
+    await engine.start();
+  } catch (error) {
+    // A failed start must not leave a process behind or poison the next test
+    // with this file's fake-app-server settings.
+    await engine.close().catch(() => {});
+    for (const key of Object.keys(process.env))
+      if (key.startsWith("BITACORA_FAKE_")) delete process.env[key];
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }).catch(() => {});
+    throw error;
+  }
   const records = async () =>
     (await readFile(log, "utf8"))
       .trim()
@@ -150,9 +164,12 @@ async function fixture(stableAfterMs = 60_000, options: Partial<ConstructorParam
     records,
     dir,
     close: async () => {
-      await engine.close();
-      delete process.env.BITACORA_FAKE_LOG;
-      await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+      try {
+        await engine.close();
+      } finally {
+        delete process.env.BITACORA_FAKE_LOG;
+        await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+      }
     },
   };
 }
