@@ -1,0 +1,162 @@
+[
+  {
+    "name": "controlar",
+    "args": {
+      "html": "muestras/opcion-1.html",
+      "source": "muestras/fuente.md",
+      "report": "muestras/control-1.md"
+    },
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"ok\":true,\"checked\":3,\"errors\":[],\"warnings\":[],\"report\":\"muestras/control-1.md\"}"
+        }
+      ],
+      "isError": false
+    }
+  },
+  {
+    "name": "dibujar",
+    "args": {
+      "html": "muestras/opcion-1.html",
+      "destination": "muestras/salida-1",
+      "width": 1080,
+      "height": 1920
+    },
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"ok\":true,\"errors\":[],\"warnings\":[],\"files\":[\"muestras/salida-1/pieza-1.png\",\"muestras/salida-1/piezas.pdf\",\"muestras/salida-1/todas.png\"]}"
+        }
+      ],
+      "isError": false
+    }
+  },
+  {
+    "name": "controlar",
+    "args": {
+      "html": "muestras/opcion-2.html",
+      "source": "muestras/fuente.md",
+      "report": "muestras/control-2.md"
+    },
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"ok\":true,\"checked\":3,\"errors\":[],\"warnings\":[],\"report\":\"muestras/control-2.md\"}"
+        }
+      ],
+      "isError": false
+    }
+  },
+  {
+    "name": "dibujar",
+    "args": {
+      "html": "muestras/opcion-2.html",
+      "destination": "muestras/salida-2",
+      "width": 1080,
+      "height": 1920
+    },
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"ok\":true,\"errors\":[],\"warnings\":[],\"files\":[\"muestras/salida-2/pieza-1.png\",\"muestras/salida-2/piezas.pdf\",\"muestras/salida-2/todas.png\"]}"
+        }
+      ],
+      "isError": false
+    }
+  },
+  {
+    "name": "controlar",
+    "args": {
+      "html": "muestras/opcion-3.html",
+      "source": "muestras/fuente.md",
+      "report": "muestras/control-3.md"
+    },
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"ok\":true,\"checked\":3,\"errors\":[],\"warnings\":[],\"report\":\"muestras/control-3.md\"}"
+        }
+      ],
+      "isError": false
+    }
+  },
+  {
+    "name": "dibujar",
+    "args": {
+      "html": "muestras/opcion-3.html",
+      "destination": "muestras/salida-3",
+      "width": 1080,
+      "height": 1920
+    },
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"ok\":true,\"errors\":[],\"warnings\":[],\"files\":[\"muestras/salida-3/pieza-1.png\",\"muestras/salida-3/piezas.pdf\",\"muestras/salida-3/todas.png\"]}"
+        }
+      ],
+      "isError": false
+    }
+  },
+  {
+    "name": "controlar",
+    "args": {
+      "html": "propuestas/prueba/pieza.html",
+      "source": "ejemplo/fuente.md",
+      "brand": "marca/datos.md",
+      "rules": "ejemplo/rules.json",
+      "report": "propuestas/prueba/control.md"
+    },
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"ok\":true,\"checked\":14,\"errors\":[],\"warnings\":[],\"report\":\"propuestas/prueba/control.md\"}"
+        }
+      ],
+      "isError": false
+    }
+  },
+  {
+    "name": "dibujar",
+    "args": {
+      "html": "propuestas/prueba/pieza.html",
+      "destination": "propuestas/prueba/salida",
+      "width": 1080,
+      "height": 1920
+    },
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"ok\":true,\"errors\":[],\"warnings\":[],\"files\":[\"propuestas/prueba/salida/pieza-1.png\",\"propuestas/prueba/salida/pieza-2.png\",\"propuestas/prueba/salida/pieza-3.png\",\"propuestas/prueba/salida/piezas.pdf\",\"propuestas/prueba/salida/todas.png\"]}"
+        }
+      ],
+      "isError": false
+    }
+  },
+  {
+    "name": "dibujar",
+    "args": {
+      "html": "propuestas/prueba/pieza.html",
+      "destination": "debe-fallar",
+      "width": 1080,
+      "height": 1920
+    },
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "Error: No se pudieron cargar las fuentes: Outfit."
+        }
+      ],
+      "isError": true
+    }
+  }
+]
