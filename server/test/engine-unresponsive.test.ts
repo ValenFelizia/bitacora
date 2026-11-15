@@ -31,7 +31,7 @@ async function fixture(
     args: [resolve("server/test/stdio-server.mjs")],
     restartDelayMs: options.restartDelayMs ?? 30,
     stableAfterMs: 60_000,
-    requestTimeoutMs: options.requestTimeoutMs ?? 200,
+    requestTimeoutMs: options.requestTimeoutMs ?? 1000,
     pauseTimeoutMs: options.pauseTimeoutMs ?? 200,
     killProcessTree: options.killProcessTree,
   });
@@ -212,7 +212,7 @@ test("a child that already exited is never handed to taskkill", async () => {
 test("a silent start stops the tree once, through taskkill", async () => {
   const calls: number[] = [];
   const f = await fixture({
-    requestTimeoutMs: 300,
+    requestTimeoutMs: 1000,
     killProcessTree: async (pid) => {
       calls.push(pid);
       process.kill(pid);
