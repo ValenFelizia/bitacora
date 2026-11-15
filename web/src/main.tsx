@@ -13,6 +13,8 @@ import type { Upload } from "../../server/src/contracts";
 import ReactMarkdown from "react-markdown";
 import { protectionText } from "./protection-text";
 
+// Matches the server limit for a request (server/src/app.ts).
+const MAX_REQUEST_TEXT = 20000;
 const buttonBase = "touch-manipulation cursor-pointer rounded-lg border px-[15px] py-[10px] text-center disabled:opacity-50 disabled:cursor-default focus-visible:outline-3 focus-visible:outline-[#94733c] focus-visible:outline-offset-3 max-[460px]:text-xs max-[460px]:p-[9px]";
 const buttonSecondary = `${buttonBase} border-[#c6d0c9] hover:bg-[#e4ebe5]`;
 const buttonPrimary = `${buttonBase} text-white bg-[#31594d] border-[#31594d] hover:bg-[#22483e]`;
@@ -130,13 +132,14 @@ function App() {
       !state.account.connected
     )
       return;
+    const combined = [opening, typed].filter(Boolean).join("\n\n") || "Revisá los archivos adjuntos.";
+    // The server rejects longer requests; keep the draft so nothing is lost.
+    if (combined.length > MAX_REQUEST_TEXT) {
+      setProblem({ text: "El texto es demasiado largo para mandarlo junto con este pedido. Acortalo un poco y volvé a intentar." });
+      return;
+    }
     setPending(true);
-    send({
-      type: "send",
-      workId: selected,
-      text: [opening, typed].filter(Boolean).join("\n\n") || "Revisá los archivos adjuntos.",
-      attachments,
-    });
+    send({ type: "send", workId: selected, text: combined, attachments });
   }
   async function addFiles(files: File[]) {
     if (readingFiles || pending) return;
@@ -424,7 +427,7 @@ function App() {
               id="request"
               value={text}
               onChange={(e) => setText(e.target.value)}
-              maxLength={20000}
+              maxLength={MAX_REQUEST_TEXT}
               placeholder="Por ejemplo: ayudame a organizar una propuesta de viaje…"
               rows={3}
             />

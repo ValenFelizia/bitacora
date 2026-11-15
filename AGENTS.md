@@ -12,6 +12,9 @@ choca con ellos, frená y avisá.
   rioplatense, simple y sin términos técnicos.
 - Código, nombres de archivos y commits en inglés. Issues y documentación en
   castellano.
+  Excepción: el contenido de `kit/` se copia a la carpeta de la agencia, donde
+  lo lee la usuaria; sus nombres de archivos y carpetas van en castellano
+  (`marca/`, `plantillas/`, `fuentes/`, `entrevista.md`).
 - Solo Windows. Leé y escribí archivos en UTF-8.
 - Las APIs de Codex y Tauri cambian seguido: verificá en la documentación
   oficial o en el binario instalado antes de asumir cómo funcionan.
