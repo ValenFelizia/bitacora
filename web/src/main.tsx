@@ -23,6 +23,7 @@ function App() {
     works: [],
     engine: { available: false, safety: { allowed: false, detail: "" } },
   });
+  const [confirmUndo, setConfirmUndo] = useState<string>();
   const [gallery, setGallery] = useState(false);
   const [attachments, setAttachments] = useState<Upload[]>([]);
   const [readingFiles, setReadingFiles] = useState(false);
@@ -293,6 +294,20 @@ function App() {
           <p>{gallery ? "Galería" : work?.title || "Un lugar para tus próximos pasos"}</p>
           <span>{online ? "Tu espacio de trabajo" : "Reconectando…"}</span>
         </header>
+        <section aria-label="Deshacer el último pedido" className="px-5 py-3 border-b border-[#e6e7de]">
+          {state.undo && !busy && <>
+            {state.undo.retry && <button className={buttonSecondary} disabled={!online} onClick={() => {
+              if (window.confirm('Voy a dejar la carpeta como está ahora y descartar el Deshacer pendiente. Después podés seguir trabajando.')) send({ type: 'discardUndo', id: state.undo!.id });
+            }}>Dejar la carpeta como está</button>}
+            <p className="text-sm">Último pedido con cambios en tu carpeta: {state.undo.title} · «{state.undo.request}»</p>
+            {confirmUndo === state.undo.id ? <div role="group" aria-label="Confirmar Deshacer">
+              <p className="my-2">Voy a deshacer los cambios de este pedido, aunque estés en otro trabajo. Lo que agregaste o cambiaste a mano después no se toca.</p>
+              <button className={buttonPrimary} disabled={!online} onClick={() => { send({ type: "undo", id: state.undo!.id }); setConfirmUndo(undefined); }}>Sí, deshacer</button>
+              <button className={buttonSecondary} onClick={() => setConfirmUndo(undefined)}>Cancelar</button>
+            </div> : <button className={buttonSecondary} disabled={!online} onClick={() => setConfirmUndo(state.undo!.id)}>{state.undo.retry ? 'Reintentar deshacer' : 'Deshacer'}</button>}
+          </>}
+          {state.notice && <p role="status" className="text-sm my-2">{state.notice}</p>}
+        </section>
         <div className="overflow-y-auto flex-1 py-8 px-[max(30px,calc((100%_-_760px)/2))] max-[720px]:p-5">
           {gallery && <section aria-label="Resultados por trabajo">
             <h2 className="font-[Georgia,serif] text-3xl mb-6">Todo lo que creamos</h2>
@@ -302,7 +317,7 @@ function App() {
               return results.length ? <section key={w.id} className="mb-8">
                 <h3 className="font-semibold">{w.title}</h3>
                 <button className={buttonSecondary} onClick={() => { setSelected(w.id); setGallery(false); }}>Ir al trabajo</button>
-                <div className="grid gap-4 sm:grid-cols-2">{results.map(f => <FileCard key={f.id} file={f} token={state.fileToken} result />)}</div>
+                <div className="grid gap-4 sm:grid-cols-2">{results.map(f => <FileCard key={`${f.id}-${state.fileRevision}`} file={f} token={state.fileToken} result />)}</div>
               </section> : null;
             })}
           </section>}
@@ -326,18 +341,13 @@ function App() {
             >
               <h2>{m.role === "user" ? "Vos" : "Bitácora"}</h2>
               {m.role === "user" ? <div className="whitespace-pre-wrap">{m.text.split(/(https?:\/\/[^\s]+)/g).map((part, i) => /^https?:\/\//.test(part) ? <a key={i} className="underline text-[#245a4d]" href={part} target="_blank" rel="noreferrer">{part}</a> : part)}</div> : <div className="markdown"><ReactMarkdown skipHtml components={{ a: ({node, ...props}) => /^https?:\/\//i.test(props.href || '') ? <a {...props} target="_blank" rel="noopener noreferrer" /> : <span>{props.children}</span> }}>{m.text}</ReactMarkdown></div>}
-              <div className="grid gap-3 sm:grid-cols-2">{m.attachments?.map(f => <FileCard key={f.id} file={f} token={state.fileToken} />)}</div>
-              {!!m.results?.length && <section aria-label="Resultados del pedido"><h3 className="mt-5 font-semibold">Resultados</h3><div className="grid gap-3 sm:grid-cols-2">{m.results.map(f => <FileCard key={f.id} file={f} token={state.fileToken} result />)}</div></section>}
+              <div className="grid gap-3 sm:grid-cols-2">{m.attachments?.map(f => <FileCard key={`${f.id}-${state.fileRevision}`} file={f} token={state.fileToken} />)}</div>
+              {!!m.results?.length && <section aria-label="Resultados del pedido"><h3 className="mt-5 font-semibold">Resultados</h3><div className="grid gap-3 sm:grid-cols-2">{m.results.map(f => <FileCard key={`${f.id}-${state.fileRevision}`} file={f} token={state.fileToken} result />)}</div></section>}
             </article>
           ))}
           <div ref={bottom} />
         </div>
         {!gallery && <div className="w-full max-w-[820px] mx-auto pt-[10px] px-[30px] pb-[26px] max-[720px]:px-4 max-[720px]:pb-[18px]">
-          {state.notice && (
-            <p role="alert" className="text-sm text-[#913d2c]">
-              {state.notice}
-            </p>
-          )}
           {online && !state.engine.available && (
             <p role="status" className="text-sm text-[#913d2c]">
               {state.engine.exhausted ? "No pude volver a conectar el motor. Tocá Reintentar para volver a arrancarlo." : "El motor se detuvo. Estoy intentando volver a conectarlo."}

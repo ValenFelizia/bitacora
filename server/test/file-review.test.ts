@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, writeFile, readFile, rm, symlink, readdir, truncate, open } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile, readFile, rm, symlink, readdir, truncate, open, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { WebSocket } from 'ws';
 import { WorkspaceFiles, MAX_RESULT, SCAN_LIMITS } from '../src/workspace-files';
@@ -64,21 +64,45 @@ for (const status of ['interrupted', 'failed'] as const) test(`results after ${s
   } finally { await app.close(); await f.cleanup(); }
 });
 
-test('preflight failures roll back attachments and do not create empty work', async () => {
+test('a result above the serving limit stays in the backup but is not offered as a card', async () => {
+  const f = await fixture(); const engine = new FakeEngine();
+  const app = new App(engine, join(f.dir, 'data'), () => {}, undefined, f.files);
+  try {
+    await app.start(); await app.command({ type: 'send', text: 'Hacé un plano grande' }, () => {});
+    await writeFile(join(f.files.root, 'plano-grande.png'), '');
+    await truncate(join(f.files.root, 'plano-grande.png'), MAX_RESULT + 1);
+    await writeFile(join(f.files.root, 'chico.pdf'), '%PDF-1.4');
+    engine.emit({ type: 'finished', conversationId: 'conversation-1', status: 'completed' });
+    await wait(() => !app.snapshot().works[0].busy);
+    const work = app.snapshot().works[0];
+    assert.deepEqual(work.messages[0].results?.map(r => r.name), ['chico.pdf']);
+    assert.match(work.problem!, /plano-grande\.png/);
+    assert.equal(work.problem!.includes(f.files.root), false);
+    // The backup still covers the file, so Deshacer stays available.
+    assert.ok(app.snapshot().undo);
+    assert.equal((await stat(join(f.files.root, 'plano-grande.png'))).size, MAX_RESULT + 1);
+  } finally { await app.close(); await f.cleanup(); }
+});
+
+test('result preflight failure does not block send; attachment failure does not create empty work', async () => {
   const f = await fixture();
   const scan = f.files.scan.bind(f.files);
   const app = new App(new FakeEngine(), join(f.dir, 'data'), () => {}, undefined, f.files);
   try {
     await app.start();
     f.files.scan = async () => { throw new Error('preflight failed'); };
-    await assert.rejects(app.command({ type: 'send', text: 'Prueba', attachments: [{ name: 'nota.txt', data: 'SG9sYQ==' }] }, () => {}), /preflight failed/);
-    assert.equal(app.snapshot().works.length, 0);
-    for (const directory of await readdir(join(f.files.root, 'adjuntos'))) assert.deepEqual(await readdir(join(f.files.root, 'adjuntos', directory)), []);
+    await app.command({ type: 'send', text: 'Prueba', attachments: [{ name: 'nota.txt', data: 'SG9sYQ==' }] }, () => {});
+    assert.equal(app.snapshot().works.length, 1);
+    await app.close();
+    // Separate instance to verify the independent attachment preflight failure.
     f.files.scan = scan;
     await rm(join(f.files.root, 'adjuntos'), { recursive: true });
     await writeFile(join(f.files.root, 'adjuntos'), 'not a directory');
-    await assert.rejects(app.command({ type: 'send', text: 'Prueba', attachments: [{ name: 'nota.txt', data: 'SG9sYQ==' }] }, () => {}));
-    assert.equal(app.snapshot().works.length, 0);
+    const clean = new App(new FakeEngine(), join(f.dir, 'clean-data'), () => {}, undefined, f.files);
+    await clean.start();
+    await assert.rejects(clean.command({ type: 'send', text: 'Prueba', attachments: [{ name: 'nota.txt', data: 'SG9sYQ==' }] }, () => {}));
+    assert.equal(clean.snapshot().works.length, 0);
+    await clean.close();
   } finally { f.files.scan = scan; await app.close(); await f.cleanup(); }
 });
 
@@ -173,7 +197,7 @@ test('exclusive Windows file lock is skipped with technical detail', { skip: pro
   const path = join(f.files.root, 'locked.png');
   await writeFile(path, 'locked');
   const script = `$s=[System.IO.File]::Open('${path.replace(/'/g, "''")}',[System.IO.FileMode]::Open,[System.IO.FileAccess]::ReadWrite,[System.IO.FileShare]::None);[Console]::WriteLine('LOCKED');[Console]::ReadLine()|Out-Null;$s.Dispose()`;
-  const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+  const child = spawn(join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', script], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
   const exited = once(child, 'exit');
   try {
     await new Promise<void>((resolve, reject) => {

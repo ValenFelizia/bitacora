@@ -47,15 +47,18 @@ export function classifyProblem(
   return "other";
 }
 
+/** Schedules `run` and returns a cancel function. Defaults to `setTimeout`. */
+export type ScheduleTimer = (run: () => void, delayMs: number) => () => void;
+
 export class CodexEngine implements Engine {
   private safety: ExecutionSafety = {
     allowed: false,
     detail: "Execution safety has not been checked",
   };
   private available = false;
-  private restartTimer?: NodeJS.Timeout;
+  private restartTimer?: () => void;
   private attempts = 0;
-  private stableTimer?: NodeJS.Timeout;
+  private stableTimer?: () => void;
   private exhausted = false;
   private interrupted = new Set<string>();
   private starting = new Map<
@@ -88,11 +91,17 @@ export class CodexEngine implements Engine {
       args?: string[];
       restartDelayMs?: number;
       stableAfterMs?: number;
+      scheduleTimer?: ScheduleTimer;
       probeProtection?: () => Promise<boolean>;
       requestTimeoutMs?: number;
       setupTimeoutMs?: number;
     },
   ) {}
+  private scheduleTimer(run: () => void, delayMs: number) {
+    if (this.options.scheduleTimer) return this.options.scheduleTimer(run, delayMs);
+    const timer = setTimeout(run, delayMs);
+    return () => clearTimeout(timer);
+  }
   subscribe(listener: (event: EngineEvent) => void) {
     this.listeners.add(listener);
     return () => {
@@ -178,8 +187,8 @@ export class CodexEngine implements Engine {
         throw new Error("Engine stopped during initialization");
       this.available = true;
       this.exhausted = false;
-      clearTimeout(this.stableTimer);
-      this.stableTimer = setTimeout(() => { this.attempts = 0; }, this.options.stableAfterMs ?? 60_000);
+      this.stableTimer?.();
+      this.stableTimer = this.scheduleTimer(() => { this.attempts = 0; }, this.options.stableAfterMs ?? 60_000);
       const account = await this.account();
       if (this.child !== child)
         throw new Error("Engine stopped during account read");
@@ -299,7 +308,7 @@ export class CodexEngine implements Engine {
     this.safety = { ...this.safety, allowed: false };
     this.cancelPending(new Error("Engine reloading protection"));
     clearTimeout(this.setupTimer);
-    clearTimeout(this.stableTimer);
+    this.stableTimer?.();
     this.emit({ type: "availability", available: false, safety: this.safety });
     if (child) await new Promise<void>(resolve => {
       child.once("exit", () => resolve());
@@ -351,7 +360,7 @@ export class CodexEngine implements Engine {
     this.setupPending = false;
     this.safety = { ...this.safety, allowed: false };
     clearTimeout(this.setupTimer);
-    clearTimeout(this.stableTimer);
+    this.stableTimer?.();
     if (!this.stopping) {
       this.emit({
         type: "availability",
@@ -375,7 +384,7 @@ export class CodexEngine implements Engine {
       if (!this.restartTimer && this.attempts < 5) {
         const delay =
           (this.options.restartDelayMs ?? 500) * 2 ** this.attempts++;
-        this.restartTimer = setTimeout(() => {
+        this.restartTimer = this.scheduleTimer(() => {
           this.restartTimer = undefined;
           void this.start().catch((error) => {
             if (this.child) return;
@@ -406,14 +415,19 @@ export class CodexEngine implements Engine {
         );
       else pending.resolve(message.result);
     } else if (message.method && message.id !== undefined) {
-      // Interactive tools are outside this issue. Reject explicitly; never leave Codex waiting.
-      this.write({
-        id: message.id,
-        error: {
-          code: -32601,
-          message: "Interactive requests are not supported by Bitacora.",
-        },
-      });
+      // Never approve an escalation or surface an interactive request to the user.
+      const responses: Record<string, unknown> = {
+        "item/commandExecution/requestApproval": { decision: "decline" },
+        "item/fileChange/requestApproval": { decision: "decline" },
+        "execCommandApproval": { decision: "abort" },
+        "applyPatchApproval": { decision: "abort" },
+        "item/permissions/requestApproval": { permissions: {}, scope: "turn" },
+        "item/tool/requestUserInput": { answers: {} },
+        "mcpServer/elicitation/request": { action: "decline", content: null, _meta: null },
+        "item/tool/call": { success: false, contentItems: [] },
+      };
+      if (Object.hasOwn(responses, message.method)) this.write({ id: message.id, result: responses[message.method] });
+      else this.write({ id: message.id, error: { code: -32601, message: "Interactive requests are not supported by Bitacora." } });
     } else if (message.method) this.notification(message as ServerNotification);
   }
   private notification(n: ServerNotification) {
@@ -590,7 +604,7 @@ export class CodexEngine implements Engine {
       ...this.settings(),
     });
   }
-  async send(conversationId: string, text: string, files: import("../engine").EngineFile[] = []) {
+  async send(conversationId: string, text: string, files: import("../engine").EngineFile[] = [], context?: { filesReverted?: boolean }) {
     if (!this.available || !this.safety.allowed)
       throw new EngineFailure("other", this.safety.detail);
     this.interrupted.delete(conversationId);
@@ -601,6 +615,7 @@ export class CodexEngine implements Engine {
         threadId: conversationId,
         input: [
           { type: "text", text, text_elements: [] },
+          ...(context?.filesReverted ? [{ type: "text" as const, text: "Aviso de Bitácora (no escrito por la usuaria): se deshicieron los cambios de archivos del pedido anterior. Revisá el estado actual antes de continuar.", text_elements: [] }] : []),
           ...files.filter(f => !f.mime.startsWith("image/")).map(f => ({ type: "mention" as const, name: basename(f.path), path: relative(this.options.workspace, f.path) })),
           ...files.filter(f => f.mime.startsWith("image/")).map(f => ({ type: "localImage" as const, path: f.path })),
         ],
@@ -644,8 +659,8 @@ export class CodexEngine implements Engine {
   async close() {
     this.stopping = true;
     clearTimeout(this.setupTimer);
-    clearTimeout(this.restartTimer);
-    clearTimeout(this.stableTimer);
+    this.restartTimer?.();
+    this.stableTimer?.();
     const child = this.child;
     if (!child) return;
     await new Promise<void>((resolve) => {

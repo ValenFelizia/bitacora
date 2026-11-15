@@ -1,0 +1,149 @@
+{
+  "baseline": "7b120b6",
+  "files": 2004,
+  "logicalBytes": 99876864,
+  "previousPR18": {
+    "files": 2004,
+    "logicalBytes": 99876864,
+    "records": [
+      {
+        "name": "primera copia",
+        "ms": 5897,
+        "objects": 2004,
+        "contentBytes": 99876864,
+        "manifestBytes": 649034
+      },
+      {
+        "name": "pedido sin cambios (copia y comparación final)",
+        "ms": 2019,
+        "objects": 2004,
+        "contentBytes": 99876864,
+        "manifestBytes": 324519
+      },
+      {
+        "name": "pedido con un archivo cambiado (copia y comparación final)",
+        "ms": 2256,
+        "objects": 2005,
+        "contentBytes": 99893248,
+        "manifestBytes": 649029
+      },
+      {
+        "name": "deshacer",
+        "ms": 3731,
+        "objects": 0,
+        "contentBytes": 0,
+        "manifestBytes": 131
+      }
+    ]
+  },
+  "records": [
+    {
+      "name": "first copy (shared before scan)",
+      "ms": 6604,
+      "contentBytes": 99876864,
+      "objects": 2004
+    },
+    {
+      "name": "main unchanged before + after scans",
+      "ms": 337,
+      "contentBytes": 99876864,
+      "objects": 2004
+    },
+    {
+      "name": "PR18 ecfafed unchanged (four scans)",
+      "ms": 2255,
+      "contentBytes": 99876864,
+      "objects": 2004
+    },
+    {
+      "name": "rework unchanged shared before + after",
+      "ms": 362,
+      "contentBytes": 99876864,
+      "objects": 2004
+    },
+    {
+      "name": "main unchanged before + after scans",
+      "ms": 336,
+      "contentBytes": 99876864,
+      "objects": 2004
+    },
+    {
+      "name": "PR18 ecfafed unchanged (four scans)",
+      "ms": 2036,
+      "contentBytes": 99876864,
+      "objects": 2004
+    },
+    {
+      "name": "rework unchanged shared before + after",
+      "ms": 354,
+      "contentBytes": 99876864,
+      "objects": 2004
+    },
+    {
+      "name": "main unchanged before + after scans",
+      "ms": 319,
+      "contentBytes": 99876864,
+      "objects": 2004
+    },
+    {
+      "name": "PR18 ecfafed unchanged (four scans)",
+      "ms": 2087,
+      "contentBytes": 99876864,
+      "objects": 2004
+    },
+    {
+      "name": "rework unchanged shared before + after",
+      "ms": 351,
+      "contentBytes": 99876864,
+      "objects": 2004
+    },
+    {
+      "name": "main unchanged before + after scans",
+      "ms": 341,
+      "contentBytes": 99876864,
+      "objects": 2004
+    },
+    {
+      "name": "PR18 ecfafed unchanged (four scans)",
+      "ms": 1894,
+      "contentBytes": 99876864,
+      "objects": 2004
+    },
+    {
+      "name": "rework unchanged shared before + after",
+      "ms": 303,
+      "contentBytes": 99876864,
+      "objects": 2004
+    },
+    {
+      "name": "main unchanged before + after scans",
+      "ms": 287,
+      "contentBytes": 99876864,
+      "objects": 2004
+    },
+    {
+      "name": "PR18 ecfafed unchanged (four scans)",
+      "ms": 1799,
+      "contentBytes": 99876864,
+      "objects": 2004
+    },
+    {
+      "name": "rework unchanged shared before + after",
+      "ms": 302,
+      "contentBytes": 99876864,
+      "objects": 2004
+    },
+    {
+      "name": "rework one changed file before + after",
+      "ms": 353,
+      "contentBytes": 99893248,
+      "objects": 2005
+    },
+    {
+      "name": "rework undo",
+      "ms": 571,
+      "contentBytes": 0,
+      "objects": 0
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 import type { Account, ExecutionSafety } from "./engine";
 export type Upload = { name: string; data: string };
-export type FileRef = { id: string; path: string; name: string; mime: string; createdAt: string };
+export type FileRef = { id: string; path: string; name: string; mime: string; createdAt: string; reverted?: boolean };
 export type Message = { id: string; role: "user" | "assistant"; text: string; attachments?: FileRef[]; results?: FileRef[] };
 export type Work = {
   id: string;
@@ -20,8 +20,12 @@ export type Snapshot = {
   engine: { available: boolean; exhausted?: boolean; safety: ExecutionSafety };
   notice?: string;
   fileToken?: string;
+  undo?: import("./backups").UndoTarget;
+  fileRevision?: number;
 };
 export type ClientCommand =
+  | { type: "undo"; id: string }
+  | { type: "discardUndo"; id: string }
   | { type: "connect" }
   | { type: "retry" }
   | { type: "prepareProtection" }

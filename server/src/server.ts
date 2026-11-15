@@ -27,7 +27,7 @@ export async function serve(
       }
       if (url.pathname !== "/files" || !["GET", "HEAD"].includes(req.method || "") || !files) { res.writeHead(404); res.end(); return; }
       const ref = app.file(url.searchParams.get("id") || "");
-      if (!ref) { res.writeHead(404); res.end(); return; }
+      if (!ref || ref.reverted) { res.writeHead(404); res.end(); return; }
       const { handle, size } = await files.openResult(ref);
       try {
         res.writeHead(200, {
@@ -89,7 +89,7 @@ export async function serve(
           const command = JSON.parse(String(data)) as ClientCommand;
           if (
             !command ||
-            !["connect", "retry", "prepareProtection", "send", "interrupt"].includes(command.type)
+            !["discardUndo", "undo", "connect", "retry", "prepareProtection", "send", "interrupt"].includes(command.type)
           )
             throw new Error("Invalid message");
           await app.command(command, (message) => send(ws, message));
@@ -116,6 +116,8 @@ export async function serve(
     throw error;
   }
   return {
+    // Local lifecycle handle; never serialized or exposed over HTTP/WebSocket.
+    app,
     port: (http.address() as { port: number }).port,
     async close() {
       for (const ws of sockets.clients) ws.terminate();

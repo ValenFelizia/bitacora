@@ -1,0 +1,40 @@
+✖ review blocker 1: manual additions and edits survive undo, including a later unchanged request (70.6284ms)
+✖ review blocker 2: write-locked file prevents all mutations, preserves undo and retries (265.5143ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 0
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 775.3433
+
+✖ failing tests:
+
+test at server\test\undo-review.test.ts:14:1
+✖ review blocker 1: manual additions and edits survive undo, including a later unchanged request (70.6284ms)
+  Error: ENOENT: no such file or directory, open 'C:\Users\Valen\Desktop\Vale\Desarrollo Web\bitacora\.local\undo-review-1m7bAT\agency\foto.jpg'
+      at async open (node:internal/fs/promises:640:25)
+      at async readFile (node:internal/fs/promises:1287:14)
+      at async TestContext.<anonymous> (C:\Users\Valen\Desktop\Vale\Desarrollo Web\bitacora\server\test\undo-review.test.ts:22:18)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:385:3) {
+    errno: -4058,
+    code: 'ENOENT',
+    syscall: 'open',
+    path: 'C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\bitacora\\.local\\undo-review-1m7bAT\\agency\\foto.jpg'
+  }
+
+test at server\test\undo-review.test.ts:27:1
+✖ review blocker 2: write-locked file prevents all mutations, preserves undo and retries (265.5143ms)
+  Error: ENOENT: no such file or directory, open 'C:\Users\Valen\Desktop\Vale\Desarrollo Web\bitacora\.local\undo-review-aNSkN2\agency\new.txt'
+      at async open (node:internal/fs/promises:640:25)
+      at async readFile (node:internal/fs/promises:1287:14)
+      at async TestContext.<anonymous> (C:\Users\Valen\Desktop\Vale\Desarrollo Web\bitacora\server\test\undo-review.test.ts:34:18)
+      at async Test.run (node:internal/test_runner/test:1208:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:831:7) {
+    errno: -4058,
+    code: 'ENOENT',
+    syscall: 'open',
+    path: 'C:\\Users\\Valen\\Desktop\\Vale\\Desarrollo Web\\bitacora\\.local\\undo-review-aNSkN2\\agency\\new.txt'
+  }

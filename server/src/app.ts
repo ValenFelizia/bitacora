@@ -1,7 +1,8 @@
 import { existsSync } from "node:fs";
+import { Backups, BACKUP_LIMITS, RestoreProblem, pathKey } from './backups';
 import { mkdir, readFile, writeFile, rename, copyFile, rm } from "node:fs/promises";
-import { WorkspaceFiles, type FileScan } from "./workspace-files";
-import { join } from "node:path";
+import { WorkspaceFiles, MAX_RESULT, type FileScan } from "./workspace-files";
+import { basename, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { rememberUserUrls } from './allowed-urls';
 import { initializeKit } from './tools/kit';
@@ -11,6 +12,9 @@ import type { FileRef, Work, Snapshot, ClientCommand, ServerMessage } from "./co
 
 type SavedWork = Work & { conversationId: string; pendingFiles?: { messageId: string; before?: Record<string, string> } };
 export class App {
+  private backups?: Backups;
+  private backupReceipt?: string;
+  private fileRevision = 0;
   private scanning = new Set<string>();
   private scans = new Set<Promise<void>>();
   private notice?: string;
@@ -53,6 +57,7 @@ export class App {
       )
         throw new SyntaxError("Invalid saved work");
       this.works = saved.works;
+      this.backupReceipt = typeof saved.backupReceipt === "string" ? saved.backupReceipt : undefined;
       for (const work of this.works)
         if (work.busy) {
           work.busy = false;
@@ -76,6 +81,12 @@ export class App {
       } else if ((error as NodeJS.ErrnoException).code !== "ENOENT")
         throw error;
     }
+    if (this.workspace) {
+      try { this.backups = new Backups(this.workspace.root, this.data, BACKUP_LIMITS, this.workspace); await this.backups.initialize(this.backupReceipt); }
+      catch { this.backups = undefined; this.notice = "No pude preparar las copias. Podés trabajar, pero esta vez no vas a poder deshacer."; }
+      if (this.backups?.invalidated) this.notice = "No pude confirmar que la copia sea del último pedido. No voy a ofrecer Deshacer para esa copia.";
+      if (this.backups?.restoring) this.notice = "Quedó un Deshacer pendiente. Podés reintentarlo o dejar la carpeta como está.";
+    }
     for (const work of this.works) if (work.pendingFiles) { await this.collectResults(work); this.dirty = true; }
     this.unsubscribe = this.engine.subscribe((event) => this.event(event));
     await this.engine.start();
@@ -92,6 +103,8 @@ export class App {
       },
       hasBrand: this.workspace ? existsSync(join(this.workspace.root, "marca")) : undefined,
       notice: this.notice,
+      undo: !this.submitting && !this.works.some(w => w.busy) ? this.backups?.target : undefined,
+      fileRevision: this.fileRevision,
       works: this.works.map(({ conversationId: _, pendingFiles: __, ...work }) => work),
     };
   }
@@ -106,7 +119,7 @@ export class App {
   }
   private changed() {
     this.dirty = false;
-    const content = JSON.stringify({ version: 1, works: this.works }, null, 2);
+    const content = JSON.stringify({ version: 1, works: this.works, backupReceipt: this.backupReceipt }, null, 2);
     this.writes = this.writes
       .catch(() => {})
       .then(async () => {
@@ -140,14 +153,33 @@ export class App {
       const before = pending.before
         ? { entries: Object.fromEntries(Object.entries(pending.before).map(([p, hash]) => [p, { hash }])) } as FileScan
         : JSON.parse(await readFile(this.pendingPath(work), 'utf8')) as FileScan;
-      const after = await this.workspace.scan(before);
+      let after: FileScan;
+      if (this.backups) {
+        const complete = await this.backups.finish();
+        if (!complete) this.notice = "No pude guardar la copia de este pedido. Esta vez no vas a poder deshacer.";
+        else if (this.backups.latestOmitted.length) this.notice = `No pude guardar copia de ${this.backups.latestOmitted.join(', ')}, así que eso no lo puedo deshacer.`;
+        if (!this.backups.lastScan) throw new Error('File review unavailable');
+        after = this.backups.lastScan;
+      } else after = await this.workspace.scan(before);
       this.scanDetail(work, after);
       const message = work.messages.find(m => m.id === pending.messageId);
-      if (message) message.results = Object.keys(after.entries).filter(p => after.entries[p].hash !== before.entries[p]?.hash).map(p => this.workspace!.result(p));
+      const previous = new Map(Object.entries(before.entries).map(([p, entry]) => [pathKey(p), entry.hash]));
+      const changed = Object.keys(after.entries).filter(p => this.workspace!.isResult(p) && after.entries[p].hash !== previous.get(pathKey(p)));
+      // The backup keeps files up to its own limit, but a result the app cannot
+      // serve must not become a card the user cannot open.
+      const tooBig = changed.filter(p => after.entries[p].size > MAX_RESULT).map(p => basename(p));
+      if (message) message.results = changed.filter(p => after.entries[p].size <= MAX_RESULT).map(p => this.workspace!.result(p));
+      if (tooBig.length) {
+        const notice = tooBig.length === 1
+          ? `Se generó ${tooBig[0]}, pero es demasiado grande para mostrarlo acá.`
+          : `Se generaron ${tooBig.join(', ')}, pero son demasiado grandes para mostrarlos acá.`;
+        work.problem = work.problem ? `${work.problem} ${notice}` : notice;
+      }
     } catch (error) {
       work.problem = "No pude revisar los resultados de ese pedido. Podés seguir trabajando.";
       work.details = (work.details + String(error) + "\n").slice(-100000);
     } finally {
+      this.fileRevision++;
       delete work.pendingFiles;
       try { await rm(this.pendingPath(work), { force: true }); }
       catch (error) { work.details = (work.details + String(error) + "\n").slice(-100000); }
@@ -268,6 +300,29 @@ export class App {
     command: ClientCommand,
     reply: (message: ServerMessage) => void,
   ) {
+    if (command.type === "undo" || command.type === "discardUndo") {
+      if (this.submitting || this.works.some(w => w.busy) || !this.backups) {
+        reply({ type: "problem", text: this.backups ? "Esperá a que termine el pedido actual para deshacer." : "No hay una copia disponible para deshacer." }); return;
+      }
+      this.submitting = true;
+      const undoWork = this.works.find(w => w.id === this.backups!.target?.workId);
+      if (undoWork) undoWork.details += `Papelera de Bitácora: ${this.backups.trashLocation}\n`;
+      this.changed();
+      try {
+        const result = command.type === "discardUndo" ? await this.backups.discard(command.id) : await this.backups.undo(command.id);
+        this.notice = `Listo. Deshice ${result.restored.length} cambios. Lo que agregaste o cambiaste después quedó como estaba.`;
+        if ('remaining' in result && Array.isArray(result.remaining)) this.notice = `Dejé la carpeta como está. Podés seguir trabajando. Quedó revertido: ${result.restored.map(p => p.split(/[\\/]/).at(-1)).join(', ') || 'ningún archivo'}. No quedó revertido: ${result.remaining.join(', ') || 'ningún archivo'}.`;
+        if (result.skipped.length) this.notice += ` Dejé ${result.skipped.length} sin tocar porque cambiaron después: ${result.skipped.join(', ')}.`;
+        if (result.omitted.length) this.notice += ` No pude guardar copia de ${result.omitted.join(', ')}, así que eso no lo puedo deshacer.`;
+        const reverted = this.works.find(w => w.id === result.target.workId)?.messages.find(m => m.id === result.target.messageId);
+        for (const file of reverted?.results || []) if (result.restored.includes(file.path)) file.reverted = true;
+      } catch (error) {
+        this.notice = error instanceof RestoreProblem ? error.message : this.backups.restoring
+          ? "No pude completar Deshacer. Podés reintentar o dejar la carpeta como está."
+          : "No pude empezar Deshacer. Podés seguir trabajando o volver a intentarlo.";
+      } finally { this.fileRevision++; this.submitting = false; this.changed(); }
+      return;
+    }
     if (command.type === "prepareProtection") {
       if (!this.available || this.submitting || this.works.some(w => w.busy)) return;
       await this.engine.prepareProtection();
@@ -293,6 +348,7 @@ export class App {
       command.text.length > 20000
     )
       throw new Error("Invalid request");
+    if (this.backups?.restoring) { reply({ type: "problem", text: "Primero elegí Reintentar deshacer o Dejar la carpeta como está." }); return; }
     if (this.submitting || this.works.some((w) => w.busy)) {
       reply({
         type: "problem",
@@ -351,7 +407,13 @@ export class App {
       }
       attachments = await this.workspace?.attach(work.id, uploads || []) || [];
       const messageId = randomUUID();
-      const before = await this.workspace?.scan();
+      if (this.workspace) this.backupReceipt = randomUUID();
+      this.notice = undefined;
+      let before: FileScan | undefined;
+      if (this.backups) {
+        if (!await this.backups.before({ workId: work.id, title: work.title, request: command.text.trim().slice(0, 160), messageId }, this.backupReceipt)) this.notice = "No pude guardar la copia de este pedido. Esta vez no vas a poder deshacer.";
+        before = this.backups.lastScan || { entries: {}, warnings: ["No pude revisar todos los resultados."], hashedBytes: 0, visited: 0 };
+      } else before = await this.workspace?.scan().catch(() => ({ entries: {}, warnings: ["No pude revisar todos los resultados."], hashedBytes: 0, visited: 0 }));
       if (before) {
         this.scanDetail(work, before);
         await mkdir(join(this.data, 'pending-files'), { recursive: true });
@@ -373,7 +435,11 @@ export class App {
       await this.writes;
       reply({ type: "selected", workId: work.id });
       await rememberUserUrls(this.data, command.text);
-      await this.engine.send(work.conversationId, command.text.trim(), await Promise.all((attachments || []).map(async f => ({ path: await this.workspace!.safePath(f.path), mime: f.mime }))));
+      await this.engine.send(work.conversationId, command.text.trim(), await Promise.all((attachments || []).map(async f => ({ path: await this.workspace!.safePath(f.path), mime: f.mime }))), { filesReverted: this.backups?.hasNotice(work.id) });
+      if (this.backups?.hasNotice(work.id)) {
+        try { await this.backups.acknowledge(work.id); }
+        catch { work.details += "No pude guardar que el motor recibió el aviso de Deshacer.\n"; }
+      }
     } catch (error) {
       if (error instanceof EngineFailure && error.kind === "disconnected")
         this.accountState = { connected: false };
@@ -398,6 +464,7 @@ export class App {
       throw error;
     } finally {
       this.submitting = false;
+      this.publish({ type: "snapshot", state: this.snapshot() });
     }
   }
   async close() {
