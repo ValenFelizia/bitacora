@@ -54,6 +54,14 @@ export type ScheduleTimer = (run: () => void, delayMs: number) => () => void;
 /** Runs `taskkill /T /F` on a live process tree. */
 export type KillProcessTree = (pid: number) => Promise<boolean>;
 
+/** Result of stopping a process tree. */
+export type TreeStop = {
+  /** False when only the app-server could be stopped. */
+  complete: boolean;
+  /** False when the app-server was still alive when the wait ran out. */
+  exited: boolean;
+};
+
 /**
  * Kills the child and everything it spawned. `child.kill()` only stops the
  * app-server: the sandboxed commands the agent runs are grandchildren and
@@ -110,7 +118,7 @@ export class CodexEngine implements Engine {
   // Children that already exited, and the tree stops already in flight: a child
   // is never killed twice and never killed once it is gone.
   private exitedChildren = new WeakSet<ChildProcessWithoutNullStreams>();
-  private treeStops = new WeakMap<ChildProcessWithoutNullStreams, Promise<boolean>>();
+  private treeStops = new WeakMap<ChildProcessWithoutNullStreams, Promise<TreeStop>>();
   executionSafety() {
     return this.safety;
   }
@@ -178,6 +186,10 @@ export class CodexEngine implements Engine {
   }
   private async runStart() {
     if (this.stopping) return;
+    // A process that could not be stopped may still be writing in the same
+    // folder: starting another one would let two engines work at once.
+    if (this.lastChild && this.childRunning(this.lastChild))
+      throw new Error("The previous engine process is still running");
     await mkdir(this.options.home, { recursive: true });
     await mkdir(this.options.workspace, { recursive: true });
     if (!this.options.args) {
@@ -242,7 +254,12 @@ export class CodexEngine implements Engine {
     this.child.on("error", failedChild);
     this.child.on("exit", () => {
       this.exitedChildren.add(child);
-      failedChild(new Error(`Codex process stopped. ${this.stderr}`));
+      const stopped = () => failedChild(new Error(`Codex process stopped. ${this.stderr}`));
+      // A stop in flight owns the release: the app must not scan while the tree
+      // is still being killed.
+      const stop = this.treeStops.get(child);
+      if (stop) void stop.then(stopped, stopped);
+      else stopped();
     });
     try {
       await this.rpc("initialize", {
@@ -380,9 +397,10 @@ export class CodexEngine implements Engine {
     this.pending.clear();
   }
   /** Kills the process tree and waits (bounded) until the child really exited.
-   *  Returns false when only the app-server could be stopped. */
-  private stopTree(child: ChildProcessWithoutNullStreams): Promise<boolean> {
-    if (!this.childRunning(child)) return Promise.resolve(true);
+   *  `complete` is false when only the app-server could be stopped; `exited` is
+   *  false when the app-server was still alive when the wait ran out. */
+  private stopTree(child: ChildProcessWithoutNullStreams): Promise<TreeStop> {
+    if (!this.childRunning(child)) return Promise.resolve({ complete: true, exited: true });
     const stopping = this.treeStops.get(child);
     if (stopping) return stopping;
     const stop = this.runStopTree(child);
@@ -393,11 +411,16 @@ export class CodexEngine implements Engine {
     );
     return stop;
   }
-  private async runStopTree(child: ChildProcessWithoutNullStreams) {
+  private async runStopTree(child: ChildProcessWithoutNullStreams): Promise<TreeStop> {
     // Listen before killing, so an exit that happens during the kill is seen.
     const exited = this.waitExit(child, this.options.killTimeoutMs ?? 5000);
     const complete = await this.killChildTree(child);
-    return complete && (await exited);
+    return { complete, exited: await exited };
+  }
+  /** The stop already running for the current child, if any. */
+  private currentStop() {
+    const child = this.child;
+    return child ? this.treeStops.get(child) : undefined;
   }
   private killChildTree(child: ChildProcessWithoutNullStreams) {
     const killProcessTree =
@@ -448,7 +471,7 @@ export class CodexEngine implements Engine {
     const child = this.child;
     if (!child) return;
     this.failing = conversationId;
-    const complete = await this.stopTree(child);
+    const { complete, exited } = await this.stopTree(child);
     // A parent-only termination leaves commands running: the app must not scan
     // as if every writer had stopped.
     if (!complete)
@@ -457,6 +480,13 @@ export class CodexEngine implements Engine {
         conversationId,
         text: "No pude detener todos los procesos del motor: puede quedar algo escribiendo archivos.",
       });
+    if (!exited) {
+      // The app-server is still alive and may still be writing. It must not
+      // take new work: fail() releases the app, and start() refuses to spawn
+      // another process while this one is running.
+      this.child = undefined;
+      this.fail(new Error("The engine process did not stop"));
+    }
   }
   private clearPause(conversationId?: string) {
     for (const [id, timer] of this.pauseTimers) {
@@ -838,16 +868,20 @@ export class CodexEngine implements Engine {
       this.pending.set(id, {
         resolve: (value) => resolve((value as TurnStartResponse).turn),
         // A stop caused by this same conversation must reach the app as the
-        // restart warning, not as a generic failure.
-        reject: (error) =>
-          reject(
+        // restart warning, not as a generic failure, and only after the tree is
+        // really stopped: the app scans as soon as this rejects.
+        reject: (error) => {
+          const failure =
             this.failing === conversationId
               ? new EngineFailure(
                   "unresponsive",
                   `The engine stopped answering turn/start and was restarted. ${error.message}`,
                 )
-              : error,
-          ),
+              : error;
+          const stop = this.currentStop();
+          if (stop) void stop.then(() => reject(failure), () => reject(failure));
+          else reject(failure);
+        },
         timer,
       });
       try {

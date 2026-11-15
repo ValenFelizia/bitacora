@@ -156,6 +156,11 @@ createInterface({ input: process.stdin })
           // No reply and no turn/started: nothing proves the turn is running.
           break;
         }
+        if (scenario === "error-after-timeout") {
+          // The reply arrives after the turn/start deadline, as an error.
+          setTimeout(() => send({ id: m.id, error: { message: "late failure" } }), Number(process.env.BITACORA_FAKE_TURN_DELAY || 400));
+          break;
+        }
         if (scenario === "pause-hang") {
           // The turn starts and the pause is accepted, but it never ends.
           interruptHangs = true;

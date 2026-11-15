@@ -16,6 +16,7 @@ async function fixture(
   options: {
     turnStartTimeoutMs?: number;
     pauseTimeoutMs?: number;
+    killTimeoutMs?: number;
     restartDelayMs?: number;
     killProcessTree?: KillProcessTree;
   } = {},
@@ -35,6 +36,7 @@ async function fixture(
     requestTimeoutMs: 30_000,
     turnStartTimeoutMs: options.turnStartTimeoutMs ?? 1000,
     pauseTimeoutMs: options.pauseTimeoutMs ?? 200,
+    killTimeoutMs: options.killTimeoutMs,
     killProcessTree: options.killProcessTree,
   });
   const events: EngineEvent[] = [];
@@ -224,6 +226,65 @@ test("a silent start stops the tree once, through taskkill", async () => {
     assert.equal(calls.length, 1);
     assert.ok(calls[0] > 0);
   } finally {
+    await f.close();
+  }
+});
+
+test("a reply while the tree is stopping waits for the stop", async () => {
+  // Pausar reaches its deadline while turn/start is still pending. The app
+  // scans as soon as send() rejects, so that rejection must not happen while
+  // the tree is still being stopped.
+  const order: string[] = [];
+  process.env.BITACORA_FAKE_TURN_DELAY = "400";
+  const f = await fixture({
+    turnStartTimeoutMs: 30_000,
+    pauseTimeoutMs: 200,
+    killProcessTree: async (pid) => {
+      await delay(600);
+      order.push("stopped");
+      process.kill(pid);
+      return true;
+    },
+  });
+  try {
+    await f.engine.start();
+    const sending = f.engine.send("thread-1", "error-after-timeout");
+    await f.engine.interrupt("thread-1");
+    await assert.rejects(sending);
+    order.push("released");
+    assert.deepEqual(order, ["stopped", "released"]);
+  } finally {
+    delete process.env.BITACORA_FAKE_TURN_DELAY;
+    await f.close();
+  }
+});
+
+test("an engine whose process cannot be stopped is not restarted", async () => {
+  const killed: number[] = [];
+  const f = await fixture({
+    turnStartTimeoutMs: 200,
+    killTimeoutMs: 300,
+    // Pretends the tree was killed but leaves the app-server running.
+    killProcessTree: async (pid) => {
+      killed.push(pid);
+      return true;
+    },
+  });
+  const pidFile = join(f.dir, "pids.txt");
+  process.env.BITACORA_FAKE_PID = pidFile;
+  try {
+    await f.engine.start();
+    await assert.rejects(f.engine.send("thread-1", "silent-start"));
+    await delay(400);
+    // A live app-server must not get a second one next to it.
+    assert.equal((await started(pidFile)).length, 1);
+    assert.equal(f.engine.executionSafety().allowed, false);
+  } finally {
+    for (const pid of killed) {
+      try { process.kill(pid); } catch { /* already gone */ }
+    }
+    await until(() => killed.every((pid) => !alive(pid)));
+    delete process.env.BITACORA_FAKE_PID;
     await f.close();
   }
 });
