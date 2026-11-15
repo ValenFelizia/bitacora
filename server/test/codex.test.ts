@@ -188,6 +188,30 @@ function fakeClock() {
     },
   };
 }
+test("a slow turn/start reply keeps the request until the turn ends", {
+  // Reproduces the finding from PR #11: the request timeout releases the work
+  // while the turn is still changing files. Fixing it changes what the app
+  // should do when the engine stops answering, so it waits for a decision.
+  skip: "Pendiente de decisión: qué hacer cuando el motor no responde pero el turno sigue (issue #20)",
+}, async () => {
+  process.env.BITACORA_FAKE_TURN_DELAY = "1800";
+  const f = await fixture(60_000, { requestTimeoutMs: 1000 });
+  try {
+    const sending = f.engine.send("thread-1", "slow-start");
+    const outcome = await Promise.race([
+      sending.then(() => "sent", (error: Error) => `rejected: ${error.message}`),
+      delay(1400).then(() => "still running"),
+    ]);
+    // The turn already started: the request must not be released.
+    assert.equal(outcome, "still running");
+    await sending;
+    assert.ok(f.events.some((e) => e.type === "finished"));
+  } finally {
+    delete process.env.BITACORA_FAKE_TURN_DELAY;
+    await f.close();
+  }
+});
+
 test("stdio handshake, activities, retry and server-initiated rejection", async () => {
   const f = await fixture();
   try {
