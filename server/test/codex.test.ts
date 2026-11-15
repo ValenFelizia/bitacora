@@ -236,6 +236,23 @@ test("preparing protection does not lose a login in progress", async () => {
   }
 });
 
+test("preparing protection twice starts the Windows setup once", async () => {
+  process.env.BITACORA_FAKE_SAFETY = "notConfigured";
+  process.env.BITACORA_FAKE_LOGIN_CANCEL_DELAY = "100";
+  const f = await fixture(60_000, { requestTimeoutMs: 2000 });
+  try {
+    await f.engine.connectAccount();
+    // The second call arrives while the login cancellation is still pending.
+    await Promise.all([f.engine.prepareProtection(), f.engine.prepareProtection()]);
+    await until(() => f.engine.executionSafety().allowed);
+    assert.equal((await f.records()).filter((m) => m.method === "windowsSandbox/setupStart").length, 1);
+  } finally {
+    delete process.env.BITACORA_FAKE_SAFETY;
+    delete process.env.BITACORA_FAKE_LOGIN_CANCEL_DELAY;
+    await f.close();
+  }
+});
+
 test("stdio handshake, activities, retry and server-initiated rejection", async () => {
   const f = await fixture();
   try {

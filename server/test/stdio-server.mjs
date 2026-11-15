@@ -65,7 +65,7 @@ createInterface({ input: process.stdin })
         });
         break;
       case "account/login/cancel":
-        reply({});
+        setTimeout(() => reply({}), Number(process.env.BITACORA_FAKE_LOGIN_CANCEL_DELAY || 0));
         break;
       case "thread/start":
         reply({ thread: { id: threadId } });

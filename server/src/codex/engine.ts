@@ -277,6 +277,9 @@ export class CodexEngine implements Engine {
       if (this.safety.status === "needed" && !this.safety.needsPermission) await this.prepareProtection();
       return;
     }
+    // Mark the preparation as started before awaiting anything, so a second
+    // click cannot start the Windows setup again.
+    this.setProtection({ ...this.safety, allowed: false, status: "preparing", issue: undefined });
     // The setup replaces the process, so a login in progress cannot survive:
     // cancel it explicitly instead of killing it silently.
     if (this.loginId) {
@@ -285,7 +288,6 @@ export class CodexEngine implements Engine {
       try { await this.rpc("account/login/cancel", { loginId }); }
       catch { /* the process is replaced anyway */ }
     }
-    this.setProtection({ ...this.safety, allowed: false, status: "preparing", issue: undefined });
     try {
       if (this.setupMode === "mxc") {
         await this.rpc("config/value/write", { keyPath: "windows.sandbox", value: "mxc",
