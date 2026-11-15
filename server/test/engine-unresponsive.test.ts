@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { CodexEngine } from "../src/codex/engine";
+import { CodexEngine, killTree, type KillProcessTree } from "../src/codex/engine";
 import { App } from "../src/app";
 import { WorkspaceFiles } from "../src/workspace-files";
 import type { ServerMessage } from "../src/contracts";
@@ -13,7 +13,12 @@ import type { EngineEvent } from "../src/engine";
 // the app waiting forever: the engine is stopped and the app releases the work.
 
 async function fixture(
-  options: { requestTimeoutMs?: number; pauseTimeoutMs?: number; restartDelayMs?: number } = {},
+  options: {
+    requestTimeoutMs?: number;
+    pauseTimeoutMs?: number;
+    restartDelayMs?: number;
+    killProcessTree?: KillProcessTree;
+  } = {},
 ) {
   await mkdir(".local", { recursive: true });
   const dir = await mkdtemp(resolve(".local/unresponsive-"));
@@ -28,6 +33,7 @@ async function fixture(
     stableAfterMs: 60_000,
     requestTimeoutMs: options.requestTimeoutMs ?? 200,
     pauseTimeoutMs: options.pauseTimeoutMs ?? 200,
+    killProcessTree: options.killProcessTree,
   });
   const events: EngineEvent[] = [];
   engine.subscribe((event) => events.push(event));
@@ -37,9 +43,12 @@ async function fixture(
     events,
     log,
     close: async () => {
-      await engine.close();
-      delete process.env.BITACORA_FAKE_LOG;
-      await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+      try {
+        await engine.close();
+      } finally {
+        delete process.env.BITACORA_FAKE_LOG;
+        await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+      }
     },
   };
 }
@@ -177,19 +186,67 @@ test("a pause after the turn ended does not stop the engine", async () => {
   }
 });
 
+test("a child that already exited is never handed to taskkill", async () => {
+  // Windows reuses PIDs quickly: taskkill on a dead number would stop whatever
+  // program owns it now. The guard is checked here instead of with real PIDs.
+  const calls: number[] = [];
+  const killProcessTree = async (pid: number) => {
+    calls.push(pid);
+    return true;
+  };
+  const child = {
+    pid: 4242,
+    exitCode: 0,
+    signalCode: null,
+    kill: () => {
+      calls.push(-1);
+      return true;
+    },
+  };
+  assert.equal(await killTree(child, false, killProcessTree), true);
+  // The exit event was already seen, even though exitCode is not set yet.
+  assert.equal(await killTree({ ...child, exitCode: null }, true, killProcessTree), true);
+  assert.deepEqual(calls, []);
+});
+
+test("a silent start stops the tree once, through taskkill", async () => {
+  const calls: number[] = [];
+  const f = await fixture({
+    requestTimeoutMs: 300,
+    killProcessTree: async (pid) => {
+      calls.push(pid);
+      process.kill(pid);
+      return true;
+    },
+  });
+  try {
+    await f.engine.start();
+    await assert.rejects(f.engine.send("thread-1", "silent-start"), /stopped answering turn\/start/);
+    assert.equal(calls.length, 1);
+    assert.ok(calls[0] > 0);
+  } finally {
+    await f.close();
+  }
+});
+
 test("the tree kill also stops the commands the turn started", { skip: process.platform !== "win32" }, async () => {
   const f = await fixture({ requestTimeoutMs: 1000 });
   const childFile = join(f.dir, "grandchild.pid");
   process.env.BITACORA_FAKE_CHILD_PID = childFile;
+  let pid = 0;
   try {
     await f.engine.start();
     await assert.rejects(f.engine.send("thread-1", "spawn-child"), /stopped answering turn\/start/);
-    const pid = Number((await readFile(childFile, "utf8")).trim());
+    pid = Number((await readFile(childFile, "utf8")).trim());
     assert.ok(pid > 0);
     // A plain child.kill() would leave this grandchild running.
     await until(() => !alive(pid));
   } finally {
     delete process.env.BITACORA_FAKE_CHILD_PID;
     await f.close();
+    // A failed assertion must not leave the grandchild behind.
+    if (pid && alive(pid)) {
+      try { process.kill(pid); } catch { /* already gone */ }
+    }
   }
 });

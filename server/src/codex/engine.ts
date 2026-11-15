@@ -51,29 +51,41 @@ export function classifyProblem(
 /** Schedules `run` and returns a cancel function. Defaults to `setTimeout`. */
 export type ScheduleTimer = (run: () => void, delayMs: number) => () => void;
 
+/** Runs `taskkill /T /F` on a live process tree. */
+export type KillProcessTree = (pid: number) => Promise<boolean>;
+
 /**
  * Kills the child and everything it spawned. `child.kill()` only stops the
  * app-server: the sandboxed commands the agent runs are grandchildren and
  * could keep writing files after the app takes its "after" snapshot.
+ *
+ * A child that already exited is never touched. Windows reuses PIDs quickly, so
+ * `taskkill /T` on a dead number would stop whatever program owns it now.
  * Returns false when only the app-server could be stopped.
  */
-function killTree(child: ChildProcessWithoutNullStreams): boolean {
-  if (process.platform === "win32" && child.pid) {
-    try {
-      execFileSync(
-        join(process.env.SystemRoot || "C:\\Windows", "System32", "taskkill.exe"),
-        ["/PID", String(child.pid), "/T", "/F"],
-        { stdio: "ignore", windowsHide: true },
-      );
-      return true;
-    } catch {
-      // The process may be gone already, or taskkill may be unavailable.
-    }
+export async function killTree(
+  child: {
+    pid?: number;
+    exitCode: number | null;
+    signalCode: NodeJS.Signals | null;
+    kill: () => boolean;
+  },
+  exited: boolean,
+  killProcessTree?: KillProcessTree,
+): Promise<boolean> {
+  if (exited || child.exitCode !== null || child.signalCode !== null) return true;
+  if (!child.pid) return true;
+  if (!killProcessTree) {
+    child.kill();
+    return true;
+  }
+  try {
+    return await killProcessTree(child.pid);
+  } catch {
+    // The tree could not be stopped: at least stop the app-server.
     child.kill();
     return false;
   }
-  child.kill();
-  return true;
 }
 
 export class CodexEngine implements Engine {
@@ -95,6 +107,10 @@ export class CodexEngine implements Engine {
   // tells the user the engine was restarted instead of the generic failure.
   private failing?: string;
   private pauseTimers = new Map<string, NodeJS.Timeout>();
+  // Children that already exited, and the tree stops already in flight: a child
+  // is never killed twice and never killed once it is gone.
+  private exitedChildren = new WeakSet<ChildProcessWithoutNullStreams>();
+  private treeStops = new WeakMap<ChildProcessWithoutNullStreams, Promise<boolean>>();
   executionSafety() {
     return this.safety;
   }
@@ -126,6 +142,9 @@ export class CodexEngine implements Engine {
       probeProtection?: () => Promise<boolean>;
       requestTimeoutMs?: number;
       pauseTimeoutMs?: number;
+      killTimeoutMs?: number;
+      /** Test seam: replaces the `taskkill` call. */
+      killProcessTree?: KillProcessTree;
       setupTimeoutMs?: number;
     },
   ) {}
@@ -216,6 +235,7 @@ export class CodexEngine implements Engine {
     this.child.stdin.on("error", failedChild);
     this.child.on("error", failedChild);
     this.child.on("exit", () => {
+      this.exitedChildren.add(child);
       failedChild(new Error(`Codex process stopped. ${this.stderr}`));
     });
     try {
@@ -353,14 +373,65 @@ export class CodexEngine implements Engine {
     }
     this.pending.clear();
   }
-  /** Kills the process tree and waits until the child really exited. Returns
-   *  false when only the app-server could be stopped. */
-  private async stopTree(child: ChildProcessWithoutNullStreams) {
-    if (child.exitCode !== null || child.signalCode !== null) return true;
-    const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
-    const complete = killTree(child);
-    await exited;
-    return complete;
+  /** Kills the process tree and waits (bounded) until the child really exited.
+   *  Returns false when only the app-server could be stopped. */
+  private stopTree(child: ChildProcessWithoutNullStreams): Promise<boolean> {
+    if (!this.childRunning(child)) return Promise.resolve(true);
+    const stopping = this.treeStops.get(child);
+    if (stopping) return stopping;
+    const stop = this.runStopTree(child);
+    this.treeStops.set(child, stop);
+    void stop.then(
+      () => this.treeStops.delete(child),
+      () => this.treeStops.delete(child),
+    );
+    return stop;
+  }
+  private async runStopTree(child: ChildProcessWithoutNullStreams) {
+    // Listen before killing, so an exit that happens during the kill is seen.
+    const exited = this.waitExit(child, this.options.killTimeoutMs ?? 5000);
+    const complete = await this.killChildTree(child);
+    return complete && (await exited);
+  }
+  private killChildTree(child: ChildProcessWithoutNullStreams) {
+    const killProcessTree =
+      this.options.killProcessTree ??
+      (process.platform === "win32" ? (pid: number) => this.taskkill(pid) : undefined);
+    return killTree(child, this.exitedChildren.has(child), killProcessTree);
+  }
+  /** `taskkill` without blocking the event loop: RPC replies and exit events
+   *  must keep flowing while the tree is being stopped. */
+  private async taskkill(pid: number) {
+    await promisify(execFile)(
+      join(process.env.SystemRoot || "C:\\Windows", "System32", "taskkill.exe"),
+      ["/PID", String(pid), "/T", "/F"],
+      { windowsHide: true, timeout: this.options.killTimeoutMs ?? 5000 },
+    );
+    return true;
+  }
+  /** Resolves true when the child is gone, false when the wait ran out. */
+  private waitExit(child: ChildProcessWithoutNullStreams, timeoutMs: number) {
+    if (!this.childRunning(child)) return Promise.resolve(true);
+    return new Promise<boolean>((resolve) => {
+      let timer: NodeJS.Timeout | undefined;
+      const done = () => {
+        if (timer) clearTimeout(timer);
+        resolve(true);
+      };
+      timer = setTimeout(() => {
+        child.off("exit", done);
+        resolve(false);
+      }, timeoutMs);
+      timer.unref();
+      child.once("exit", done);
+    });
+  }
+  private childRunning(child: ChildProcessWithoutNullStreams) {
+    return (
+      !this.exitedChildren.has(child) &&
+      child.exitCode === null &&
+      child.signalCode === null
+    );
   }
   /**
    * Stops the engine for good when a turn may still be running and nothing
@@ -854,15 +925,10 @@ export class CodexEngine implements Engine {
     }
     const child = this.child;
     if (!child) return;
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(() => {
-        if (child.exitCode === null && child.signalCode === null) killTree(child);
-      }, 2000);
-      child.once("exit", () => {
-        clearTimeout(timer);
-        resolve();
-      });
-      child.stdin.end();
-    });
+    // Let the app-server close on its own, then stop the whole tree. Both waits
+    // are bounded: a stuck kill must never hang the app.
+    child.stdin.end();
+    if (await this.waitExit(child, 2000)) return;
+    await this.stopTree(child);
   }
 }

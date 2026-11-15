@@ -165,8 +165,9 @@ createInterface({ input: process.stdin })
         }
         if (scenario === "spawn-child") {
           // The turn runs a command that outlives the app-server unless the
-          // whole tree is killed.
-          const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1e9)"], { stdio: "ignore", windowsHide: true });
+          // whole tree is killed. It ends on its own after a while so a failed
+          // test cannot leave it running forever.
+          const child = spawn(process.execPath, ["-e", "setTimeout(() => process.exit(0), 30000); setInterval(() => {}, 1e9)"], { stdio: "ignore", windowsHide: true });
           if (process.env.BITACORA_FAKE_CHILD_PID)
             writeFileSync(process.env.BITACORA_FAKE_CHILD_PID, String(child.pid));
           break;
