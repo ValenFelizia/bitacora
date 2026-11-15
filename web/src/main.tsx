@@ -16,6 +16,7 @@ import {
   appendReadFiles,
   clearSentAttachments,
   clearSentText,
+  isCurrentDraft,
   keepSelectedWork,
   type SentDraft,
 } from "./draft";
@@ -95,9 +96,11 @@ function App() {
           const sent = sentDraft.current;
           sentDraft.current = undefined;
           if (sent) {
-            setText((current) => clearSentText(current, sent));
-            setAttachments((current) => clearSentAttachments(current, sent));
-            setSelected((current) => keepSelectedWork(current, sent, message.workId));
+            // A discarded draft must not reopen the work the user left.
+            const keep = isCurrentDraft(sent, draftGeneration.current);
+            setText((current) => (keep ? clearSentText(current, sent) : current));
+            setAttachments((current) => (keep ? clearSentAttachments(current, sent) : current));
+            setSelected((current) => (keep ? keepSelectedWork(current, sent, message.workId) : current));
           } else setSelected(message.workId);
           setPending(false);
         }
@@ -153,7 +156,7 @@ function App() {
       return;
     }
     setPending(true);
-    sentDraft.current = { workId: selected, text, attachments };
+    sentDraft.current = { workId: selected, text, attachments, generation: draftGeneration.current };
     send({ type: "send", workId: selected, text: combined, attachments });
   }
   async function addFiles(files: File[]) {

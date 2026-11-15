@@ -1,7 +1,12 @@
 import type { Upload } from "../../server/src/contracts";
 
 // What the user submitted, so a late reply only clears that draft.
-export type SentDraft = { workId?: string; text: string; attachments: Upload[] };
+export type SentDraft = { workId?: string; text: string; attachments: Upload[]; generation: number };
+
+/** False when the draft was discarded ("Nuevo trabajo") before the reply came. */
+export function isCurrentDraft(sent: SentDraft, currentGeneration: number) {
+  return sent.generation === currentGeneration;
+}
 
 /** Clears the submitted text unless the user typed something else meanwhile. */
 export function clearSentText(current: string, sent: SentDraft) {

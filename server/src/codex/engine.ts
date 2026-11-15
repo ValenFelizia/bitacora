@@ -277,6 +277,14 @@ export class CodexEngine implements Engine {
       if (this.safety.status === "needed" && !this.safety.needsPermission) await this.prepareProtection();
       return;
     }
+    // The setup replaces the process, so a login in progress cannot survive:
+    // cancel it explicitly instead of killing it silently.
+    if (this.loginId) {
+      const loginId = this.loginId;
+      this.loginId = undefined;
+      try { await this.rpc("account/login/cancel", { loginId }); }
+      catch { /* the process is replaced anyway */ }
+    }
     this.setProtection({ ...this.safety, allowed: false, status: "preparing", issue: undefined });
     try {
       if (this.setupMode === "mxc") {

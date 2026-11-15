@@ -64,6 +64,9 @@ createInterface({ input: process.stdin })
           authUrl: "https://example.test/login",
         });
         break;
+      case "account/login/cancel":
+        reply({});
+        break;
       case "thread/start":
         reply({ thread: { id: threadId } });
         break;

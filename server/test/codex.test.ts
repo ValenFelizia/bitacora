@@ -224,10 +224,11 @@ test("preparing protection does not lose a login in progress", async () => {
     await assert.rejects(f.engine.connectAccount(), /being prepared/i);
     await preparing;
     await until(() => f.engine.executionSafety().allowed);
-    // The login belonged to the process that was replaced: the new one must
-    // not be asked to cancel an id it never issued.
+    // The login belonged to the process that was replaced: it is cancelled
+    // explicitly once, and the new process is never asked about that id.
+    assert.equal((await f.records()).filter((m) => m.method === "account/login/cancel").length, 1);
     await f.engine.connectAccount();
-    assert.equal((await f.records()).filter((m) => m.method === "account/login/cancel").length, 0);
+    assert.equal((await f.records()).filter((m) => m.method === "account/login/cancel").length, 1);
   } finally {
     delete process.env.BITACORA_FAKE_SAFETY;
     delete process.env.BITACORA_FAKE_SETUP_DELAY;
