@@ -22,6 +22,7 @@ export class App {
   private exhausted = false;
   private flushTimer?: NodeJS.Timeout;
   private dirty = false;
+  private writeRevision = 0;
   private works: SavedWork[] = [];
   private accountState = { connected: false };
   private writes: Promise<void> = Promise.resolve();
@@ -122,6 +123,7 @@ export class App {
     }
   }
   private changed() {
+    const revision = ++this.writeRevision;
     this.dirty = false;
     const content = JSON.stringify({ version: 1, works: this.works, backupReceipt: this.backupReceipt }, null, 2);
     this.writes = this.writes
@@ -130,14 +132,16 @@ export class App {
         await writeFile(join(this.data, "works.json.tmp"), content, "utf8");
         await this.renameWithRetry(join(this.data, "works.json.tmp"), join(this.data, "works.json"));
       });
-    // Report each failure while allowing the next write to recover.
-    void this.writes.catch((error) =>
+    // Report each failure while allowing the next write to recover. A failed
+    // save stays unsaved so closing retries it instead of losing the change.
+    void this.writes.catch((error) => {
+      if (this.writeRevision === revision) this.dirty = true;
       this.publish({
         type: "problem",
         text: "No pude guardar el trabajo. No cierres la app todavía.",
         detail: String(error),
-      }),
-    );
+      });
+    });
     this.publish({ type: "snapshot", state: this.snapshot() });
   }
   file(id: string) {
@@ -492,6 +496,9 @@ export class App {
     this.unsubscribe?.();
     await Promise.all(this.scans);
     clearTimeout(this.flushTimer);
+    // Wait for the last write so a failure marks the change as unsaved, then
+    // retry it before closing.
+    await this.writes.catch(() => {});
     if (this.dirty) this.changed();
     await this.writes;
   }

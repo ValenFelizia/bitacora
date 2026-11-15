@@ -451,6 +451,28 @@ test("a pause requested before the request reaches the engine stops the turn onc
   }
 });
 
+test("a failed save stays pending and is retried before closing", async () => {
+  const f = await fixture();
+  try {
+    await f.app.command({ type: "send", text: "Guardá esto" }, f.reply);
+    // The disk refuses the next save.
+    await mkdir(join(f.dir, "works.json.tmp"));
+    f.engine.emit({ type: "finished", conversationId: "conversation-1", status: "completed" });
+    for (let i = 0; i < 200 && !f.messages.some((m) => m.type === "problem"); i++)
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.ok(f.messages.some((m) => m.type === "problem" && /No pude guardar/.test(m.text)));
+    // The disk works again: closing must save the last response.
+    await rm(join(f.dir, "works.json.tmp"), { recursive: true });
+    await f.app.close();
+    const saved = await readFile(join(f.dir, "works.json"), "utf8");
+    assert.match(saved, /"busy": false/);
+    assert.match(saved, /Listo\./);
+  } finally {
+    await f.app.close();
+    await rm(f.dir, { recursive: true });
+  }
+});
+
 test("final flush includes events delivered during engine shutdown", async () => {
 
   const f = await fixture();
