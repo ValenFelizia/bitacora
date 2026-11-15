@@ -158,6 +158,25 @@ test("a pause requested before the turn starts still has a deadline", async () =
   }
 });
 
+test("a pause after the turn ended does not stop the engine", async () => {
+  // The turn completed before its reply: `starting` is still there but nothing
+  // is running, so the pause must not arm a deadline.
+  process.env.BITACORA_FAKE_TURN_DELAY = "300";
+  const f = await fixture({ requestTimeoutMs: 2000, pauseTimeoutMs: 200 });
+  try {
+    await f.engine.start();
+    const sending = f.engine.send("thread-1", "complete-before-reply");
+    await until(() => f.events.some((e) => e.type === "finished"));
+    await f.engine.interrupt("thread-1");
+    await sending;
+    await delay(400);
+    assert.equal(f.events.some((e) => e.type === "availability" && !e.available), false);
+  } finally {
+    delete process.env.BITACORA_FAKE_TURN_DELAY;
+    await f.close();
+  }
+});
+
 test("the tree kill also stops the commands the turn started", { skip: process.platform !== "win32" }, async () => {
   const f = await fixture({ requestTimeoutMs: 1000 });
   const childFile = join(f.dir, "grandchild.pid");

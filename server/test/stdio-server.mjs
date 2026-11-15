@@ -146,6 +146,12 @@ createInterface({ input: process.stdin })
           notify("turn/started", { threadId, turn: turn() });
           break;
         }
+        if (scenario === "complete-before-reply") {
+          // The turn ends before its reply: nothing is running any more.
+          notify("turn/completed", { threadId, turn: turn("completed") });
+          setTimeout(() => reply({ turn: turn("completed") }), Number(process.env.BITACORA_FAKE_TURN_DELAY || 80));
+          break;
+        }
         if (scenario === "silent-start") {
           // No reply and no turn/started: nothing proves the turn is running.
           break;

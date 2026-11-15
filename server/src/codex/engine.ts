@@ -388,6 +388,13 @@ export class CodexEngine implements Engine {
       this.pauseTimers.delete(id);
     }
   }
+  /** True while a turn is running or a request to start one is still open. */
+  private running(conversationId: string) {
+    return (
+      this.turns.has(conversationId) ||
+      this.starting.get(conversationId)?.completed === false
+    );
+  }
   /** A pause that does not end the turn within the pause timeout kills the
    *  engine: the turn could keep writing files the app already scanned. The
    *  deadline starts when the pause is requested, even before the turn exists,
@@ -396,7 +403,7 @@ export class CodexEngine implements Engine {
     if (this.pauseTimers.has(conversationId)) return;
     const timer = setTimeout(() => {
       this.pauseTimers.delete(conversationId);
-      if (!this.turns.has(conversationId) && !this.starting.has(conversationId)) return;
+      if (!this.running(conversationId)) return;
       void this.stopUnresponsive(conversationId);
     }, this.options.pauseTimeoutMs ?? 15000);
     timer.unref();
@@ -812,7 +819,7 @@ export class CodexEngine implements Engine {
     const starting = this.starting.get(conversationId);
     if (starting) starting.interrupt = true;
     const turnId = this.turns.get(conversationId);
-    if (!turnId && !starting) return;
+    if (!turnId && !this.running(conversationId)) return;
     // The deadline starts when the pause is requested, even while the turn is
     // still starting: a silent engine must not keep it waiting for the request
     // timeout.
