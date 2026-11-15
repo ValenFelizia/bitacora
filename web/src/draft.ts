@@ -1,0 +1,19 @@
+import type { Upload } from "../../server/src/contracts";
+
+// What the user submitted, so a late reply only clears that draft.
+export type SentDraft = { workId?: string; text: string; attachments: Upload[] };
+
+/** Clears the submitted text unless the user typed something else meanwhile. */
+export function clearSentText(current: string, sent: SentDraft) {
+  return current === sent.text ? "" : current;
+}
+
+/** Clears the submitted attachments unless the user changed them meanwhile. */
+export function clearSentAttachments(current: Upload[], sent: SentDraft) {
+  return current === sent.attachments ? [] : current;
+}
+
+/** Keeps the work the user opened while the reply was on its way. */
+export function keepSelectedWork(current: string | undefined, sent: SentDraft, created: string) {
+  return current === sent.workId ? created : current;
+}

@@ -12,6 +12,12 @@ const latestResult = (work: Work) => work.messages.flatMap(m => m.results || [])
 import type { Upload } from "../../server/src/contracts";
 import ReactMarkdown from "react-markdown";
 import { protectionText } from "./protection-text";
+import {
+  clearSentAttachments,
+  clearSentText,
+  keepSelectedWork,
+  type SentDraft,
+} from "./draft";
 
 // Matches the server limit for a request (server/src/app.ts).
 const MAX_REQUEST_TEXT = 20000;
@@ -29,6 +35,7 @@ function App() {
   const [gallery, setGallery] = useState(false);
   const [attachments, setAttachments] = useState<Upload[]>([]);
   const [readingFiles, setReadingFiles] = useState(false);
+  const sentDraft = useRef<SentDraft | undefined>(undefined);
   const fileInput = useRef<HTMLInputElement>(null);
   const [selected, setSelected] = useState<string>();
   const [text, setText] = useState("");
@@ -82,9 +89,13 @@ function App() {
           }));
         }
         if (message.type === "selected") {
-          setSelected(message.workId);
-          setText("");
-          setAttachments([]);
+          const sent = sentDraft.current;
+          sentDraft.current = undefined;
+          if (sent) {
+            setText((current) => clearSentText(current, sent));
+            setAttachments((current) => clearSentAttachments(current, sent));
+            setSelected((current) => keepSelectedWork(current, sent, message.workId));
+          } else setSelected(message.workId);
           setPending(false);
         }
         if (message.type === "problem") {
@@ -139,6 +150,7 @@ function App() {
       return;
     }
     setPending(true);
+    sentDraft.current = { workId: selected, text, attachments };
     send({ type: "send", workId: selected, text: combined, attachments });
   }
   async function addFiles(files: File[]) {
