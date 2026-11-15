@@ -188,24 +188,27 @@ function fakeClock() {
     },
   };
 }
-test("a slow turn/start reply keeps the request until the turn ends", {
-  // Reproduces the finding from PR #11: the request timeout releases the work
-  // while the turn is still changing files. Fixing it changes what the app
-  // should do when the engine stops answering, so it waits for a decision.
-  skip: "Pendiente de decisión: qué hacer cuando el motor no responde pero el turno sigue (issue #20)",
-}, async () => {
-  process.env.BITACORA_FAKE_TURN_DELAY = "1800";
+test("a slow turn/start reply keeps the request until the turn ends", async () => {
+  // Reproduces the finding from PR #11: the request timeout released the work
+  // while the turn was still changing files. Now the timeout only releases the
+  // request when the turn is certainly not running; a turn that already
+  // started keeps the app waiting for its own turn/completed.
+  process.env.BITACORA_FAKE_TURN_DELAY = "1500";
   const f = await fixture(60_000, { requestTimeoutMs: 1000 });
   try {
     const sending = f.engine.send("thread-1", "slow-start");
-    const outcome = await Promise.race([
-      sending.then(() => "sent", (error: Error) => `rejected: ${error.message}`),
-      delay(1400).then(() => "still running"),
-    ]);
-    // The turn already started: the request must not be released.
-    assert.equal(outcome, "still running");
-    await sending;
-    assert.ok(f.events.some((e) => e.type === "finished"));
+    // turn/started arrived before the timeout: the request is not refused.
+    await assert.doesNotReject(sending);
+    // Nothing is finished yet: the turn ends when the engine says so.
+    assert.equal(f.events.some((e) => e.type === "finished"), false);
+    await until(() => f.events.some((e) => e.type === "finished"));
+    // A turn whose reply never arrives can still be paused.
+    await assert.doesNotReject(f.engine.send("thread-1", "slow-start-pause"));
+    assert.equal(f.events.filter((e) => e.type === "finished").length, 1);
+    await f.engine.interrupt("thread-1");
+    await until(() => f.events.filter((e) => e.type === "finished").length === 2);
+    const finished = f.events.filter((e) => e.type === "finished");
+    assert.equal((finished[1] as { status: string }).status, "interrupted");
   } finally {
     delete process.env.BITACORA_FAKE_TURN_DELAY;
     await f.close();

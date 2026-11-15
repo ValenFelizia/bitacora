@@ -1,5 +1,6 @@
 // Deterministic app-server peer. No Codex, credentials, tools, or inference.
 import { createInterface } from "node:readline";
+import { spawn } from "node:child_process";
 import { appendFileSync, existsSync, writeFileSync, readFileSync } from "node:fs";
 const send = (m) => process.stdout.write(JSON.stringify(m) + "\n");
 const notify = (method, params) => send({ method, params });
@@ -7,7 +8,10 @@ const setupFile = process.env.CODEX_HOME + "/fake-protection";
 let configuredMode = existsSync(setupFile) ? readFileSync(setupFile, "utf8") : null;
 const threadId = "thread-1";
 let interrupts = 0;
+let interruptHangs = false;
 let crashScheduled = false;
+if (process.env.BITACORA_FAKE_PID)
+  appendFileSync(process.env.BITACORA_FAKE_PID, `${process.pid}\n`);
 const turn = (status = "inProgress") => ({ id: "turn-1", status, error: null });
 createInterface({ input: process.stdin })
   .on("line", (line) => {
@@ -75,7 +79,10 @@ createInterface({ input: process.stdin })
         break;
       case "turn/interrupt":
         if (++interrupts > 1) send({ id: m.id, error: { message: "already interrupted" } });
-        else { reply({}); setTimeout(() => notify("turn/completed", { threadId, turn: turn("interrupted") }), 140); }
+        else {
+          reply({});
+          if (!interruptHangs) setTimeout(() => notify("turn/completed", { threadId, turn: turn("interrupted") }), 140);
+        }
         break;
       case "turn/start": {
         const scenario = m.params.input[0].text;
@@ -132,6 +139,30 @@ createInterface({ input: process.stdin })
             reply({ turn: turn() });
             notify("turn/completed", { threadId, turn: turn("completed") });
           }, Number(process.env.BITACORA_FAKE_TURN_DELAY || 80));
+          break;
+        }
+        if (scenario === "slow-start-pause") {
+          // The turn starts and its reply never arrives; only a pause ends it.
+          notify("turn/started", { threadId, turn: turn() });
+          break;
+        }
+        if (scenario === "silent-start") {
+          // No reply and no turn/started: nothing proves the turn is running.
+          break;
+        }
+        if (scenario === "pause-hang") {
+          // The turn starts and the pause is accepted, but it never ends.
+          interruptHangs = true;
+          notify("turn/started", { threadId, turn: turn() });
+          reply({ turn: turn() });
+          break;
+        }
+        if (scenario === "spawn-child") {
+          // The turn runs a command that outlives the app-server unless the
+          // whole tree is killed.
+          const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1e9)"], { stdio: "ignore", windowsHide: true });
+          if (process.env.BITACORA_FAKE_CHILD_PID)
+            writeFileSync(process.env.BITACORA_FAKE_CHILD_PID, String(child.pid));
           break;
         }
         if (scenario === "pause" || scenario === "pause-started") setTimeout(() => reply({ turn: turn() }), 80);
