@@ -8,9 +8,29 @@ import { rememberUserUrls } from './allowed-urls';
 import { initializeKit } from './tools/kit';
 import type { Engine, EngineEvent } from "./engine";
 import { problemText, EngineFailure, activityText } from "./engine";
-import type { FileRef, Work, Snapshot, ClientCommand, ServerMessage } from "./contracts";
+import type { FileRef, Message, Work, Snapshot, ClientCommand, ServerMessage } from "./contracts";
 
 type SavedWork = Work & { conversationId: string; pendingFiles?: { messageId: string; before?: Record<string, string> } };
+const isText = (value: unknown) => typeof value === "string";
+const isFileRef = (value: unknown) => {
+  const file = value as Partial<FileRef> | null;
+  return !!file && isText(file.id) && isText(file.path) && isText(file.name) && isText(file.mime) && isText(file.createdAt);
+};
+const isMessage = (value: unknown) => {
+  const message = value as Partial<Message> | null;
+  return !!message && isText(message.id) && (message.role === "user" || message.role === "assistant") && isText(message.text) &&
+    (message.attachments === undefined || (Array.isArray(message.attachments) && message.attachments.every(isFileRef))) &&
+    (message.results === undefined || (Array.isArray(message.results) && message.results.every(isFileRef)));
+};
+const isSavedWork = (value: unknown) => {
+  const work = value as Partial<SavedWork> | null;
+  return !!work && isText(work.id) && isText(work.conversationId) && isText(work.title) && isText(work.details) &&
+    isText(work.createdAt) && isText(work.updatedAt) && isText(work.progress) &&
+    (work.problem === undefined || isText(work.problem)) &&
+    (work.busy === undefined || typeof work.busy === "boolean") &&
+    Array.isArray(work.messages) && work.messages.every(isMessage) &&
+    (work.pendingFiles === undefined || (!!work.pendingFiles && isText(work.pendingFiles.messageId)));
+};
 export class App {
   private backups?: Backups;
   private backupReceipt?: string;
@@ -48,19 +68,8 @@ export class App {
       const saved = JSON.parse(
         await readFile(join(this.data, "works.json"), "utf8"),
       );
-      if (!saved || saved.version !== 1 || !Array.isArray(saved.works))
+      if (!saved || saved.version !== 1 || !Array.isArray(saved.works) || !saved.works.every(isSavedWork))
         throw new SyntaxError("Invalid saved work list");
-      if (
-        saved.works.some(
-          (w: SavedWork) =>
-            !w ||
-            typeof w.id !== "string" ||
-            typeof w.conversationId !== "string" ||
-            !Array.isArray(w.messages) ||
-            typeof w.details !== "string",
-        )
-      )
-        throw new SyntaxError("Invalid saved work");
       this.works = saved.works;
       this.backupReceipt = typeof saved.backupReceipt === "string" ? saved.backupReceipt : undefined;
       for (const work of this.works)

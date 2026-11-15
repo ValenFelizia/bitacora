@@ -473,6 +473,29 @@ test("a failed save stays pending and is retried before closing", async () => {
   }
 });
 
+test("a saved work with a damaged message is quarantined instead of blanking the page", async () => {
+  const f = await fixture();
+  try {
+    await f.app.command({ type: "send", text: "Un trabajo" }, f.reply);
+    await f.app.close();
+    const saved = JSON.parse(await readFile(join(f.dir, "works.json"), "utf8"));
+    saved.works[0].messages = [null];
+    await writeFile(join(f.dir, "works.json"), JSON.stringify(saved));
+    const app = new App(new FakeEngine(), f.dir, f.reply);
+    try {
+      await app.start();
+      assert.equal(app.snapshot().works.length, 0);
+      assert.ok(app.snapshot().notice);
+      assert.ok((await readdir(f.dir)).some((n) => n.startsWith("works.corrupt-")));
+    } finally {
+      await app.close();
+    }
+  } finally {
+    await f.app.close();
+    await rm(f.dir, { recursive: true });
+  }
+});
+
 test("final flush includes events delivered during engine shutdown", async () => {
 
   const f = await fixture();
