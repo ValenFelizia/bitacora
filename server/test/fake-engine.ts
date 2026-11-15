@@ -4,6 +4,7 @@ export class FakeEngine implements Engine {
   connected = true;
   resumed: string[] = [];
   sent: string[] = [];
+  calls: string[] = [];
   count = 0;
   safe = true;
   async retry() {}
@@ -27,6 +28,7 @@ export class FakeEngine implements Engine {
     this.resumed.push(id);
   }
   async send(id: string, text: string, _files?: import("../src/engine").EngineFile[]) {
+    this.calls.push(`send:${id}`);
     this.sent.push(text);
     this.emit({
       type: "progress",
@@ -35,6 +37,7 @@ export class FakeEngine implements Engine {
     });
   }
   async interrupt(id: string) {
+    this.calls.push(`interrupt:${id}`);
     this.emit({ type: "finished", conversationId: id, status: "interrupted" });
   }
   subscribe(fn: (event: EngineEvent) => void) {

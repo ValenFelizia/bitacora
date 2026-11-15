@@ -28,6 +28,10 @@ export class App {
   private unsubscribe?: () => void;
   private submitting = false;
   private resumed = new Set<string>();
+  // Work ids whose saved request has not reached the engine yet, and pauses
+  // requested during that window: they are delivered once the turn starts.
+  private unsent = new Set<string>();
+  private pauseRequested = new Set<string>();
   constructor(
     private engine: Engine,
     private data: string,
@@ -339,6 +343,12 @@ export class App {
     if (command.type === "interrupt") {
       const work = this.works.find((w) => w.id === command.workId);
       if (!work) throw new Error("Unknown work");
+      // Nothing reached the engine yet: remember the pause for the moment the
+      // request is sent, so it cannot run to completion in the meantime.
+      if (this.unsent.has(work.id)) {
+        this.pauseRequested.add(work.id);
+        return;
+      }
       await this.engine.interrupt(work.conversationId);
       return;
     }
@@ -431,16 +441,25 @@ export class App {
       work.busy = true;
       work.problem = undefined;
       work.progress = "Preparando la respuesta…";
+      this.unsent.add(work.id);
       this.changed();
       await this.writes;
       reply({ type: "selected", workId: work.id });
       await rememberUserUrls(this.data, command.text);
-      await this.engine.send(work.conversationId, command.text.trim(), await Promise.all((attachments || []).map(async f => ({ path: await this.workspace!.safePath(f.path), mime: f.mime }))), { filesReverted: this.backups?.hasNotice(work.id) });
+      const engineFiles = await Promise.all((attachments || []).map(async f => ({ path: await this.workspace!.safePath(f.path), mime: f.mime })));
+      this.unsent.delete(work.id);
+      const sending = this.engine.send(work.conversationId, command.text.trim(), engineFiles, { filesReverted: this.backups?.hasNotice(work.id) });
+      if (this.pauseRequested.delete(work.id)) await this.engine.interrupt(work.conversationId);
+      await sending;
       if (this.backups?.hasNotice(work.id)) {
         try { await this.backups.acknowledge(work.id); }
         catch { work.details += "No pude guardar que el motor recibió el aviso de Deshacer.\n"; }
       }
     } catch (error) {
+      if (work) {
+        this.unsent.delete(work.id);
+        this.pauseRequested.delete(work.id);
+      }
       if (error instanceof EngineFailure && error.kind === "disconnected")
         this.accountState = { connected: false };
       if (!committed) {

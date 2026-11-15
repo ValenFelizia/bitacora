@@ -416,6 +416,41 @@ test("corrupt quarantine retries then copies, and still starts if copying also f
 
 
 
+test("a pause requested before the request reaches the engine stops the turn once it starts", async () => {
+  await mkdir(".local", { recursive: true });
+  const dir = await mkdtemp(resolve(".local/pause-"));
+  const engine = new FakeEngine();
+  const messages: ServerMessage[] = [];
+  const reply = (m: ServerMessage) => { messages.push(m); };
+  // Hold the save so the pause arrives while the request is still in the app.
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const app = new App(engine, dir, reply, {
+    rename: async (from, to) => { await held; await rename(from, to); },
+    copyFile,
+  });
+  try {
+    await app.start();
+    const sending = app.command({ type: "send", text: "Un pedido" }, reply);
+    let work = app.snapshot().works[0];
+    for (let i = 0; i < 200 && !work?.busy; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      work = app.snapshot().works[0];
+    }
+    assert.ok(work?.busy, "the request never reached the commit point");
+    await app.command({ type: "interrupt", workId: work.id }, reply);
+    release();
+    await sending;
+    // The pause must reach the engine after the request, never before it.
+    assert.deepEqual(engine.calls, ["send:conversation-1", "interrupt:conversation-1"]);
+    assert.equal(app.snapshot().works[0].progress, "Trabajo pausado.");
+  } finally {
+    release();
+    await app.close();
+    await rm(dir, { recursive: true });
+  }
+});
+
 test("final flush includes events delivered during engine shutdown", async () => {
 
   const f = await fixture();
