@@ -144,6 +144,8 @@ export class CodexEngine implements Engine {
       scheduleTimer?: ScheduleTimer;
       probeProtection?: () => Promise<boolean>;
       requestTimeoutMs?: number;
+      /** Deadline for the `turn/start` reply. Defaults to `requestTimeoutMs`. */
+      turnStartTimeoutMs?: number;
       pauseTimeoutMs?: number;
       killTimeoutMs?: number;
       /** Test seam: replaces the `taskkill` call. */
@@ -832,7 +834,7 @@ export class CodexEngine implements Engine {
           (error) =>
             reject(error instanceof Error ? error : new Error(String(error))),
         );
-      }, this.options.requestTimeoutMs ?? 45000);
+      }, this.options.turnStartTimeoutMs ?? this.options.requestTimeoutMs ?? 45000);
       this.pending.set(id, {
         resolve: (value) => resolve((value as TurnStartResponse).turn),
         // A stop caused by this same conversation must reach the app as the

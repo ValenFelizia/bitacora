@@ -194,7 +194,7 @@ test("a slow turn/start reply keeps the request until the turn ends", async () =
   // request when the turn is certainly not running; a turn that already
   // started keeps the app waiting for its own turn/completed.
   process.env.BITACORA_FAKE_TURN_DELAY = "1500";
-  const f = await fixture(60_000, { requestTimeoutMs: 1000 });
+  const f = await fixture(60_000, { turnStartTimeoutMs: 1000 });
   try {
     const sending = f.engine.send("thread-1", "slow-start");
     // turn/started arrived before the timeout: the request is not refused.

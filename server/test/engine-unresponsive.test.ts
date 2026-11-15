@@ -14,7 +14,7 @@ import type { EngineEvent } from "../src/engine";
 
 async function fixture(
   options: {
-    requestTimeoutMs?: number;
+    turnStartTimeoutMs?: number;
     pauseTimeoutMs?: number;
     restartDelayMs?: number;
     killProcessTree?: KillProcessTree;
@@ -31,7 +31,9 @@ async function fixture(
     args: [resolve("server/test/stdio-server.mjs")],
     restartDelayMs: options.restartDelayMs ?? 30,
     stableAfterMs: 60_000,
-    requestTimeoutMs: options.requestTimeoutMs ?? 1000,
+    // The handshake is generous: only the turn/start reply has a short deadline.
+    requestTimeoutMs: 30_000,
+    turnStartTimeoutMs: options.turnStartTimeoutMs ?? 1000,
     pauseTimeoutMs: options.pauseTimeoutMs ?? 200,
     killProcessTree: options.killProcessTree,
   });
@@ -92,7 +94,7 @@ async function started(file: string) {
 }
 
 test("a turn/start with no sign of life stops the engine", async () => {
-  const f = await fixture({ requestTimeoutMs: 1000 });
+  const f = await fixture({ turnStartTimeoutMs: 1000 });
   const pidFile = join(f.dir, "pids.txt");
   process.env.BITACORA_FAKE_PID = pidFile;
   const { app, scans } = await application(f);
@@ -128,7 +130,7 @@ test("a turn/start with no sign of life stops the engine", async () => {
 });
 
 test("a pause the engine never honours stops it", async () => {
-  const f = await fixture({ requestTimeoutMs: 1000, pauseTimeoutMs: 200 });
+  const f = await fixture({ turnStartTimeoutMs: 1000, pauseTimeoutMs: 200 });
   const { app } = await application(f);
   try {
     await app.start();
@@ -147,7 +149,7 @@ test("a pause the engine never honours stops it", async () => {
 
 test("a pause requested before the turn starts still has a deadline", async () => {
   // The request timeout is far away: only the pause deadline can release this.
-  const f = await fixture({ requestTimeoutMs: 30_000, pauseTimeoutMs: 200 });
+  const f = await fixture({ turnStartTimeoutMs: 30_000, pauseTimeoutMs: 200 });
   const { app } = await application(f);
   try {
     await app.start();
@@ -168,7 +170,7 @@ test("a pause after the turn ended does not stop the engine", async () => {
   // The turn completed before its reply: `starting` is still there but nothing
   // is running, so the pause must not arm a deadline.
   process.env.BITACORA_FAKE_TURN_DELAY = "300";
-  const f = await fixture({ requestTimeoutMs: 2000, pauseTimeoutMs: 200 });
+  const f = await fixture({ turnStartTimeoutMs: 2000, pauseTimeoutMs: 200 });
   try {
     await f.engine.start();
     const sending = f.engine.send("thread-1", "complete-before-reply");
@@ -209,7 +211,7 @@ test("a child that already exited is never handed to taskkill", async () => {
 test("a silent start stops the tree once, through taskkill", async () => {
   const calls: number[] = [];
   const f = await fixture({
-    requestTimeoutMs: 1000,
+    turnStartTimeoutMs: 1000,
     killProcessTree: async (pid) => {
       calls.push(pid);
       process.kill(pid);
@@ -227,7 +229,7 @@ test("a silent start stops the tree once, through taskkill", async () => {
 });
 
 test("the tree kill also stops the commands the turn started", { skip: process.platform !== "win32" }, async () => {
-  const f = await fixture({ requestTimeoutMs: 1000 });
+  const f = await fixture({ turnStartTimeoutMs: 1000 });
   const childFile = join(f.dir, "grandchild.pid");
   process.env.BITACORA_FAKE_CHILD_PID = childFile;
   let pid = 0;
