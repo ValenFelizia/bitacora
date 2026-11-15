@@ -242,3 +242,24 @@ test('only an active scan delays sends; completing it releases the gate', async 
     assert.equal(engine.sent.length, 2);
   } finally { release?.(); f.files.scan = scan; await app.close(); await f.cleanup(); }
 });
+
+test('a timed-out send keeps the pending scan until the engine really finishes', {
+  // Reproduces the finding from PR #14: the catch runs finishFiles before the
+  // request ends, so files created afterwards never appear. Fixing it changes
+  // what the app should do when the engine stops answering (issue #20).
+  skip: 'Pendiente de decisión: qué hacer cuando el motor no responde pero el turno sigue (issue #20)',
+}, async () => {
+  const f = await fixture(); const engine = new FakeEngine();
+  const app = new App(engine, join(f.dir, 'data'), () => {}, undefined, f.files);
+  try {
+    await app.start();
+    engine.send = async () => { throw new Error('Engine request timed out: turn/start.'); };
+    await assert.rejects(app.command({ type: 'send', text: 'Hacé algo' }, () => {}));
+    // The engine may still be working: the file appears after the app gave up.
+    await new Promise(resolve => setTimeout(resolve, 100));
+    await writeFile(join(f.files.root, 'tarde.png'), 'late result');
+    engine.emit({ type: 'finished', conversationId: 'conversation-1', status: 'completed' });
+    await wait(() => !app.snapshot().works[0].busy);
+    assert.deepEqual(app.snapshot().works[0].messages[0].results?.map(r => r.name), ['tarde.png']);
+  } finally { await app.close(); await f.cleanup(); }
+});
