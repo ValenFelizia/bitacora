@@ -64,6 +64,9 @@ createInterface({ input: process.stdin })
           authUrl: "https://example.test/login",
         });
         break;
+      case "account/login/cancel":
+        setTimeout(() => reply({}), Number(process.env.BITACORA_FAKE_LOGIN_CANCEL_DELAY || 0));
+        break;
       case "thread/start":
         reply({ thread: { id: threadId } });
         break;
@@ -122,6 +125,15 @@ createInterface({ input: process.stdin })
         if (scenario === "race")
           notify("turn/completed", { threadId, turn: turn("completed") });
         if (scenario === "pause-started") notify("turn/started", { threadId, turn: turn() });
+        if (scenario === "slow-start") {
+          // The turn starts, its reply is late, and it ends on its own.
+          notify("turn/started", { threadId, turn: turn() });
+          setTimeout(() => {
+            reply({ turn: turn() });
+            notify("turn/completed", { threadId, turn: turn("completed") });
+          }, Number(process.env.BITACORA_FAKE_TURN_DELAY || 80));
+          break;
+        }
         if (scenario === "pause" || scenario === "pause-started") setTimeout(() => reply({ turn: turn() }), 80);
         else reply({ turn: turn() });
         break;

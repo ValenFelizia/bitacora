@@ -1,14 +1,15 @@
-import type { Engine, EngineEvent, Account } from "../src/engine";
+import type { Engine, EngineEvent, Account, ExecutionSafety } from "../src/engine";
 export class FakeEngine implements Engine {
   listeners = new Set<(event: EngineEvent) => void>();
   connected = true;
   resumed: string[] = [];
   sent: string[] = [];
+  calls: string[] = [];
   count = 0;
   safe = true;
   async retry() {}
   async prepareProtection() { this.safe = true; this.emit({ type: "protection", safety: this.executionSafety() }); }
-  executionSafety() {
+  executionSafety(): ExecutionSafety {
     return { allowed: this.safe, detail: "fake restricted execution" };
   }
   async start() {}
@@ -27,6 +28,7 @@ export class FakeEngine implements Engine {
     this.resumed.push(id);
   }
   async send(id: string, text: string, _files?: import("../src/engine").EngineFile[]) {
+    this.calls.push(`send:${id}`);
     this.sent.push(text);
     this.emit({
       type: "progress",
@@ -35,6 +37,7 @@ export class FakeEngine implements Engine {
     });
   }
   async interrupt(id: string) {
+    this.calls.push(`interrupt:${id}`);
     this.emit({ type: "finished", conversationId: id, status: "interrupted" });
   }
   subscribe(fn: (event: EngineEvent) => void) {

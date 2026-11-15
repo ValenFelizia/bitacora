@@ -8,9 +8,29 @@ import { rememberUserUrls } from './allowed-urls';
 import { initializeKit } from './tools/kit';
 import type { Engine, EngineEvent } from "./engine";
 import { problemText, EngineFailure, activityText } from "./engine";
-import type { FileRef, Work, Snapshot, ClientCommand, ServerMessage } from "./contracts";
+import type { FileRef, Message, Work, Snapshot, ClientCommand, ServerMessage } from "./contracts";
 
 type SavedWork = Work & { conversationId: string; pendingFiles?: { messageId: string; before?: Record<string, string> } };
+const isText = (value: unknown) => typeof value === "string";
+const isFileRef = (value: unknown) => {
+  const file = value as Partial<FileRef> | null;
+  return !!file && isText(file.id) && isText(file.path) && isText(file.name) && isText(file.mime) && isText(file.createdAt);
+};
+const isMessage = (value: unknown) => {
+  const message = value as Partial<Message> | null;
+  return !!message && isText(message.id) && (message.role === "user" || message.role === "assistant") && isText(message.text) &&
+    (message.attachments === undefined || (Array.isArray(message.attachments) && message.attachments.every(isFileRef))) &&
+    (message.results === undefined || (Array.isArray(message.results) && message.results.every(isFileRef)));
+};
+const isSavedWork = (value: unknown) => {
+  const work = value as Partial<SavedWork> | null;
+  return !!work && isText(work.id) && isText(work.conversationId) && isText(work.title) && isText(work.details) &&
+    isText(work.createdAt) && isText(work.updatedAt) && isText(work.progress) &&
+    (work.problem === undefined || isText(work.problem)) &&
+    (work.busy === undefined || typeof work.busy === "boolean") &&
+    Array.isArray(work.messages) && work.messages.every(isMessage) &&
+    (work.pendingFiles === undefined || (!!work.pendingFiles && isText(work.pendingFiles.messageId)));
+};
 export class App {
   private backups?: Backups;
   private backupReceipt?: string;
@@ -22,12 +42,17 @@ export class App {
   private exhausted = false;
   private flushTimer?: NodeJS.Timeout;
   private dirty = false;
+  private writeRevision = 0;
   private works: SavedWork[] = [];
   private accountState = { connected: false };
   private writes: Promise<void> = Promise.resolve();
   private unsubscribe?: () => void;
   private submitting = false;
   private resumed = new Set<string>();
+  // Work ids whose saved request has not reached the engine yet, and pauses
+  // requested during that window: they are delivered once the turn starts.
+  private unsent = new Set<string>();
+  private pauseRequested = new Set<string>();
   constructor(
     private engine: Engine,
     private data: string,
@@ -43,19 +68,8 @@ export class App {
       const saved = JSON.parse(
         await readFile(join(this.data, "works.json"), "utf8"),
       );
-      if (!saved || saved.version !== 1 || !Array.isArray(saved.works))
+      if (!saved || saved.version !== 1 || !Array.isArray(saved.works) || !saved.works.every(isSavedWork))
         throw new SyntaxError("Invalid saved work list");
-      if (
-        saved.works.some(
-          (w: SavedWork) =>
-            !w ||
-            typeof w.id !== "string" ||
-            typeof w.conversationId !== "string" ||
-            !Array.isArray(w.messages) ||
-            typeof w.details !== "string",
-        )
-      )
-        throw new SyntaxError("Invalid saved work");
       this.works = saved.works;
       this.backupReceipt = typeof saved.backupReceipt === "string" ? saved.backupReceipt : undefined;
       for (const work of this.works)
@@ -118,6 +132,7 @@ export class App {
     }
   }
   private changed() {
+    const revision = ++this.writeRevision;
     this.dirty = false;
     const content = JSON.stringify({ version: 1, works: this.works, backupReceipt: this.backupReceipt }, null, 2);
     this.writes = this.writes
@@ -126,14 +141,16 @@ export class App {
         await writeFile(join(this.data, "works.json.tmp"), content, "utf8");
         await this.renameWithRetry(join(this.data, "works.json.tmp"), join(this.data, "works.json"));
       });
-    // Report each failure while allowing the next write to recover.
-    void this.writes.catch((error) =>
+    // Report each failure while allowing the next write to recover. A failed
+    // save stays unsaved so closing retries it instead of losing the change.
+    void this.writes.catch((error) => {
+      if (this.writeRevision === revision) this.dirty = true;
       this.publish({
         type: "problem",
         text: "No pude guardar el trabajo. No cierres la app todavía.",
         detail: String(error),
-      }),
-    );
+      });
+    });
     this.publish({ type: "snapshot", state: this.snapshot() });
   }
   file(id: string) {
@@ -333,12 +350,22 @@ export class App {
       return;
     }
     if (command.type === "connect") {
+      if (this.engine.executionSafety().status === "preparing") {
+        reply({ type: "problem", text: "Estoy preparando la protección de tu compu. Esperá un momento y volvé a intentar conectar." });
+        return;
+      }
       reply({ type: "login", ...(await this.engine.connectAccount()) });
       return;
     }
     if (command.type === "interrupt") {
       const work = this.works.find((w) => w.id === command.workId);
       if (!work) throw new Error("Unknown work");
+      // Nothing reached the engine yet: remember the pause for the moment the
+      // request is sent, so it cannot run to completion in the meantime.
+      if (this.unsent.has(work.id)) {
+        this.pauseRequested.add(work.id);
+        return;
+      }
       await this.engine.interrupt(work.conversationId);
       return;
     }
@@ -431,16 +458,25 @@ export class App {
       work.busy = true;
       work.problem = undefined;
       work.progress = "Preparando la respuesta…";
+      this.unsent.add(work.id);
       this.changed();
       await this.writes;
       reply({ type: "selected", workId: work.id });
       await rememberUserUrls(this.data, command.text);
-      await this.engine.send(work.conversationId, command.text.trim(), await Promise.all((attachments || []).map(async f => ({ path: await this.workspace!.safePath(f.path), mime: f.mime }))), { filesReverted: this.backups?.hasNotice(work.id) });
+      const engineFiles = await Promise.all((attachments || []).map(async f => ({ path: await this.workspace!.safePath(f.path), mime: f.mime })));
+      this.unsent.delete(work.id);
+      const sending = this.engine.send(work.conversationId, command.text.trim(), engineFiles, { filesReverted: this.backups?.hasNotice(work.id) });
+      if (this.pauseRequested.delete(work.id)) await this.engine.interrupt(work.conversationId);
+      await sending;
       if (this.backups?.hasNotice(work.id)) {
         try { await this.backups.acknowledge(work.id); }
         catch { work.details += "No pude guardar que el motor recibió el aviso de Deshacer.\n"; }
       }
     } catch (error) {
+      if (work) {
+        this.unsent.delete(work.id);
+        this.pauseRequested.delete(work.id);
+      }
       if (error instanceof EngineFailure && error.kind === "disconnected")
         this.accountState = { connected: false };
       if (!committed) {
@@ -473,6 +509,9 @@ export class App {
     this.unsubscribe?.();
     await Promise.all(this.scans);
     clearTimeout(this.flushTimer);
+    // Wait for the last write so a failure marks the change as unsaved, then
+    // retry it before closing.
+    await this.writes.catch(() => {});
     if (this.dirty) this.changed();
     await this.writes;
   }

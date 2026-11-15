@@ -82,6 +82,7 @@ export class CodexEngine implements Engine {
   private turns = new Map<string, string>();
   private loginId?: string;
   private stopping = false;
+  private startAttempt?: Promise<void>;
   private stderr = "";
   constructor(
     private options: {
@@ -112,11 +113,22 @@ export class CodexEngine implements Engine {
     for (const listener of this.listeners) listener(event);
   }
   async start() {
+    const attempt = this.runStart();
+    this.startAttempt = attempt;
+    try {
+      await attempt;
+    } finally {
+      if (this.startAttempt === attempt) this.startAttempt = undefined;
+    }
+  }
+  private async runStart() {
+    if (this.stopping) return;
     await mkdir(this.options.home, { recursive: true });
     await mkdir(this.options.workspace, { recursive: true });
     if (!this.options.args) {
       await registerKit(this.options.home, this.options.workspace);
     }
+    if (this.stopping) return;
     const binary = this.options.binary || codexBinary();
     const env: NodeJS.ProcessEnv = {
       ...process.env,
@@ -265,7 +277,17 @@ export class CodexEngine implements Engine {
       if (this.safety.status === "needed" && !this.safety.needsPermission) await this.prepareProtection();
       return;
     }
+    // Mark the preparation as started before awaiting anything, so a second
+    // click cannot start the Windows setup again.
     this.setProtection({ ...this.safety, allowed: false, status: "preparing", issue: undefined });
+    // The setup replaces the process, so a login in progress cannot survive:
+    // cancel it explicitly instead of killing it silently.
+    if (this.loginId) {
+      const loginId = this.loginId;
+      this.loginId = undefined;
+      try { await this.rpc("account/login/cancel", { loginId }); }
+      catch { /* the process is replaced anyway */ }
+    }
     try {
       if (this.setupMode === "mxc") {
         await this.rpc("config/value/write", { keyPath: "windows.sandbox", value: "mxc",
@@ -305,6 +327,8 @@ export class CodexEngine implements Engine {
     this.child = undefined;
     this.available = false;
     this.setupPending = false;
+    // The login belongs to the process that is about to be replaced.
+    this.loginId = undefined;
     this.safety = { ...this.safety, allowed: false };
     this.cancelPending(new Error("Engine reloading protection"));
     clearTimeout(this.setupTimer);
@@ -578,6 +602,9 @@ export class CodexEngine implements Engine {
       : { connected: false };
   }
   async connectAccount() {
+    // The engine is about to be replaced: a login started now would be lost.
+    if (!this.available || this.safety.status === "preparing")
+      throw new EngineFailure("other", "Protection is being prepared");
     if (this.loginId)
       await this.rpc("account/login/cancel", { loginId: this.loginId });
     const login = await this.rpc("account/login/start", { type: "chatgpt" });
@@ -661,6 +688,13 @@ export class CodexEngine implements Engine {
     clearTimeout(this.setupTimer);
     this.restartTimer?.();
     this.stableTimer?.();
+    const attempt = this.startAttempt;
+    if (attempt) {
+      // A restart may already own a child: stop it and wait for the attempt to
+      // settle, so no new child can appear after close() returns.
+      this.child?.kill();
+      await attempt.catch(() => {});
+    }
     const child = this.child;
     if (!child) return;
     await new Promise<void>((resolve) => {
