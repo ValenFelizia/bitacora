@@ -115,6 +115,9 @@ export class CodexEngine implements Engine {
     return this.safety;
   }
   private child?: ChildProcessWithoutNullStreams;
+  // The last process this engine spawned. `child` is cleared as soon as a
+  // process fails, so close() needs this to make sure nothing is left running.
+  private lastChild?: ChildProcessWithoutNullStreams;
   private nextId = 0;
   private pending = new Map<
     number,
@@ -213,6 +216,7 @@ export class CodexEngine implements Engine {
       { cwd: this.options.workspace, env, windowsHide: true, stdio: "pipe" },
     );
     const child = this.child;
+    this.lastChild = child;
     let failed = false;
     const failedChild = (error: Error) => {
       if (failed || this.child !== child) return;
@@ -924,11 +928,15 @@ export class CodexEngine implements Engine {
       await attempt.catch(() => {});
     }
     const child = this.child;
-    if (!child) return;
-    // Let the app-server close on its own, then stop the whole tree. Both waits
-    // are bounded: a stuck kill must never hang the app.
-    child.stdin.end();
-    if (await this.waitExit(child, 2000)) return;
-    await this.stopTree(child);
+    if (child) {
+      // Let the app-server close on its own, then stop the whole tree. Both
+      // waits are bounded: a stuck kill must never hang the app.
+      child.stdin.end();
+      if (!(await this.waitExit(child, 2000))) await this.stopTree(child);
+    }
+    // A process that failed or was replaced is no longer `child`: it must not
+    // be left running after close() returns.
+    const last = this.lastChild;
+    if (last && last !== child && this.childRunning(last)) await this.stopTree(last);
   }
 }

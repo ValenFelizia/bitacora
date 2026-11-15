@@ -123,8 +123,7 @@ test("a turn/start with no sign of life stops the engine", async () => {
     assert.equal(pids.filter((pid) => !alive(pid)).length, 1);
   } finally {
     delete process.env.BITACORA_FAKE_PID;
-    await app.close();
-    await f.close();
+    try { await app.close(); } finally { await f.close(); }
   }
 });
 
@@ -142,8 +141,7 @@ test("a pause the engine never honours stops it", async () => {
     assert.match(app.snapshot().works[0].problem!, /El motor no respondió y lo reinicié/);
     await until(() => app.snapshot().engine.available);
   } finally {
-    await app.close();
-    await f.close();
+    try { await app.close(); } finally { await f.close(); }
   }
 });
 
@@ -162,8 +160,7 @@ test("a pause requested before the turn starts still has a deadline", async () =
     assert.equal(work.busy, false);
     assert.match(work.problem!, /El motor no respondió y lo reinicié/);
   } finally {
-    await app.close();
-    await f.close();
+    try { await app.close(); } finally { await f.close(); }
   }
 });
 
