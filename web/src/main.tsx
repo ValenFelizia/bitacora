@@ -12,6 +12,14 @@ const latestResult = (work: Work) => work.messages.flatMap(m => m.results || [])
 import type { Upload } from "../../server/src/contracts";
 import ReactMarkdown from "react-markdown";
 import { protectionText } from "./protection-text";
+import {
+  appendReadFiles,
+  clearSentAttachments,
+  clearSentText,
+  isCurrentDraft,
+  keepSelectedWork,
+  type SentDraft,
+} from "./draft";
 
 // Matches the server limit for a request (server/src/app.ts).
 const MAX_REQUEST_TEXT = 20000;
@@ -29,6 +37,9 @@ function App() {
   const [gallery, setGallery] = useState(false);
   const [attachments, setAttachments] = useState<Upload[]>([]);
   const [readingFiles, setReadingFiles] = useState(false);
+  const sentDraft = useRef<SentDraft | undefined>(undefined);
+  // Incremented when the draft is discarded, so unfinished reads are ignored.
+  const draftGeneration = useRef(0);
   const fileInput = useRef<HTMLInputElement>(null);
   const [selected, setSelected] = useState<string>();
   const [text, setText] = useState("");
@@ -82,9 +93,15 @@ function App() {
           }));
         }
         if (message.type === "selected") {
-          setSelected(message.workId);
-          setText("");
-          setAttachments([]);
+          const sent = sentDraft.current;
+          sentDraft.current = undefined;
+          if (sent) {
+            // A discarded draft must not reopen the work the user left.
+            const keep = isCurrentDraft(sent, draftGeneration.current);
+            setText((current) => (keep ? clearSentText(current, sent) : current));
+            setAttachments((current) => (keep ? clearSentAttachments(current, sent) : current));
+            setSelected((current) => (keep ? keepSelectedWork(current, sent, message.workId) : current));
+          } else setSelected(message.workId);
           setPending(false);
         }
         if (message.type === "problem") {
@@ -139,10 +156,12 @@ function App() {
       return;
     }
     setPending(true);
+    sentDraft.current = { workId: selected, text, attachments, generation: draftGeneration.current };
     send({ type: "send", workId: selected, text: combined, attachments });
   }
   async function addFiles(files: File[]) {
     if (readingFiles || pending) return;
+    const generation = draftGeneration.current;
     setReadingFiles(true);
     try {
       if (attachments.length + files.length > 10) throw new Error("Podés adjuntar hasta 10 archivos.");
@@ -158,8 +177,8 @@ function App() {
         reader.onerror = () => reject(new Error("No pude leer el archivo. Elegilo de nuevo."));
         reader.readAsDataURL(f);
       })));
-      setAttachments(previous => [...previous, ...added]);
-      setProblem(undefined);
+      setAttachments(previous => appendReadFiles(previous, added, generation, draftGeneration.current));
+      if (generation === draftGeneration.current) setProblem(undefined);
     } catch (error) { setProblem({ text: String((error as Error).message) }); }
     finally { setReadingFiles(false); }
   }
@@ -195,6 +214,7 @@ function App() {
           className={`${buttonPrimary} w-full`}
           onClick={() => {
             setGallery(false);
+            draftGeneration.current++;
             setAttachments([]);
             setSelected(undefined);
             setText("");

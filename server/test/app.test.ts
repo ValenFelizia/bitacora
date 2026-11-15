@@ -416,6 +416,99 @@ test("corrupt quarantine retries then copies, and still starts if copying also f
 
 
 
+test("a pause requested before the request reaches the engine stops the turn once it starts", async () => {
+  await mkdir(".local", { recursive: true });
+  const dir = await mkdtemp(resolve(".local/pause-"));
+  const engine = new FakeEngine();
+  const messages: ServerMessage[] = [];
+  const reply = (m: ServerMessage) => { messages.push(m); };
+  // Hold the save so the pause arrives while the request is still in the app.
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const app = new App(engine, dir, reply, {
+    rename: async (from, to) => { await held; await rename(from, to); },
+    copyFile,
+  });
+  try {
+    await app.start();
+    const sending = app.command({ type: "send", text: "Un pedido" }, reply);
+    let work = app.snapshot().works[0];
+    for (let i = 0; i < 200 && !work?.busy; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      work = app.snapshot().works[0];
+    }
+    assert.ok(work?.busy, "the request never reached the commit point");
+    await app.command({ type: "interrupt", workId: work.id }, reply);
+    release();
+    await sending;
+    // The pause must reach the engine after the request, never before it.
+    assert.deepEqual(engine.calls, ["send:conversation-1", "interrupt:conversation-1"]);
+    assert.equal(app.snapshot().works[0].progress, "Trabajo pausado.");
+  } finally {
+    release();
+    await app.close();
+    await rm(dir, { recursive: true });
+  }
+});
+
+test("a failed save stays pending and is retried before closing", async () => {
+  const f = await fixture();
+  try {
+    await f.app.command({ type: "send", text: "Guardá esto" }, f.reply);
+    // The disk refuses the next save.
+    await mkdir(join(f.dir, "works.json.tmp"));
+    f.engine.emit({ type: "finished", conversationId: "conversation-1", status: "completed" });
+    for (let i = 0; i < 200 && !f.messages.some((m) => m.type === "problem"); i++)
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.ok(f.messages.some((m) => m.type === "problem" && /No pude guardar/.test(m.text)));
+    // The disk works again: closing must save the last response.
+    await rm(join(f.dir, "works.json.tmp"), { recursive: true });
+    await f.app.close();
+    const saved = await readFile(join(f.dir, "works.json"), "utf8");
+    assert.match(saved, /"busy": false/);
+    assert.match(saved, /Listo\./);
+  } finally {
+    await f.app.close();
+    await rm(f.dir, { recursive: true });
+  }
+});
+
+test("a saved work with a damaged message is quarantined instead of blanking the page", async () => {
+  const f = await fixture();
+  try {
+    await f.app.command({ type: "send", text: "Un trabajo" }, f.reply);
+    await f.app.close();
+    const saved = JSON.parse(await readFile(join(f.dir, "works.json"), "utf8"));
+    saved.works[0].messages = [null];
+    await writeFile(join(f.dir, "works.json"), JSON.stringify(saved));
+    const app = new App(new FakeEngine(), f.dir, f.reply);
+    try {
+      await app.start();
+      assert.equal(app.snapshot().works.length, 0);
+      assert.ok(app.snapshot().notice);
+      assert.ok((await readdir(f.dir)).some((n) => n.startsWith("works.corrupt-")));
+    } finally {
+      await app.close();
+    }
+  } finally {
+    await f.app.close();
+    await rm(f.dir, { recursive: true });
+  }
+});
+
+test("connecting while protection is being prepared asks to wait", async () => {
+  const f = await fixture();
+  try {
+    f.engine.executionSafety = () => ({ allowed: false, status: "preparing", detail: "" });
+    f.engine.connectAccount = async () => { throw new Error("a login must not start"); };
+    await f.app.command({ type: "connect" }, f.reply);
+    assert.ok(f.messages.some((m) => m.type === "problem" && /preparando la protección/.test(m.text)));
+  } finally {
+    await f.app.close();
+    await rm(f.dir, { recursive: true });
+  }
+});
+
 test("final flush includes events delivered during engine shutdown", async () => {
 
   const f = await fixture();

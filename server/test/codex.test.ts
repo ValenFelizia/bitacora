@@ -152,7 +152,7 @@ async function fixture(stableAfterMs = 60_000, options: Partial<ConstructorParam
     close: async () => {
       await engine.close();
       delete process.env.BITACORA_FAKE_LOG;
-      await rm(dir, { recursive: true });
+      await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     },
   };
 }
@@ -188,6 +188,71 @@ function fakeClock() {
     },
   };
 }
+test("a slow turn/start reply keeps the request until the turn ends", {
+  // Reproduces the finding from PR #11: the request timeout releases the work
+  // while the turn is still changing files. Fixing it changes what the app
+  // should do when the engine stops answering, so it waits for a decision.
+  skip: "Pendiente de decisión: qué hacer cuando el motor no responde pero el turno sigue (issue #20)",
+}, async () => {
+  process.env.BITACORA_FAKE_TURN_DELAY = "1800";
+  const f = await fixture(60_000, { requestTimeoutMs: 1000 });
+  try {
+    const sending = f.engine.send("thread-1", "slow-start");
+    const outcome = await Promise.race([
+      sending.then(() => "sent", (error: Error) => `rejected: ${error.message}`),
+      delay(1400).then(() => "still running"),
+    ]);
+    // The turn already started: the request must not be released.
+    assert.equal(outcome, "still running");
+    await sending;
+    assert.ok(f.events.some((e) => e.type === "finished"));
+  } finally {
+    delete process.env.BITACORA_FAKE_TURN_DELAY;
+    await f.close();
+  }
+});
+
+test("preparing protection does not lose a login in progress", async () => {
+  process.env.BITACORA_FAKE_SAFETY = "notConfigured";
+  process.env.BITACORA_FAKE_SETUP_DELAY = "300";
+  const f = await fixture(60_000, { requestTimeoutMs: 1000 });
+  try {
+    await f.engine.connectAccount();
+    const preparing = f.engine.prepareProtection();
+    await until(() => f.engine.executionSafety().status === "preparing");
+    // A login cannot start while the engine is being replaced.
+    await assert.rejects(f.engine.connectAccount(), /being prepared/i);
+    await preparing;
+    await until(() => f.engine.executionSafety().allowed);
+    // The login belonged to the process that was replaced: it is cancelled
+    // explicitly once, and the new process is never asked about that id.
+    assert.equal((await f.records()).filter((m) => m.method === "account/login/cancel").length, 1);
+    await f.engine.connectAccount();
+    assert.equal((await f.records()).filter((m) => m.method === "account/login/cancel").length, 1);
+  } finally {
+    delete process.env.BITACORA_FAKE_SAFETY;
+    delete process.env.BITACORA_FAKE_SETUP_DELAY;
+    await f.close();
+  }
+});
+
+test("preparing protection twice starts the Windows setup once", async () => {
+  process.env.BITACORA_FAKE_SAFETY = "notConfigured";
+  process.env.BITACORA_FAKE_LOGIN_CANCEL_DELAY = "100";
+  const f = await fixture(60_000, { requestTimeoutMs: 2000 });
+  try {
+    await f.engine.connectAccount();
+    // The second call arrives while the login cancellation is still pending.
+    await Promise.all([f.engine.prepareProtection(), f.engine.prepareProtection()]);
+    await until(() => f.engine.executionSafety().allowed);
+    assert.equal((await f.records()).filter((m) => m.method === "windowsSandbox/setupStart").length, 1);
+  } finally {
+    delete process.env.BITACORA_FAKE_SAFETY;
+    delete process.env.BITACORA_FAKE_LOGIN_CANCEL_DELAY;
+    await f.close();
+  }
+});
+
 test("stdio handshake, activities, retry and server-initiated rejection", async () => {
   const f = await fixture();
   try {
@@ -315,6 +380,25 @@ test("restart backoff grows, exhausts explicitly and allows manual retry", async
     await f.engine.retry();
     assert.equal((await f.records()).filter(m => m.method === "initialize").length, 7);
   } finally { await f.close(); }
+});
+
+test("closing during an automatic restart leaves no engine running", async () => {
+  const clock = fakeClock();
+  const f = await fixture(60_000, { scheduleTimer: clock.scheduleTimer });
+  try {
+    await assert.rejects(f.engine.send("thread-1", "crash"));
+    // Fire the scheduled restart and close in the same tick: the restart is
+    // still before spawning, so close() must wait for it and stop it.
+    clock.runNext();
+    await f.engine.close();
+    await delay(300);
+    assert.equal(
+      (await f.records()).filter((m) => m.method === "initialize").length,
+      1,
+    );
+  } finally {
+    await f.close();
+  }
 });
 
 test("stable operation resets the restart budget", async () => {

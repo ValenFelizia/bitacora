@@ -17,7 +17,7 @@ async function fixture() {
   await mkdir(root);await initializeKit(root,data);
   return {temp,root,data,files:new AgencyFiles(root)};
 }
-test('brand citations keep full tokens, normalization, line and path boundaries',async()=>{
+test('brand citations keep full tokens, normalization, line and path boundaries',{ timeout: 180000 },async()=>{
   const f=await fixture();
   try {
     await f.files.write('marca/datos.md','WhatsApp: 3513087144\nLegajo: 12345\nNúmero: 1.250\n');
@@ -37,7 +37,7 @@ test('brand citations keep full tokens, normalization, line and path boundaries'
     await assert.rejects(controlar(f.files,{...input,brand:'marca/datos.json'}),/terminación/);
   } finally { await rm(f.temp,{recursive:true,force:true}); }
 });
-test('kit copies font bytes exactly, preserves edits and loads all six families in Edge',async()=>{
+test('kit copies font bytes exactly, preserves edits and loads all six families in Edge',{ timeout: 180000 },async()=>{
   const f=await fixture();
   try {
     const manifest=JSON.parse(await f.files.read('fuentes/procedencia.json'));

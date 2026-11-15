@@ -145,7 +145,7 @@ test('registered HTTP files enforce paths, headers, HEAD and streaming size cap'
   await writeFile(join(f.files.root, 'safe.pdf'), '%PDF-1.4'); await writeFile(join(f.files.root, 'safe.png'), 'image');
   await writeFile(join(f.files.root, 'huge.pdf'), ''); await truncate(join(f.files.root, 'huge.pdf'), MAX_RESULT + 1);
   const refs: FileRef[] = ['safe.pdf', 'safe.png', 'huge.pdf', '../outside/secret.pdf', join(f.dir, 'outside', 'secret.pdf'), 'escape/secret.pdf'].map((path, i) => ({ id: String(i), path, name: path.endsWith('.png') ? 'imagen.png' : 'cotización.pdf', mime: path.endsWith('.png') ? 'image/png' : 'application/pdf', createdAt: new Date().toISOString() }));
-  await writeFile(join(data, 'works.json'), JSON.stringify({ version: 1, works: [{ id: 'work', conversationId: 'conversation-1', messages: [{ id: 'm', role: 'user', text: 'registered', attachments: refs }], details: '', busy: false }] }));
+  await writeFile(join(data, 'works.json'), JSON.stringify({ version: 1, works: [{ id: 'work', conversationId: 'conversation-1', title: 'Archivos', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), messages: [{ id: 'm', role: 'user', text: 'registered', attachments: refs }], details: '', busy: false, progress: '' }] }));
   const server = await serve(new FakeEngine(), data, 0, undefined, f.files.root);
   const ws = new WebSocket(`ws://127.0.0.1:${server.port}/ws`, { origin: 'http://127.0.0.1:5173' });
   try {
@@ -241,4 +241,25 @@ test('only an active scan delays sends; completing it releases the gate', async 
     await app.command({ type: 'send', text: 'Ahora sí' }, () => {});
     assert.equal(engine.sent.length, 2);
   } finally { release?.(); f.files.scan = scan; await app.close(); await f.cleanup(); }
+});
+
+test('a timed-out send keeps the pending scan until the engine really finishes', {
+  // Reproduces the finding from PR #14: the catch runs finishFiles before the
+  // request ends, so files created afterwards never appear. Fixing it changes
+  // what the app should do when the engine stops answering (issue #20).
+  skip: 'Pendiente de decisión: qué hacer cuando el motor no responde pero el turno sigue (issue #20)',
+}, async () => {
+  const f = await fixture(); const engine = new FakeEngine();
+  const app = new App(engine, join(f.dir, 'data'), () => {}, undefined, f.files);
+  try {
+    await app.start();
+    engine.send = async () => { throw new Error('Engine request timed out: turn/start.'); };
+    await assert.rejects(app.command({ type: 'send', text: 'Hacé algo' }, () => {}));
+    // The engine may still be working: the file appears after the app gave up.
+    await new Promise(resolve => setTimeout(resolve, 100));
+    await writeFile(join(f.files.root, 'tarde.png'), 'late result');
+    engine.emit({ type: 'finished', conversationId: 'conversation-1', status: 'completed' });
+    await wait(() => !app.snapshot().works[0].busy);
+    assert.deepEqual(app.snapshot().works[0].messages[0].results?.map(r => r.name), ['tarde.png']);
+  } finally { await app.close(); await f.cleanup(); }
 });
