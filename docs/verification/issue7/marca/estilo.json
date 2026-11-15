@@ -1,0 +1,30 @@
+{
+  "opcion": 2,
+  "colores": [
+    {
+      "nombre": "Verde profundo",
+      "valor": "#153e3b",
+      "uso": "fondo y texto sobre claro"
+    },
+    {
+      "nombre": "Crema",
+      "valor": "#faf6ed",
+      "uso": "texto sobre verde"
+    },
+    {
+      "nombre": "Arena",
+      "valor": "#e3a45b",
+      "uso": "bloques y acentos"
+    }
+  ],
+  "fuentes": {
+    "titulos": "Outfit",
+    "lectura": "Source Sans 3"
+  },
+  "ajustes": {
+    "ancho": 1080,
+    "alto": 1920,
+    "padding": 90,
+    "composicion": "Bloques como la captura actual"
+  }
+}

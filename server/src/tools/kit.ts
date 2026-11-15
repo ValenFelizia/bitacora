@@ -16,7 +16,7 @@ export async function initializeKit(workspace: string, data: string) {
     for (const item of await readdir(await source.path(dir), { withFileTypes: true })) {
       const path = dir === '.' ? item.name : `${dir}/${item.name}`;
       if (item.isDirectory()) await copy(path);
-      else try { await target.write(path, await source.read(path)); }
+      else try { await target.write(path, await source.readBuffer(path)); }
       catch (e) { if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e; }
     }
   }

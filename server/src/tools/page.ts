@@ -74,7 +74,7 @@ export async function withPage<T>(files: AgencyFiles, html: string, run: (page: 
 
 export async function visibleTexts(page: Page) {
   return page.evaluate(() => {
-    const result: { text: string; where: string; cites: Record<string, number>; citationId?: number; skipNumbers?: boolean }[] = [];
+    const result: { text: string; where: string; cites: Record<string, number | string>; citationId?: number; skipNumbers?: boolean }[] = [];
     const owners = Array.from(document.querySelectorAll('[data-cites]'));
     for (const [citationId,el] of owners.entries()) {
       try { result.push({text:'',where:`Cita ${citationId + 1}`,cites:JSON.parse(el.getAttribute('data-cites')!),citationId}); }

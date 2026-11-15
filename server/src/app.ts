@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { Backups, BACKUP_LIMITS, RestoreProblem, pathKey } from './backups';
 import { mkdir, readFile, writeFile, rename, copyFile, rm } from "node:fs/promises";
 import { WorkspaceFiles, MAX_RESULT, type FileScan } from "./workspace-files";
@@ -100,6 +101,7 @@ export class App {
         exhausted: this.exhausted,
         safety: this.engine.executionSafety(),
       },
+      hasBrand: this.workspace ? existsSync(join(this.workspace.root, "marca")) : undefined,
       notice: this.notice,
       undo: !this.submitting && !this.works.some(w => w.busy) ? this.backups?.target : undefined,
       fileRevision: this.fileRevision,

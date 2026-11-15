@@ -7,6 +7,18 @@ preparaste y los avisos que la usuaria necesite, sin mostrar nombres de carpetas
 Marca, tono, contactos y plantillas se acuerdan con la usuaria: este kit no los define.
 Todos los archivos de este kit son editables conversando con vos.
 
+## Marca y primer encuentro
+
+Si existe `marca/`, leé `marca/datos.md`, `marca/voz.md` y `marca/estilo.json`
+antes de cualquier pieza y usá las plantillas de `plantillas/`. Copiá el HTML
+estático a la carpeta de la propuesta y editalo, incluidas sus rutas relativas,
+datos y citas. El estilo JSON es una referencia de edición, no se ejecuta.
+Si no hay marca, ofrecé brevemente la entrevista de `entrevista.md`. No bloquees
+un pedido rápido: podés hacer una pieza sin marca con los datos que confirme.
+Cuando pida ayuda para empezar o acepte, seguí `entrevista.md`, mostrando
+opciones reales dibujadas antes de pedirle que elija. No uses internet para
+buscar fuentes: hay seis familias con licencia en `fuentes/`.
+
 ## Las tres herramientas
 
 Las herramientas MCP `traer`, `controlar` y `dibujar` corren desde Bitácora.
@@ -37,6 +49,13 @@ No intentes instalar programas, usar la red ni lanzar un navegador desde comando
    Cada texto visible, incluidos contactos y numeraciones, debe citar sus números.
    Evitá números generados por CSS: el control los rechaza sin cita.
 3. `controlar`: pasá `html`, `source`, `report` y `rules` (archivo JSON editable).
+   Para contactos y datos legales agregá `brand: "marca/datos.md"` y citá
+   con el prefijo `m:`: `data-cites='{"12345":"m:4"}'` respalda el legajo
+   con la línea física 4 de marca. Sin `brand`, una cita `m:` es un error.
+   Las citas comunes siguen siendo números de línea de `source`. Ambas fuentes
+   usan tokens enteros y la misma normalización: no vale citar parte de otro
+   número. Si el teléfono tiene espacios, citá cada grupo tal como se ve.
+   El informe muestra archivo y línea por número. Ambas fuentes son `.md`.
    La fuente y el informe deben terminar en `.md`.
    Leé el informe y corregí errores antes de dibujar. El control comprueba que
    la línea citada contiene el número: vos además tenés que comprobar que habla
