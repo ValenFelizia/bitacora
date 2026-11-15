@@ -82,6 +82,7 @@ export class CodexEngine implements Engine {
   private turns = new Map<string, string>();
   private loginId?: string;
   private stopping = false;
+  private startAttempt?: Promise<void>;
   private stderr = "";
   constructor(
     private options: {
@@ -112,11 +113,22 @@ export class CodexEngine implements Engine {
     for (const listener of this.listeners) listener(event);
   }
   async start() {
+    const attempt = this.runStart();
+    this.startAttempt = attempt;
+    try {
+      await attempt;
+    } finally {
+      if (this.startAttempt === attempt) this.startAttempt = undefined;
+    }
+  }
+  private async runStart() {
+    if (this.stopping) return;
     await mkdir(this.options.home, { recursive: true });
     await mkdir(this.options.workspace, { recursive: true });
     if (!this.options.args) {
       await registerKit(this.options.home, this.options.workspace);
     }
+    if (this.stopping) return;
     const binary = this.options.binary || codexBinary();
     const env: NodeJS.ProcessEnv = {
       ...process.env,
@@ -661,6 +673,13 @@ export class CodexEngine implements Engine {
     clearTimeout(this.setupTimer);
     this.restartTimer?.();
     this.stableTimer?.();
+    const attempt = this.startAttempt;
+    if (attempt) {
+      // A restart may already own a child: stop it and wait for the attempt to
+      // settle, so no new child can appear after close() returns.
+      this.child?.kill();
+      await attempt.catch(() => {});
+    }
     const child = this.child;
     if (!child) return;
     await new Promise<void>((resolve) => {

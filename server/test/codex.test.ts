@@ -341,6 +341,25 @@ test("restart backoff grows, exhausts explicitly and allows manual retry", async
   } finally { await f.close(); }
 });
 
+test("closing during an automatic restart leaves no engine running", async () => {
+  const clock = fakeClock();
+  const f = await fixture(60_000, { scheduleTimer: clock.scheduleTimer });
+  try {
+    await assert.rejects(f.engine.send("thread-1", "crash"));
+    // Fire the scheduled restart and close in the same tick: the restart is
+    // still before spawning, so close() must wait for it and stop it.
+    clock.runNext();
+    await f.engine.close();
+    await delay(300);
+    assert.equal(
+      (await f.records()).filter((m) => m.method === "initialize").length,
+      1,
+    );
+  } finally {
+    await f.close();
+  }
+});
+
 test("stable operation resets the restart budget", async () => {
   const clock = fakeClock();
   const f = await fixture(80, { scheduleTimer: clock.scheduleTimer });
