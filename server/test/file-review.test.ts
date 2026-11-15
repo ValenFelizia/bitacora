@@ -145,7 +145,7 @@ test('registered HTTP files enforce paths, headers, HEAD and streaming size cap'
   await writeFile(join(f.files.root, 'safe.pdf'), '%PDF-1.4'); await writeFile(join(f.files.root, 'safe.png'), 'image');
   await writeFile(join(f.files.root, 'huge.pdf'), ''); await truncate(join(f.files.root, 'huge.pdf'), MAX_RESULT + 1);
   const refs: FileRef[] = ['safe.pdf', 'safe.png', 'huge.pdf', '../outside/secret.pdf', join(f.dir, 'outside', 'secret.pdf'), 'escape/secret.pdf'].map((path, i) => ({ id: String(i), path, name: path.endsWith('.png') ? 'imagen.png' : 'cotización.pdf', mime: path.endsWith('.png') ? 'image/png' : 'application/pdf', createdAt: new Date().toISOString() }));
-  await writeFile(join(data, 'works.json'), JSON.stringify({ version: 1, works: [{ id: 'work', conversationId: 'conversation-1', messages: [{ id: 'm', role: 'user', text: 'registered', attachments: refs }], details: '', busy: false }] }));
+  await writeFile(join(data, 'works.json'), JSON.stringify({ version: 1, works: [{ id: 'work', conversationId: 'conversation-1', title: 'Archivos', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), messages: [{ id: 'm', role: 'user', text: 'registered', attachments: refs }], details: '', busy: false, progress: '' }] }));
   const server = await serve(new FakeEngine(), data, 0, undefined, f.files.root);
   const ws = new WebSocket(`ws://127.0.0.1:${server.port}/ws`, { origin: 'http://127.0.0.1:5173' });
   try {
