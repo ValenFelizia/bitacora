@@ -1,4 +1,4 @@
-import type { Engine, EngineEvent, Account } from "../src/engine";
+import type { Engine, EngineEvent, Account, ExecutionSafety } from "../src/engine";
 export class FakeEngine implements Engine {
   listeners = new Set<(event: EngineEvent) => void>();
   connected = true;
@@ -9,7 +9,7 @@ export class FakeEngine implements Engine {
   safe = true;
   async retry() {}
   async prepareProtection() { this.safe = true; this.emit({ type: "protection", safety: this.executionSafety() }); }
-  executionSafety() {
+  executionSafety(): ExecutionSafety {
     return { allowed: this.safe, detail: "fake restricted execution" };
   }
   async start() {}

@@ -317,6 +317,8 @@ export class CodexEngine implements Engine {
     this.child = undefined;
     this.available = false;
     this.setupPending = false;
+    // The login belongs to the process that is about to be replaced.
+    this.loginId = undefined;
     this.safety = { ...this.safety, allowed: false };
     this.cancelPending(new Error("Engine reloading protection"));
     clearTimeout(this.setupTimer);
@@ -590,6 +592,9 @@ export class CodexEngine implements Engine {
       : { connected: false };
   }
   async connectAccount() {
+    // The engine is about to be replaced: a login started now would be lost.
+    if (!this.available || this.safety.status === "preparing")
+      throw new EngineFailure("other", "Protection is being prepared");
     if (this.loginId)
       await this.rpc("account/login/cancel", { loginId: this.loginId });
     const login = await this.rpc("account/login/start", { type: "chatgpt" });

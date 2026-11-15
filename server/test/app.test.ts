@@ -496,6 +496,19 @@ test("a saved work with a damaged message is quarantined instead of blanking the
   }
 });
 
+test("connecting while protection is being prepared asks to wait", async () => {
+  const f = await fixture();
+  try {
+    f.engine.executionSafety = () => ({ allowed: false, status: "preparing", detail: "" });
+    f.engine.connectAccount = async () => { throw new Error("a login must not start"); };
+    await f.app.command({ type: "connect" }, f.reply);
+    assert.ok(f.messages.some((m) => m.type === "problem" && /preparando la protección/.test(m.text)));
+  } finally {
+    await f.app.close();
+    await rm(f.dir, { recursive: true });
+  }
+});
+
 test("final flush includes events delivered during engine shutdown", async () => {
 
   const f = await fixture();

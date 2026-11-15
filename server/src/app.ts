@@ -350,6 +350,10 @@ export class App {
       return;
     }
     if (command.type === "connect") {
+      if (this.engine.executionSafety().status === "preparing") {
+        reply({ type: "problem", text: "Estoy preparando la protección de tu compu. Esperá un momento y volvé a intentar conectar." });
+        return;
+      }
       reply({ type: "login", ...(await this.engine.connectAccount()) });
       return;
     }

@@ -152,7 +152,7 @@ async function fixture(stableAfterMs = 60_000, options: Partial<ConstructorParam
     close: async () => {
       await engine.close();
       delete process.env.BITACORA_FAKE_LOG;
-      await rm(dir, { recursive: true });
+      await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     },
   };
 }
@@ -208,6 +208,29 @@ test("a slow turn/start reply keeps the request until the turn ends", {
     assert.ok(f.events.some((e) => e.type === "finished"));
   } finally {
     delete process.env.BITACORA_FAKE_TURN_DELAY;
+    await f.close();
+  }
+});
+
+test("preparing protection does not lose a login in progress", async () => {
+  process.env.BITACORA_FAKE_SAFETY = "notConfigured";
+  process.env.BITACORA_FAKE_SETUP_DELAY = "300";
+  const f = await fixture(60_000, { requestTimeoutMs: 1000 });
+  try {
+    await f.engine.connectAccount();
+    const preparing = f.engine.prepareProtection();
+    await until(() => f.engine.executionSafety().status === "preparing");
+    // A login cannot start while the engine is being replaced.
+    await assert.rejects(f.engine.connectAccount(), /being prepared/i);
+    await preparing;
+    await until(() => f.engine.executionSafety().allowed);
+    // The login belonged to the process that was replaced: the new one must
+    // not be asked to cancel an id it never issued.
+    await f.engine.connectAccount();
+    assert.equal((await f.records()).filter((m) => m.method === "account/login/cancel").length, 0);
+  } finally {
+    delete process.env.BITACORA_FAKE_SAFETY;
+    delete process.env.BITACORA_FAKE_SETUP_DELAY;
     await f.close();
   }
 });
