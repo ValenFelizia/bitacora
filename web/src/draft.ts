@@ -17,3 +17,8 @@ export function clearSentAttachments(current: Upload[], sent: SentDraft) {
 export function keepSelectedWork(current: string | undefined, sent: SentDraft, created: string) {
   return current === sent.workId ? created : current;
 }
+
+/** Drops files read for a draft the user already discarded. */
+export function appendReadFiles(current: Upload[], added: Upload[], generation: number, currentGeneration: number) {
+  return generation === currentGeneration ? [...current, ...added] : current;
+}

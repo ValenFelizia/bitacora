@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  appendReadFiles,
   clearSentAttachments,
   clearSentText,
   keepSelectedWork,
@@ -30,4 +31,9 @@ test("a late reply does not switch the work the user opened", () => {
   assert.equal(keepSelectedWork("work-other", sent, "work-new"), "work-other");
   const existing = { workId: "work-1", text: "x", attachments: [] };
   assert.equal(keepSelectedWork("work-1", existing, "work-1"), "work-1");
+});
+
+test("files read for a discarded draft are not added to the new one", () => {
+  assert.deepEqual(appendReadFiles([], [photo], 1, 1), [photo]);
+  assert.deepEqual(appendReadFiles([], [photo], 1, 2), []);
 });
