@@ -18,6 +18,7 @@ import type { GetAccountResponse } from "./generated/v2/GetAccountResponse";
 import type { LoginAccountResponse } from "./generated/v2/LoginAccountResponse";
 import type { ThreadStartResponse } from "./generated/v2/ThreadStartResponse";
 import type { ThreadResumeResponse } from "./generated/v2/ThreadResumeResponse";
+import type { Turn } from "./generated/v2/Turn";
 import type { TurnStartResponse } from "./generated/v2/TurnStartResponse";
 import type { ConfigReadResponse } from "./generated/v2/ConfigReadResponse";
 import type { WindowsSandboxReadinessResponse } from "./generated/v2/WindowsSandboxReadinessResponse";
@@ -50,6 +51,27 @@ export function classifyProblem(
 /** Schedules `run` and returns a cancel function. Defaults to `setTimeout`. */
 export type ScheduleTimer = (run: () => void, delayMs: number) => () => void;
 
+/**
+ * Kills the child and everything it spawned. `child.kill()` only stops the
+ * app-server: the sandboxed commands the agent runs are grandchildren and
+ * could keep writing files after the app takes its "after" snapshot.
+ */
+function killTree(child: ChildProcessWithoutNullStreams) {
+  if (process.platform === "win32" && child.pid) {
+    try {
+      execFileSync(
+        join(process.env.SystemRoot || "C:\\Windows", "System32", "taskkill.exe"),
+        ["/PID", String(child.pid), "/T", "/F"],
+        { stdio: "ignore", windowsHide: true },
+      );
+      return;
+    } catch {
+      // The process may be gone already, or taskkill may be unavailable.
+    }
+  }
+  child.kill();
+}
+
 export class CodexEngine implements Engine {
   private safety: ExecutionSafety = {
     allowed: false,
@@ -63,8 +85,12 @@ export class CodexEngine implements Engine {
   private interrupted = new Set<string>();
   private starting = new Map<
     string,
-    { completed: boolean; interrupt: boolean }
+    { completed: boolean; interrupt: boolean; started: boolean }
   >();
+  // Conversation whose turn made the engine stop answering: its problem event
+  // tells the user the engine was restarted instead of the generic failure.
+  private failing?: string;
+  private pauseTimers = new Map<string, NodeJS.Timeout>();
   executionSafety() {
     return this.safety;
   }
@@ -95,6 +121,7 @@ export class CodexEngine implements Engine {
       scheduleTimer?: ScheduleTimer;
       probeProtection?: () => Promise<boolean>;
       requestTimeoutMs?: number;
+      pauseTimeoutMs?: number;
       setupTimeoutMs?: number;
     },
   ) {}
@@ -322,6 +349,43 @@ export class CodexEngine implements Engine {
     }
     this.pending.clear();
   }
+  /** Kills the process tree and waits until the child really exited. */
+  private async stopTree(child: ChildProcessWithoutNullStreams) {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    await new Promise<void>((resolve) => {
+      child.once("exit", () => resolve());
+      killTree(child);
+    });
+  }
+  /**
+   * Stops the engine for good when a turn may still be running and nothing
+   * proves it will end. The exit handler runs fail(), which releases the app,
+   * shows the problem and schedules the automatic restart.
+   */
+  private async stopUnresponsive(conversationId: string) {
+    this.failing = conversationId;
+    const child = this.child;
+    if (child) await this.stopTree(child);
+  }
+  private clearPause(conversationId?: string) {
+    for (const [id, timer] of this.pauseTimers) {
+      if (conversationId && id !== conversationId) continue;
+      clearTimeout(timer);
+      this.pauseTimers.delete(id);
+    }
+  }
+  /** A pause that does not end the turn within the pause timeout kills the
+   *  engine: the turn could keep writing files the app already scanned. */
+  private watchPause(conversationId: string, turnId: string) {
+    this.clearPause(conversationId);
+    const timer = setTimeout(() => {
+      this.pauseTimers.delete(conversationId);
+      if (this.turns.get(conversationId) !== turnId) return;
+      void this.stopUnresponsive(conversationId);
+    }, this.options.pauseTimeoutMs ?? 15000);
+    timer.unref();
+    this.pauseTimers.set(conversationId, timer);
+  }
   private async reloadProtection() {
     const child = this.child;
     this.child = undefined;
@@ -334,10 +398,7 @@ export class CodexEngine implements Engine {
     clearTimeout(this.setupTimer);
     this.stableTimer?.();
     this.emit({ type: "availability", available: false, safety: this.safety });
-    if (child) await new Promise<void>(resolve => {
-      child.once("exit", () => resolve());
-      child.kill();
-    });
+    if (child) await this.stopTree(child);
     if (!this.stopping) try { await this.start(); } catch (error) {
       if (!this.restartTimer) this.fail(error instanceof Error ? error : new Error(String(error)));
       throw error;
@@ -377,6 +438,8 @@ export class CodexEngine implements Engine {
     });
   }
   private fail(error: Error) {
+    const failing = this.failing;
+    this.failing = undefined;
     this.setupInterrupted ||= this.safety.status === "preparing";
     this.cancelPending(error);
     this.protectionFailed(error.message, "restart");
@@ -385,6 +448,7 @@ export class CodexEngine implements Engine {
     this.safety = { ...this.safety, allowed: false };
     clearTimeout(this.setupTimer);
     this.stableTimer?.();
+    this.clearPause();
     if (!this.stopping) {
       this.emit({
         type: "availability",
@@ -396,7 +460,7 @@ export class CodexEngine implements Engine {
         this.emit({
           type: "problem",
           conversationId,
-          kind: "other",
+          kind: conversationId === failing ? "unresponsive" : "other",
           detail: error.message,
         });
         this.emit({ type: "finished", conversationId, status: "failed" });
@@ -493,8 +557,15 @@ export class CodexEngine implements Engine {
         break;
       case "turn/started":
         this.turns.set(n.params.threadId, n.params.turn.id);
-        if (this.starting.get(n.params.threadId)?.interrupt)
-          void this.interrupt(n.params.threadId).catch(error => this.emit({ type: "detail", conversationId: n.params.threadId, text: String(error) }));
+        {
+          const starting = this.starting.get(n.params.threadId);
+          if (starting) {
+            // The turn is alive even if its reply never arrives.
+            starting.started = true;
+            if (starting.interrupt)
+              void this.interrupt(n.params.threadId).catch(error => this.emit({ type: "detail", conversationId: n.params.threadId, text: String(error) }));
+          }
+        }
         this.emit({
           type: "progress",
           conversationId: n.params.threadId,
@@ -577,6 +648,7 @@ export class CodexEngine implements Engine {
         const { threadId: conversationId, turn } = n.params;
         this.turns.delete(conversationId);
         this.interrupted.delete(conversationId);
+        this.clearPause(conversationId);
         const starting = this.starting.get(conversationId);
         if (starting) starting.completed = true;
         if (turn.error)
@@ -631,14 +703,60 @@ export class CodexEngine implements Engine {
       ...this.settings(),
     });
   }
+  /**
+   * Starts a turn and resolves with its reply. When the reply does not arrive
+   * in time but `turn/started` already did, it resolves without a turn: the
+   * turn is running and the app must keep waiting for `turn/completed`.
+   * It rejects only when the turn is certainly not running, and by then the
+   * engine has been stopped and its whole process tree is gone.
+   */
+  private startTurn(
+    conversationId: string,
+    params: Extract<ClientRequest, { method: "turn/start" }>["params"],
+    state: { started: boolean },
+  ): Promise<Turn | undefined> {
+    const id = ++this.nextId;
+    return new Promise<Turn | undefined>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        if (state.started) {
+          resolve(undefined);
+          return;
+        }
+        void this.stopUnresponsive(conversationId).then(
+          () =>
+            reject(
+              new EngineFailure(
+                "unresponsive",
+                "The engine stopped answering turn/start and was restarted",
+              ),
+            ),
+          (error) =>
+            reject(error instanceof Error ? error : new Error(String(error))),
+        );
+      }, this.options.requestTimeoutMs ?? 45000);
+      this.pending.set(id, {
+        resolve: (value) => resolve((value as TurnStartResponse).turn),
+        reject,
+        timer,
+      });
+      try {
+        this.write({ id, method: "turn/start", params });
+      } catch (error) {
+        clearTimeout(timer);
+        this.pending.delete(id);
+        reject(error);
+      }
+    });
+  }
   async send(conversationId: string, text: string, files: import("../engine").EngineFile[] = [], context?: { filesReverted?: boolean }) {
     if (!this.available || !this.safety.allowed)
       throw new EngineFailure("other", this.safety.detail);
     this.interrupted.delete(conversationId);
-    const state = { completed: false, interrupt: false };
+    const state = { completed: false, interrupt: false, started: false };
     this.starting.set(conversationId, state);
     try {
-      const { turn } = await this.rpc("turn/start", {
+      const turn = await this.startTurn(conversationId, {
         threadId: conversationId,
         input: [
           { type: "text", text, text_elements: [] },
@@ -655,9 +773,9 @@ export class CodexEngine implements Engine {
           excludeTmpdirEnvVar: true,
           excludeSlashTmp: true,
         },
-      });
-      if (!state.completed && turn.status === "inProgress" && this.available) {
-        this.turns.set(conversationId, turn.id);
+      }, state);
+      if (!state.completed && this.available && (!turn || turn.status === "inProgress")) {
+        if (turn) this.turns.set(conversationId, turn.id);
         if (state.interrupt) await this.interrupt(conversationId);
       }
     } finally {
@@ -670,6 +788,9 @@ export class CodexEngine implements Engine {
     const turnId = this.turns.get(conversationId);
     if (turnId && !this.interrupted.has(conversationId)) {
       this.interrupted.add(conversationId);
+      // A pause that the engine does not honour cannot leave the turn writing
+      // files: it becomes a full stop once the pause timeout expires.
+      this.watchPause(conversationId, turnId);
       await this.rpc("turn/interrupt", { threadId: conversationId, turnId });
     }
   }
@@ -688,17 +809,21 @@ export class CodexEngine implements Engine {
     clearTimeout(this.setupTimer);
     this.restartTimer?.();
     this.stableTimer?.();
+    this.clearPause();
     const attempt = this.startAttempt;
     if (attempt) {
       // A restart may already own a child: stop it and wait for the attempt to
       // settle, so no new child can appear after close() returns.
-      this.child?.kill();
+      const child = this.child;
+      if (child) await this.stopTree(child);
       await attempt.catch(() => {});
     }
     const child = this.child;
     if (!child) return;
     await new Promise<void>((resolve) => {
-      const timer = setTimeout(() => child.kill(), 2000);
+      const timer = setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) killTree(child);
+      }, 2000);
       child.once("exit", () => {
         clearTimeout(timer);
         resolve();
