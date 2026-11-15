@@ -138,6 +138,26 @@ test("a pause the engine never honours stops it", async () => {
   }
 });
 
+test("a pause requested before the turn starts still has a deadline", async () => {
+  // The request timeout is far away: only the pause deadline can release this.
+  const f = await fixture({ requestTimeoutMs: 30_000, pauseTimeoutMs: 200 });
+  const { app } = await application(f);
+  try {
+    await app.start();
+    const sending = app.command({ type: "send", text: "silent-start" }, () => {});
+    await until(() => app.snapshot().works[0]?.busy === true);
+    await app.command({ type: "interrupt", workId: app.snapshot().works[0].id }, () => {});
+    // The turn never started, so only the pause deadline can stop the engine.
+    await assert.rejects(sending, /stopped answering turn\/start/);
+    const work = app.snapshot().works[0];
+    assert.equal(work.busy, false);
+    assert.match(work.problem!, /El motor no respondió y lo reinicié/);
+  } finally {
+    await app.close();
+    await f.close();
+  }
+});
+
 test("the tree kill also stops the commands the turn started", { skip: process.platform !== "win32" }, async () => {
   const f = await fixture({ requestTimeoutMs: 1000 });
   const childFile = join(f.dir, "grandchild.pid");

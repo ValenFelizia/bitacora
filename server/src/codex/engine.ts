@@ -55,8 +55,9 @@ export type ScheduleTimer = (run: () => void, delayMs: number) => () => void;
  * Kills the child and everything it spawned. `child.kill()` only stops the
  * app-server: the sandboxed commands the agent runs are grandchildren and
  * could keep writing files after the app takes its "after" snapshot.
+ * Returns false when only the app-server could be stopped.
  */
-function killTree(child: ChildProcessWithoutNullStreams) {
+function killTree(child: ChildProcessWithoutNullStreams): boolean {
   if (process.platform === "win32" && child.pid) {
     try {
       execFileSync(
@@ -64,12 +65,15 @@ function killTree(child: ChildProcessWithoutNullStreams) {
         ["/PID", String(child.pid), "/T", "/F"],
         { stdio: "ignore", windowsHide: true },
       );
-      return;
+      return true;
     } catch {
       // The process may be gone already, or taskkill may be unavailable.
     }
+    child.kill();
+    return false;
   }
   child.kill();
+  return true;
 }
 
 export class CodexEngine implements Engine {
@@ -349,13 +353,14 @@ export class CodexEngine implements Engine {
     }
     this.pending.clear();
   }
-  /** Kills the process tree and waits until the child really exited. */
+  /** Kills the process tree and waits until the child really exited. Returns
+   *  false when only the app-server could be stopped. */
   private async stopTree(child: ChildProcessWithoutNullStreams) {
-    if (child.exitCode !== null || child.signalCode !== null) return;
-    await new Promise<void>((resolve) => {
-      child.once("exit", () => resolve());
-      killTree(child);
-    });
+    if (child.exitCode !== null || child.signalCode !== null) return true;
+    const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+    const complete = killTree(child);
+    await exited;
+    return complete;
   }
   /**
    * Stops the engine for good when a turn may still be running and nothing
@@ -363,9 +368,18 @@ export class CodexEngine implements Engine {
    * shows the problem and schedules the automatic restart.
    */
   private async stopUnresponsive(conversationId: string) {
-    this.failing = conversationId;
     const child = this.child;
-    if (child) await this.stopTree(child);
+    if (!child) return;
+    this.failing = conversationId;
+    const complete = await this.stopTree(child);
+    // A parent-only termination leaves commands running: the app must not scan
+    // as if every writer had stopped.
+    if (!complete)
+      this.emit({
+        type: "detail",
+        conversationId,
+        text: "No pude detener todos los procesos del motor: puede quedar algo escribiendo archivos.",
+      });
   }
   private clearPause(conversationId?: string) {
     for (const [id, timer] of this.pauseTimers) {
@@ -375,12 +389,14 @@ export class CodexEngine implements Engine {
     }
   }
   /** A pause that does not end the turn within the pause timeout kills the
-   *  engine: the turn could keep writing files the app already scanned. */
-  private watchPause(conversationId: string, turnId: string) {
-    this.clearPause(conversationId);
+   *  engine: the turn could keep writing files the app already scanned. The
+   *  deadline starts when the pause is requested, even before the turn exists,
+   *  so a silent engine cannot keep it waiting for the request timeout. */
+  private watchPause(conversationId: string) {
+    if (this.pauseTimers.has(conversationId)) return;
     const timer = setTimeout(() => {
       this.pauseTimers.delete(conversationId);
-      if (this.turns.get(conversationId) !== turnId) return;
+      if (!this.turns.has(conversationId) && !this.starting.has(conversationId)) return;
       void this.stopUnresponsive(conversationId);
     }, this.options.pauseTimeoutMs ?? 15000);
     timer.unref();
@@ -439,7 +455,6 @@ export class CodexEngine implements Engine {
   }
   private fail(error: Error) {
     const failing = this.failing;
-    this.failing = undefined;
     this.setupInterrupted ||= this.safety.status === "preparing";
     this.cancelPending(error);
     this.protectionFailed(error.message, "restart");
@@ -481,6 +496,7 @@ export class CodexEngine implements Engine {
         }, delay);
       }
     }
+    this.failing = undefined;
   }
   private receive(message: {
     id?: number;
@@ -737,7 +753,17 @@ export class CodexEngine implements Engine {
       }, this.options.requestTimeoutMs ?? 45000);
       this.pending.set(id, {
         resolve: (value) => resolve((value as TurnStartResponse).turn),
-        reject,
+        // A stop caused by this same conversation must reach the app as the
+        // restart warning, not as a generic failure.
+        reject: (error) =>
+          reject(
+            this.failing === conversationId
+              ? new EngineFailure(
+                  "unresponsive",
+                  `The engine stopped answering turn/start and was restarted. ${error.message}`,
+                )
+              : error,
+          ),
         timer,
       });
       try {
@@ -786,13 +812,14 @@ export class CodexEngine implements Engine {
     const starting = this.starting.get(conversationId);
     if (starting) starting.interrupt = true;
     const turnId = this.turns.get(conversationId);
-    if (turnId && !this.interrupted.has(conversationId)) {
-      this.interrupted.add(conversationId);
-      // A pause that the engine does not honour cannot leave the turn writing
-      // files: it becomes a full stop once the pause timeout expires.
-      this.watchPause(conversationId, turnId);
-      await this.rpc("turn/interrupt", { threadId: conversationId, turnId });
-    }
+    if (!turnId && !starting) return;
+    // The deadline starts when the pause is requested, even while the turn is
+    // still starting: a silent engine must not keep it waiting for the request
+    // timeout.
+    this.watchPause(conversationId);
+    if (!turnId || this.interrupted.has(conversationId)) return;
+    this.interrupted.add(conversationId);
+    await this.rpc("turn/interrupt", { threadId: conversationId, turnId });
   }
   async retry() {
     if (this.available || !this.exhausted || this.stopping) return;
