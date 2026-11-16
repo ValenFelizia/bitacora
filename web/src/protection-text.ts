@@ -10,3 +10,13 @@ export function protectionText(safety: ExecutionSafety): string {
   }[safety.issue];
   return safety.status === "preparing" ? "Preparando todo…" : "Hasta que esté lista, no se pueden enviar pedidos.";
 }
+/**
+ * What this computer cannot protect, in plain words. Empty when the agent
+ * cannot read outside the folder. It is a warning, not a failure: the work is
+ * allowed with the write protection the app always had.
+ */
+export function protectionWarning(safety: ExecutionSafety): string {
+  return safety.readBlock === false
+    ? "En esta compu no puedo impedir que el agente lea archivos fuera de tu carpeta. Igual no puede cambiarlos ni borrarlos."
+    : "";
+}

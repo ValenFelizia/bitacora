@@ -11,7 +11,7 @@ import type { Work } from "../../server/src/contracts";
 const latestResult = (work: Work) => work.messages.flatMap(m => m.results || []).reduce((latest, f) => f.createdAt > latest ? f.createdAt : latest, "");
 import type { Upload } from "../../server/src/contracts";
 import ReactMarkdown from "react-markdown";
-import { protectionText } from "./protection-text";
+import { protectionText, protectionWarning } from "./protection-text";
 import {
   appendReadFiles,
   clearSentAttachments,
@@ -389,6 +389,11 @@ function App() {
                 {state.engine.safety.status === "preparing" ? "Preparando…" : state.engine.safety.status === "failed" ? "Reintentar" : "Preparar la protección"}
               </button>
             </section>
+          )}
+          {online && state.engine.available && state.engine.safety.allowed && protectionWarning(state.engine.safety) && (
+            <p role="status" className="mb-3 rounded-xl border border-[#e0d3b4] bg-[#fdf8ee] px-4 py-3 text-sm text-[#7a6236]">
+              {protectionWarning(state.engine.safety)}
+            </p>
           )}
           {online && (!state.engine.available || (!state.engine.safety.allowed && (state.engine.safety.needsPermission || state.engine.safety.status === "failed"))) && <details className="mb-3 text-xs text-[#596b5e]">
             <summary className="cursor-pointer focus-visible:outline-3 focus-visible:outline-[#94733c] focus-visible:outline-offset-3">
