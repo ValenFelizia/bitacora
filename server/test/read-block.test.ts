@@ -53,6 +53,12 @@ test("the real app-server starts the work with the read-restricting profile", { 
     // own; the profile is only accepted once that finished.
     assert.ok(await until(() => engine.executionSafety().allowed), engine.executionSafety().detail);
     const safety = engine.executionSafety();
+    // A machine without MXC cannot run the profile: the app works with the
+    // write protection only and warns, so there is no read block to prove here.
+    if (!safety.readBlock) {
+      t.skip(`this machine has no MXC, so the app works without the read block: ${safety.detail}`);
+      return;
+    }
     assert.match(safety.detail, new RegExp(`permissions=${PERMISSIONS_PROFILE}`));
     const work = await engine.createWork();
     assert.ok(work.conversationId);
@@ -159,3 +165,39 @@ test(`the ${backend} backend blocks a witness file outside the agency folder and
   }
 });
 }
+
+// The mode the check decides also picks the arguments of the app-server: a
+// machine without MXC must not define a profile its backend cannot run.
+test("a machine without MXC starts the app-server for the elevated backend", { skip: windowsOnly }, async () => {
+  const { base, workspace } = await sandboxBase("elevated-mode");
+  // The elevated backend is the saved choice and this machine has no MXC, so
+  // the process that answered the check is stopped and started again without
+  // the profile.
+  await writeFile(join(base, "codex", "config.toml"), 'windows.sandbox = "elevated"\n');
+  const engine = new CodexEngine({
+    home: join(base, "codex"),
+    workspace,
+    requestTimeoutMs: 60000,
+    probeProtection: async () => false,
+  });
+  try {
+    await engine.start();
+    const safety = engine.executionSafety();
+    // A restart that never settles or loops shows up here as a timeout or as a
+    // failed check, never as a quiet pass.
+    assert.notEqual(safety.issue, "check", safety.detail);
+    if (safety.allowed) {
+      // The elevated backend is ready on this machine: the work starts with the
+      // plain write protection, which only works if the process was restarted
+      // without the profile.
+      assert.equal(safety.readBlock, false);
+      assert.ok((await engine.createWork()).conversationId);
+    } else {
+      // This machine still needs the administrative setup for that backend.
+      assert.equal(safety.needsPermission, true, safety.detail);
+    }
+  } finally {
+    await engine.close();
+    await rm(base, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+  }
+});

@@ -1,6 +1,18 @@
 import { toolProgress } from './tools/progress';
 export type Account = { connected: boolean; email?: string };
-export type ExecutionSafety = { allowed: boolean; detail: string; status?: "needed" | "preparing" | "ready" | "failed"; needsPermission?: boolean; issue?: "check" | "setup" | "uncertain" | "interrupted" | "restart" | "readBlock" };
+export type ExecutionSafety = {
+  allowed: boolean;
+  detail: string;
+  status?: "needed" | "preparing" | "ready" | "failed";
+  needsPermission?: boolean;
+  issue?: "check" | "setup" | "uncertain" | "interrupted" | "restart" | "readBlock";
+  /**
+   * False when this computer cannot stop the agent from reading files outside
+   * the folder: work is allowed with the previous write protection and the app
+   * says so. True when the read block is in place. Undefined while unknown.
+   */
+  readBlock?: boolean;
+};
 export type Activity =
   | keyof typeof toolProgress
   | "preparing"

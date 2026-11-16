@@ -46,6 +46,28 @@ export const PROFILE_ARGS = [
   `permissions.${PERMISSIONS_PROFILE}={extends=":workspace",filesystem={":root"="deny",":minimal"="read",":tmpdir"="deny",":slash_tmp"="deny"},network={enabled=false}}`,
 ];
 
+/** The Windows sandbox backend the app-server runs with. */
+export type SandboxBackend = "mxc" | "elevated";
+
+/**
+ * Arguments for an app-server of a decided backend. A machine without MXC runs
+ * the `elevated` backend, which refuses any profile that denies reading
+ * `:root`, so that process is started without the profile: defining it as the
+ * default would make every command fail. Before the check decides
+ * (`undefined`) the profile is the safe default, because nothing runs until
+ * the check passes.
+ */
+export function appServerArgs(backend: SandboxBackend | undefined): string[] {
+  const args = [
+    "app-server",
+    "--listen",
+    "stdio://",
+    "-c",
+    'cli_auth_credentials_store="file"',
+  ];
+  return backend === "elevated" ? args : [...args, ...PROFILE_ARGS];
+}
+
 type Responses = {
   initialize: unknown;
   "windowsSandbox/readiness": WindowsSandboxReadinessResponse;
@@ -126,6 +148,14 @@ export class CodexEngine implements Engine {
     allowed: false,
     detail: "Execution safety has not been checked",
   };
+  /**
+   * Sandbox backend the startup check decided. It is set once per check and
+   * every thread and turn is started for it: the two modes are never mixed
+   * inside one process. `undefined` while the check has not decided.
+   */
+  private backend?: SandboxBackend;
+  /** True when the running app-server was started with the permissions profile. */
+  private spawnedWithProfile = false;
   private available = false;
   private restartTimer?: () => void;
   private attempts = 0;
@@ -201,7 +231,7 @@ export class CodexEngine implements Engine {
     for (const listener of this.listeners) listener(event);
   }
   async start() {
-    const attempt = this.runStart();
+    const attempt = this.startInDecidedMode();
     this.startAttempt = attempt;
     try {
       await attempt;
@@ -209,8 +239,21 @@ export class CodexEngine implements Engine {
       if (this.startAttempt === attempt) this.startAttempt = undefined;
     }
   }
+  /**
+   * The backend is only known after the app-server answers the startup check,
+   * so the first process may have been started for the other one. It is
+   * stopped and started once more with the arguments the decision asks for: a
+   * process never keeps running with a mode the check did not choose.
+   */
+  private async startInDecidedMode() {
+    if (await this.runStart()) return;
+    // The check must not change its mind twice in a row: if it does, the
+    // engine refuses to start instead of running a mode it did not choose.
+    if (await this.runStart()) return;
+    throw new Error("The sandbox backend changed while the engine was starting");
+  }
   private async runStart() {
-    if (this.stopping) return;
+    if (this.stopping) return true;
     // A process that could not be stopped may still be writing in the same
     // folder: starting another one would let two engines work at once.
     if (this.lastChild && this.childRunning(this.lastChild))
@@ -220,7 +263,7 @@ export class CodexEngine implements Engine {
     if (!this.options.args) {
       await registerKit(this.options.home, this.options.workspace);
     }
-    if (this.stopping) return;
+    if (this.stopping) return true;
     const binary = this.options.binary || codexBinary();
     const env: NodeJS.ProcessEnv = {
       ...process.env,
@@ -243,16 +286,10 @@ export class CodexEngine implements Engine {
         }).trim();
     if (version !== codexVersion)
       throw new Error(`Expected ${codexVersion}, received ${version}`);
+    this.spawnedWithProfile = !this.options.args && this.backend !== "elevated";
     this.child = spawn(
       binary,
-      this.options.args || [
-        "app-server",
-        "--listen",
-        "stdio://",
-        "-c",
-        'cli_auth_credentials_store="file"',
-        ...PROFILE_ARGS,
-      ],
+      this.options.args || appServerArgs(this.backend),
       { cwd: this.options.workspace, env, windowsHide: true, stdio: "pipe" },
     );
     const child = this.child;
@@ -299,6 +336,14 @@ export class CodexEngine implements Engine {
       await this.checkProtection();
       if (this.child !== child)
         throw new Error("Engine stopped during initialization");
+      if (!this.modeMatches()) {
+        // The check decided the other backend: this process was started for a
+        // mode it cannot use. Stop it and let start() spawn the right one.
+        this.child = undefined;
+        this.cancelPending(new Error("Engine restarting in the decided sandbox mode"));
+        await this.stopTree(child);
+        return false;
+      }
       this.available = true;
       this.exhausted = false;
       this.stableTimer?.();
@@ -309,10 +354,20 @@ export class CodexEngine implements Engine {
       this.emit({ type: "availability", available: true, safety: this.safety });
       this.emit({ type: "account", account });
       if (this.safety.status === "needed" && !this.safety.needsPermission) void this.prepareProtection();
+      return true;
     } catch (error) {
       failedChild(error instanceof Error ? error : new Error(String(error)));
       throw error;
     }
+  }
+  /**
+   * True when the running app-server was started for the backend the check
+   * decided. A test app-server is started with fixed arguments and has no
+   * profile to define, so the mode only changes what the engine sends.
+   */
+  private modeMatches() {
+    if (this.options.args || !this.backend) return true;
+    return this.spawnedWithProfile === (this.backend === "mxc");
   }
   private setupMode?: "mxc" | "elevated";
   private environment: NodeJS.ProcessEnv = {};
@@ -360,17 +415,34 @@ export class CodexEngine implements Engine {
       const detail = `windowsSandbox/readiness=${readiness.status}; windows.sandbox=${mode || "disabled"}; permissions=${PERMISSIONS_PROFILE}`;
       const mxc = mode === "elevated" && readiness.status === "ready" ? undefined : await this.probeMxc();
       if (readiness.status === "ready" && (mode === "elevated" || (mode === "mxc" && mxc))) {
+        if (mode === "elevated") {
+          // A machine without MXC: the elevated backend refuses any profile
+          // that denies reading `:root`, so the read block cannot be applied.
+          // The app works with the write protection it always had and says
+          // what is missing, instead of refusing all work.
+          this.backend = "elevated";
+          this.setProtection({
+            allowed: true,
+            status: "ready",
+            readBlock: false,
+            detail: `windowsSandbox/readiness=${readiness.status}; windows.sandbox=elevated; readBlock=off`,
+          });
+          return;
+        }
+        this.backend = "mxc";
         const refusal = await this.checkPermissions();
         if (refusal) {
           // The folder is protected for writes but the agent could still read
-          // every file on the computer: say so instead of working anyway.
+          // every file on the computer: say so instead of working anyway. On a
+          // machine with MXC there is no fallback to the weaker mode.
           this.setProtection({ allowed: false, status: "failed", detail: `${detail}; ${refusal}`, issue: "readBlock" });
           return;
         }
-        this.setProtection({ allowed: true, status: "ready", detail });
+        this.setProtection({ allowed: true, status: "ready", readBlock: true, detail });
         return;
       }
-      this.setupMode = mxc ? "mxc" : "elevated";
+      this.backend = mxc ? "mxc" : "elevated";
+      this.setupMode = this.backend;
       this.setProtection({ allowed: false, status: interrupted ? "failed" : "needed",
         needsPermission: !mxc, detail, issue: interrupted ? "interrupted" : undefined });
     } catch (error) {
@@ -411,7 +483,16 @@ export class CodexEngine implements Engine {
     }
   }
   async prepareProtection() {
-    if (!this.available || this.safety.allowed || this.safety.status === "preparing" || this.setupPending) return;
+    if (!this.available) return;
+    // The check decided the other backend than the one this process was
+    // started for (for example, the Windows setup finished after the app gave
+    // up waiting): restart it in the decided mode instead of working with a
+    // mixed engine.
+    if (!this.modeMatches()) {
+      await this.reloadProtection();
+      return;
+    }
+    if (this.safety.allowed || this.safety.status === "preparing" || this.setupPending) return;
     // An unknown/ambiguous result is retried by reading state, never by
     // repeating an administrative setup whose outcome is not yet known.
     if (!this.setupMode) {
@@ -887,8 +968,11 @@ export class CodexEngine implements Engine {
       cwd: this.options.workspace,
       approvalPolicy: "never" as const,
       // A named profile cannot be combined with `sandbox`: the profile decides
-      // both the writable root and what stays readable.
-      permissions: PERMISSIONS_PROFILE,
+      // both the writable root and what stays readable. Without MXC there is no
+      // profile to run, so the thread keeps the plain write protection.
+      ...(this.backend === "elevated"
+        ? { sandbox: "workspace-write" as const }
+        : { permissions: PERMISSIONS_PROFILE }),
       developerInstructions:
         "Respondé en castellano rioplatense, simple y sin términos técnicos. Trabajá en la carpeta actual. No generes imágenes con IA.",
     };
@@ -899,8 +983,12 @@ export class CodexEngine implements Engine {
    * took; `thread/resume` reports it "when known", so a missing value there is
    * not a refusal: the turn still sends the profile and the configured default
    * is the same one. The app turns off execution and says why.
+   *
+   * Without MXC there is no profile to check: the thread runs with the plain
+   * write protection, which is all that machine can do.
    */
   private checkProfile(active: { id: string } | null | undefined, required: boolean) {
+    if (this.backend === "elevated") return;
     if (active?.id === PERMISSIONS_PROFILE) return;
     if (!required && !active) return;
     const refusal = `the engine started the work with permissions=${active?.id ?? "none"} instead of ${PERMISSIONS_PROFILE}`;
@@ -996,9 +1084,21 @@ export class CodexEngine implements Engine {
         ],
         cwd: this.options.workspace,
         approvalPolicy: "never",
-        // Same profile as the thread: the turn cannot be widened back to a
-        // sandbox policy that reads the whole computer.
-        permissions: PERMISSIONS_PROFILE,
+        // Same mode as the thread: the turn cannot be widened back to a policy
+        // that reads the whole computer. With the profile, a sandbox policy
+        // cannot be sent at all; without MXC, the write protection is the same
+        // one the app always had.
+        ...(this.backend === "elevated"
+          ? {
+              sandboxPolicy: {
+                type: "workspaceWrite" as const,
+                writableRoots: [this.options.workspace],
+                networkAccess: false,
+                excludeTmpdirEnvVar: true,
+                excludeSlashTmp: true,
+              },
+            }
+          : { permissions: PERMISSIONS_PROFILE }),
       }, state);
       if (!state.completed && this.available && (!turn || turn.status === "inProgress")) {
         if (turn) this.turns.set(conversationId, turn.id);

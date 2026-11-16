@@ -16,12 +16,16 @@ if (process.env.BITACORA_FAKE_PID)
 const turn = (status = "inProgress") => ({ id: "turn-1", status, error: null });
 // The profile a thread reports back. `BITACORA_FAKE_THREAD_PROFILE=none` is an
 // engine that ignored the request and would run with the default profile;
-// `other` is an engine that reports a different profile.
-const activeProfile = () => {
+// `other` is an engine that reports a different profile. A real app-server
+// reports the profile the request asked for, and none when the thread runs
+// with a plain sandbox policy.
+const activeProfile = (params) => {
   const reported = process.env.BITACORA_FAKE_THREAD_PROFILE;
   if (reported === "none") return null;
   if (reported === "other") return { id: ":workspace", extends: null };
-  return { id: "agencia", extends: ":workspace" };
+  return params && params.permissions
+    ? { id: params.permissions, extends: ":workspace" }
+    : null;
 };
 createInterface({ input: process.stdin })
   .on("line", (line) => {
@@ -99,10 +103,10 @@ createInterface({ input: process.stdin })
         setTimeout(() => reply({}), Number(process.env.BITACORA_FAKE_LOGIN_CANCEL_DELAY || 0));
         break;
       case "thread/start":
-        reply({ thread: { id: threadId }, activePermissionProfile: activeProfile() });
+        reply({ thread: { id: threadId }, activePermissionProfile: activeProfile(m.params) });
         break;
       case "thread/resume":
-        reply({ thread: { id: threadId }, activePermissionProfile: activeProfile() });
+        reply({ thread: { id: threadId }, activePermissionProfile: activeProfile(m.params) });
         break;
       case "turn/interrupt":
         if (interruptRejects) send({ id: m.id, error: { message: "interrupt refused" } });

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { CodexEngine } from "../src/codex/engine";
+import { CodexEngine, appServerArgs } from "../src/codex/engine";
 import type { EngineEvent } from "../src/engine";
 
 test("ready unelevated remains blocked", async () => {
@@ -125,6 +125,14 @@ test("reload cancels pending RPC and start failure goes through restart/retry", 
   }
 });
 
+/**
+ * A machine with the native sandbox: the read-restricting profile is required.
+ * `fixture().close()` clears it, so a test cannot leak the mode into the next.
+ */
+function mxc() {
+  process.env.BITACORA_FAKE_MODE = "mxc";
+  process.env.BITACORA_FAKE_MXC = "1";
+}
 async function fixture(stableAfterMs = 60_000, options: Partial<ConstructorParameters<typeof CodexEngine>[0]> = {}) {
   await mkdir(".local", { recursive: true });
   const dir = await mkdtemp(resolve(".local/adapter-"));
@@ -168,6 +176,9 @@ async function fixture(stableAfterMs = 60_000, options: Partial<ConstructorParam
         await engine.close();
       } finally {
         delete process.env.BITACORA_FAKE_LOG;
+        // The sandbox mode is chosen per test, before the fixture exists.
+        delete process.env.BITACORA_FAKE_MODE;
+        delete process.env.BITACORA_FAKE_MXC;
         await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
       }
     },
@@ -527,8 +538,10 @@ test("generic files become local images and named relative document mentions", a
 });
 
 test("every thread and turn is started with the read-restricting profile", async () => {
+  mxc();
   const f = await fixture();
   try {
+    assert.equal(f.engine.executionSafety().readBlock, true);
     await f.engine.createWork();
     await f.engine.send("thread-1", "race");
     const records = await f.records();
@@ -549,8 +562,71 @@ test("every thread and turn is started with the read-restricting profile", async
   } finally { await f.close(); }
 });
 
+test("a machine without MXC works with the write protection and warns", async () => {
+  // The fake reports `windows.sandbox=elevated`, the backend of a computer
+  // without the native sandbox: it cannot run a profile that denies `:root`.
+  const f = await fixture();
+  try {
+    const safety = f.engine.executionSafety();
+    assert.equal(safety.allowed, true);
+    assert.equal(safety.status, "ready");
+    assert.equal(safety.readBlock, false);
+    await f.engine.createWork();
+    await f.engine.resumeWork("thread-1");
+    await f.engine.send("thread-1", "race");
+    const records = await f.records();
+    for (const method of ["thread/start", "thread/resume"]) {
+      const thread = records.find((m) => m.method === method);
+      assert.equal(thread.params.sandbox, "workspace-write");
+      assert.equal(thread.params.permissions, undefined);
+    }
+    const turn = records.find((m) => m.method === "turn/start");
+    assert.deepEqual(turn.params.sandboxPolicy, {
+      type: "workspaceWrite",
+      writableRoots: [join(f.dir, "workspace")],
+      networkAccess: false,
+      excludeTmpdirEnvVar: true,
+      excludeSlashTmp: true,
+    });
+    assert.equal(turn.params.permissions, undefined);
+    // The profile is not offered to a process that cannot run it: nothing to
+    // list and nothing to try.
+    assert.equal(records.filter((m) => m.method === "permissionProfile/list").length, 0);
+    assert.equal(records.filter((m) => m.method === "command/exec").length, 0);
+  } finally { await f.close(); }
+});
+
+test("a machine without MXC does not refuse a thread for its profile", async () => {
+  // There is no profile to take in this mode: a thread that reports another
+  // one is not a refusal, because the thread runs with the plain policy.
+  process.env.BITACORA_FAKE_THREAD_PROFILE = "other";
+  const f = await fixture();
+  try {
+    assert.equal(f.engine.executionSafety().readBlock, false);
+    assert.ok((await f.engine.createWork()).conversationId);
+    await f.engine.resumeWork("thread-1");
+    assert.equal(f.engine.executionSafety().allowed, true);
+  } finally {
+    delete process.env.BITACORA_FAKE_THREAD_PROFILE;
+    await f.close();
+  }
+});
+
+test("the profile is only defined for a process that can run it", () => {
+  const definesProfile = (args: string[]) =>
+    args.some((arg) => arg.startsWith("default_permissions=") || arg.includes("permissions.agencia="));
+  // Before the check decides, the profile is the safe default.
+  assert.equal(definesProfile(appServerArgs(undefined)), true);
+  assert.equal(definesProfile(appServerArgs("mxc")), true);
+  // The elevated backend refuses it, and a default profile it cannot run would
+  // make every command fail.
+  assert.equal(definesProfile(appServerArgs("elevated")), false);
+});
+
 test("a machine that cannot run the profile blocks work instead of reading the whole disk", async () => {
-  // The elevated Windows backend refuses a profile that denies `:root` read.
+  // On a machine with MXC the profile is required: a backend that cannot run
+  // it must not fall back to the weaker mode.
+  mxc();
   process.env.BITACORA_FAKE_PROFILE_EXEC = "refuse";
   const f = await fixture();
   try {
@@ -567,6 +643,7 @@ test("a machine that cannot run the profile blocks work instead of reading the w
 
 for (const refusal of ["missing", "denied", "error"] as const) {
   test(`a refused permissions profile blocks work instead of reading the whole disk: ${refusal}`, async () => {
+    mxc();
     process.env.BITACORA_FAKE_PROFILE = refusal;
     const f = await fixture();
     try {
@@ -589,6 +666,7 @@ for (const refusal of ["missing", "denied", "error"] as const) {
 }
 
 test("a thread that did not take the profile is refused before any turn", async () => {
+  mxc();
   process.env.BITACORA_FAKE_THREAD_PROFILE = "none";
   const f = await fixture();
   try {
@@ -606,6 +684,7 @@ test("a thread that did not take the profile is refused before any turn", async 
 });
 
 test("resuming an old work without the profile is refused too", async () => {
+  mxc();
   process.env.BITACORA_FAKE_THREAD_PROFILE = "other";
   const f = await fixture();
   try {
@@ -621,6 +700,7 @@ test("resuming an old work without the profile is refused too", async () => {
 test("resuming a work that does not report a profile is not a refusal", async () => {
   // `thread/resume` reports the profile only "when known"; the turn still sends
   // it, so a missing value must not block continuing an older work.
+  mxc();
   process.env.BITACORA_FAKE_THREAD_PROFILE = "none";
   const f = await fixture();
   try {
