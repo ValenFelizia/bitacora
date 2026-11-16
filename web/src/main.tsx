@@ -125,6 +125,9 @@ function App() {
       ws.onclose = () => {
         setOnline(false);
         setPending(false);
+        // A rename in flight may never be answered: the form stays open with
+        // the typed name so it can be saved again.
+        setSavingName(undefined);
         if (!disposed) timer = setTimeout(connect, 1500);
       };
     }
@@ -140,11 +143,12 @@ function App() {
   }, [selected, work?.messages.length, work?.messages.at(-1)?.text]);
   useEffect(() => {
     // The form closes only when the server's snapshot shows the saved name.
-    if (savingName && work?.title === savingName && name.trim() === savingName) {
+    // The input is locked while saving, so the submitted name is the one shown.
+    if (savingName && work?.title === savingName) {
       setRenaming(false);
       setSavingName(undefined);
     }
-  }, [savingName, work?.title, name]);
+  }, [savingName, work?.title]);
   function send(command: ClientCommand) {
     if (socket.current?.readyState !== WebSocket.OPEN) return;
     setProblem(undefined);
@@ -336,10 +340,13 @@ function App() {
               className="flex flex-1 min-w-0 items-center gap-2"
               onSubmit={(e) => {
                 e.preventDefault();
-                const title = name.trim();
+                // Same cleanup as the server, so the saved name can be recognised.
+                const title = name.trim().replace(/\s+/g, " ");
                 // While reconnecting nothing is sent: the form stays open so
                 // the typed name is not lost.
                 if (!title || !online || savingName) return;
+                // An unchanged name has nothing to save.
+                if (title === work.title) { setRenaming(false); return; }
                 setSavingName(title);
                 send({ type: "rename", workId: work.id, title });
               }}
@@ -349,6 +356,7 @@ function App() {
                 id="work-name"
                 autoFocus
                 value={name}
+                readOnly={!!savingName}
                 maxLength={MAX_TITLE}
                 onChange={(e) => setName(e.target.value)}
                 onKeyDown={(e) => { if (e.key === "Escape") setRenaming(false); }}
