@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { WebSocket } from "ws";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { resolve } from "node:path";
+import { createConnection } from "node:net";
+import { randomBytes } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { serve } from "../src/server";
 import { FakeEngine } from "./fake-engine";
@@ -144,6 +146,68 @@ test("localhost websocket serves snapshots, connects an account and blocks forei
       assert.deepEqual(localErrors, []);
       // Give pending nextTick/IO ticks a chance to deliver any server-side socket error.
       await delay(50);
+    });
+
+    await t.test("survives malformed client frame and keeps serving new clients", async () => {
+      await new Promise<void>((resolve, reject) => {
+        const raw = createConnection(server.port, "127.0.0.1");
+        const timer = setTimeout(() => {
+          raw.destroy();
+          reject(new Error("Timed out waiting for malformed frame connection close"));
+        }, 15000);
+        let upgraded = false;
+        let head = "";
+        raw.on("error", () => {});
+        raw.on("close", () => {
+          clearTimeout(timer);
+          if (!upgraded) reject(new Error("Connection closed before WebSocket upgrade"));
+          else resolve();
+        });
+        raw.on("data", (chunk) => {
+          if (upgraded) return;
+          head += chunk.toString("latin1");
+          if (head.includes("\r\n\r\n")) {
+            assert.match(head, /^HTTP\/1\.1 101 Switching Protocols/);
+            upgraded = true;
+            // Unmasked client-to-server frame forces ws to emit a server-side 'error' event.
+            raw.write(Buffer.from([0x81, 0x02, 0x68, 0x69]));
+          }
+        });
+        raw.write(
+          [
+            "GET /ws HTTP/1.1",
+            `Host: 127.0.0.1:${server.port}`,
+            "Origin: http://127.0.0.1:5173",
+            "Upgrade: websocket",
+            "Connection: Upgrade",
+            `Sec-WebSocket-Key: ${randomBytes(16).toString("base64")}`,
+            "Sec-WebSocket-Version: 13",
+            "",
+            "",
+          ].join("\r\n"),
+        );
+      });
+
+      const healthy = new WebSocket(`ws://127.0.0.1:${server.port}/ws`, {
+        origin: "http://127.0.0.1:5173",
+      });
+      healthy.on("error", () => {});
+      try {
+        const snapshot = await new Promise<string>((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error("Timed out waiting for snapshot after malformed frame")), 15000);
+          healthy.once("message", (data) => {
+            clearTimeout(timer);
+            resolve(String(data));
+          });
+          healthy.once("error", (err) => {
+            clearTimeout(timer);
+            reject(err);
+          });
+        });
+        assert.equal(JSON.parse(snapshot).type, "snapshot");
+      } finally {
+        await terminateAndClose(healthy).catch(() => {});
+      }
     });
   } finally {
     await terminateAndClose(socket).catch(() => {});
