@@ -9,7 +9,7 @@ import { WorkspaceFiles, MAX_RESULT, SCAN_LIMITS } from '../src/workspace-files'
 import { App } from '../src/app';
 import { FakeEngine } from './fake-engine';
 import { serve } from '../src/server';
-import type { FileRef } from '../src/contracts';
+import type { FileRef, ServerMessage } from '../src/contracts';
 async function fixture() {
   await mkdir('.local', { recursive: true });
   const dir = await mkdtemp(resolve('.local/review-files-'));
@@ -243,23 +243,31 @@ test('only an active scan delays sends; completing it releases the gate', async 
   } finally { release?.(); f.files.scan = scan; await app.close(); await f.cleanup(); }
 });
 
-test('a timed-out send keeps the pending scan until the engine really finishes', {
-  // Reproduces the finding from PR #14: the catch runs finishFiles before the
-  // request ends, so files created afterwards never appear. Fixing it changes
-  // what the app should do when the engine stops answering (issue #20).
-  skip: 'Pendiente de decisión: qué hacer cuando el motor no responde pero el turno sigue (issue #20)',
-}, async () => {
+test('a timed-out send keeps the pending scan until the engine really finishes', async () => {
+  // Reproduces the finding from PR #14: the catch ran finishFiles before the
+  // request ended, so files created afterwards never appeared. Now a send that
+  // times out while the turn is alive resolves instead of rejecting, so the
+  // app keeps the work busy and the pending scan until turn/completed.
   const f = await fixture(); const engine = new FakeEngine();
+  const replies: ServerMessage[] = [];
   const app = new App(engine, join(f.dir, 'data'), () => {}, undefined, f.files);
   try {
     await app.start();
-    engine.send = async () => { throw new Error('Engine request timed out: turn/start.'); };
-    await assert.rejects(app.command({ type: 'send', text: 'Hacé algo' }, () => {}));
-    // The engine may still be working: the file appears after the app gave up.
+    await app.command({ type: 'send', text: 'Hacé algo' }, () => {});
+    // The engine answered while the turn keeps running: the work stays busy.
+    assert.equal(engine.sent.length, 1);
+    assert.equal(app.snapshot().works[0].busy, true);
     await new Promise(resolve => setTimeout(resolve, 100));
     await writeFile(join(f.files.root, 'tarde.png'), 'late result');
+    // A second request is refused while the turn may still be running.
+    await app.command({ type: 'send', text: 'Otro' }, m => replies.push(m));
+    assert.equal(engine.sent.length, 1);
+    assert.match((replies[0] as { text: string }).text, /Esperá a que termine el pedido actual/);
     engine.emit({ type: 'finished', conversationId: 'conversation-1', status: 'completed' });
     await wait(() => !app.snapshot().works[0].busy);
-    assert.deepEqual(app.snapshot().works[0].messages[0].results?.map(r => r.name), ['tarde.png']);
+    const work = app.snapshot().works[0];
+    assert.deepEqual(work.messages[0].results?.map(r => r.name), ['tarde.png']);
+    // The "after" snapshot is taken on the real end, so undo covers the file.
+    assert.equal(app.snapshot().undo?.workId, work.id);
   } finally { await app.close(); await f.cleanup(); }
 });

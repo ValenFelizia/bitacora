@@ -33,7 +33,7 @@ export type EngineEvent =
   | {
       type: "problem";
       conversationId?: string;
-      kind: "limit" | "disconnected" | "temporary" | "other";
+      kind: "limit" | "disconnected" | "temporary" | "unresponsive" | "other";
       detail: string;
     };
 
@@ -72,6 +72,8 @@ export function problemText(
       "Tu cuenta de ChatGPT está desconectada. Conectala para continuar.",
     temporary:
       "ChatGPT está recibiendo muchos pedidos. Probá de nuevo en un momento.",
+    unresponsive:
+      "El motor no respondió y lo reinicié. Fijate si quedó algo a medias antes de volver a pedirlo.",
     other:
       "No pude completar el pedido. Podés ver el detalle y volver a intentarlo.",
   }[kind];
