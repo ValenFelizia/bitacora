@@ -380,6 +380,24 @@ export class CodexEngine implements Engine {
     this.safety = safety;
     this.emit({ type: "protection", safety });
   }
+  /**
+   * Whether the native sandbox can run here, asked every time the check reads
+   * the state. A saved `elevated` mode is only the fallback for a computer
+   * without MXC: a Windows update can bring it, and an old setting must not
+   * keep the agent reading the whole disk.
+   *
+   * When the saved mode already works, an inconclusive probe (a timeout, an
+   * unexpected answer) is not allowed to take away the protection this
+   * computer has: the app keeps the mode it knows works and warns.
+   */
+  private async probeMxcFor(mode: string | undefined, readiness: string) {
+    try {
+      return await this.probeMxc();
+    } catch (error) {
+      if (mode !== "elevated" || readiness !== "ready") throw error;
+      return false;
+    }
+  }
   private async probeMxc() {
     if (this.mxcAvailable !== undefined) return this.mxcAvailable;
     if (this.options.probeProtection) return this.mxcAvailable = await this.options.probeProtection();
@@ -413,22 +431,8 @@ export class CodexEngine implements Engine {
       const { config } = await this.rpc("config/read", { includeLayers: false });
       const mode = (config.windows as { sandbox?: string } | null)?.sandbox;
       const detail = `windowsSandbox/readiness=${readiness.status}; windows.sandbox=${mode || "disabled"}; permissions=${PERMISSIONS_PROFILE}`;
-      const mxc = mode === "elevated" && readiness.status === "ready" ? undefined : await this.probeMxc();
-      if (readiness.status === "ready" && (mode === "elevated" || (mode === "mxc" && mxc))) {
-        if (mode === "elevated") {
-          // A machine without MXC: the elevated backend refuses any profile
-          // that denies reading `:root`, so the read block cannot be applied.
-          // The app works with the write protection it always had and says
-          // what is missing, instead of refusing all work.
-          this.backend = "elevated";
-          this.setProtection({
-            allowed: true,
-            status: "ready",
-            readBlock: false,
-            detail: `windowsSandbox/readiness=${readiness.status}; windows.sandbox=elevated; readBlock=off`,
-          });
-          return;
-        }
+      const mxc = await this.probeMxcFor(mode, readiness.status);
+      if (readiness.status === "ready" && mode === "mxc" && mxc) {
         this.backend = "mxc";
         const refusal = await this.checkPermissions();
         if (refusal) {
@@ -439,6 +443,20 @@ export class CodexEngine implements Engine {
           return;
         }
         this.setProtection({ allowed: true, status: "ready", readBlock: true, detail });
+        return;
+      }
+      if (readiness.status === "ready" && mode === "elevated" && !mxc) {
+        // A machine without MXC: the elevated backend refuses any profile that
+        // denies reading `:root`, so the read block cannot be applied. The app
+        // works with the write protection it always had and says what is
+        // missing, instead of refusing all work.
+        this.backend = "elevated";
+        this.setProtection({
+          allowed: true,
+          status: "ready",
+          readBlock: false,
+          detail: `windowsSandbox/readiness=${readiness.status}; windows.sandbox=elevated; readBlock=off`,
+        });
         return;
       }
       this.backend = mxc ? "mxc" : "elevated";

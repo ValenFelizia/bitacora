@@ -596,6 +596,32 @@ test("a machine without MXC works with the write protection and warns", async ()
   } finally { await f.close(); }
 });
 
+test("a computer that gains MXC stops using the weaker mode", async () => {
+  // The saved mode is `elevated`, but this computer can run the native
+  // sandbox: an old setting must not keep the agent reading the whole disk.
+  process.env.BITACORA_FAKE_MODE = "elevated";
+  process.env.BITACORA_FAKE_MXC = "1";
+  const f = await fixture();
+  try {
+    await until(() => f.engine.executionSafety().allowed);
+    assert.equal(f.engine.executionSafety().readBlock, true);
+    const records = await f.records();
+    assert.equal(records.filter((m) => m.method === "config/value/write")[0].params.value, "mxc");
+  } finally { await f.close(); }
+});
+
+test("an inconclusive MXC probe keeps the protection that already works", async () => {
+  // The saved `elevated` mode works here: a probe that cannot answer must not
+  // leave the user without the write protection she already had.
+  let probes = 0;
+  const f = await fixture(60_000, { probeProtection: async () => { probes++; throw new Error("probe timed out"); } });
+  try {
+    assert.equal(probes, 1);
+    assert.equal(f.engine.executionSafety().allowed, true);
+    assert.equal(f.engine.executionSafety().readBlock, false);
+  } finally { await f.close(); }
+});
+
 test("a machine without MXC does not refuse a thread for its profile", async () => {
   // There is no profile to take in this mode: a thread that reports another
   // one is not a refusal, because the thread runs with the plain policy.

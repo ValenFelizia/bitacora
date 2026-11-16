@@ -136,7 +136,9 @@ accepted direction from implementation alone.
   obligatorio y, si no se puede aplicar, la app no trabaja. El modo lo decide
   la comprobación de arranque; si el proceso se abrió con los argumentos del
   otro modo, se lo detiene y se lo vuelve a abrir con los que corresponden, así
-  un mismo proceso nunca mezcla los dos.
+  un mismo proceso nunca mezcla los dos. El modo sin MXC es el último recurso:
+  el sondeo de MXC corre aunque el modo guardado sea `elevated`, así una compu
+  que gana MXC con una actualización de Windows pasa sola al perfil.
 - Rationale: cierra la vía principal de fuga de datos: el agente ya no podía
   escribir afuera, pero podía leer cualquier archivo de la usuaria. El perfil
   reemplaza al `sandboxPolicy` del turno porque Codex no acepta los dos juntos.

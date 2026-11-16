@@ -71,8 +71,13 @@ Decisión de la dueña (2026-11-16, DEC-010): en una compu sin MXC la app trabaj
 con la protección de escritura anterior y avisa, en vez de negarse a trabajar.
 
 - El modo lo decide la comprobación de arranque: `windows.sandbox=elevated` con
-  `windowsSandbox/readiness=ready` es el modo sin MXC; `windows.sandbox=mxc` con
-  el sondeo de MXC en verde es el modo con perfil.
+  `windowsSandbox/readiness=ready` y el sondeo de MXC en falso es el modo sin
+  MXC; `windows.sandbox=mxc` con el sondeo en verde es el modo con perfil.
+- El sondeo de MXC corre también cuando el modo guardado es `elevated`: una
+  compu que gana MXC con una actualización de Windows pasa sola al perfil, en
+  vez de quedarse leyendo todo el disco por un ajuste viejo. Si el sondeo no
+  puede responder y el modo guardado ya funciona, la app se queda con él y
+  avisa.
 - En el modo sin MXC el app-server no arranca con el perfil: los argumentos `-c`
   no llevan `default_permissions` ni `permissions.agencia`, porque el backend
   "elevated" rechaza ese perfil y, al ser el default, todo comando fallaría. Si
