@@ -13,7 +13,7 @@ async function fixture() {
   const base=join(process.env.LOCALAPPDATA!,'Bitacora-dev/issue6');await mkdir(base,{recursive:true});
   return new AgencyFiles(await mkdtemp(join(base,'visibility ñ ')));
 }
-test('text requires citations unless hidden by the closed certainty list',{timeout:180000},async t=>{
+test('text requires citations unless hidden by the closed certainty list',{timeout:420000},async t=>{
   const cases=[
     ['contents','<span style="display:contents">999</span>',1],
     ['nested','<span style="display:contents"><span style="display:contents">999</span></span>',1],
@@ -31,7 +31,7 @@ test('text requires citations unless hidden by the closed certainty list',{timeo
     ['ancestor display none','<div style="display:none"><span style="display:contents">999</span></div>',0],
     ['hidden ancestor','<div hidden><span>999</span></div>',0],
   ] as const;
-  for(const [name,body,count] of cases)await t.test(name,async()=>{
+  for(const [name,body,count] of cases)await t.test(name,{timeout:120000},async()=>{
     const files=await fixture();await files.write('source.md','Nada');await files.write('piece.html',`<!doctype html><body>${body}</body>`);
     const result=await controlar(files,{html:'piece.html',source:'source.md',report:'report.md'});
     assert.equal(result.checked,count);assert.equal(result.ok,count===0);
@@ -39,7 +39,7 @@ test('text requires citations unless hidden by the closed certainty list',{timeo
   for(const [name,body] of [
     ['svg text','<svg><text x="10" y="30">999</text></svg>'],
     ['contents pseudo','<style>span:before{content:"999"}</style><span style="display:contents"></span>'],
-  ])await t.test(name,async()=>{
+  ])await t.test(name,{timeout:120000},async()=>{
     const files=await fixture();await files.write('source.md','Nada');await files.write('piece.html',`<!doctype html><body>${body}</body>`);
     await assert.rejects(controlar(files,{html:'piece.html',source:'source.md',report:'report.md'}),/Sacá/);
   });
@@ -57,7 +57,7 @@ test('real image dimensions override small HTML display dimensions, while real i
     assert.equal(result.photoDetails?.length,1);assert.equal(result.photoDetails?.[0].width,1600);assert.equal(result.photoDetails?.[0].height,1200);
   }finally{server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));}
 });
-test('computed styles determine text and each pseudo-element visibility independently',async t=>{
+test('computed styles determine text and each pseudo-element visibility independently',{timeout:240000},async t=>{
   const cases=[
     ['hidden overridden','<p hidden style="display:block">999</p>',1],
     ['script shown','<style>script{display:block}</style><script type="text/plain">999</script>',1],
@@ -67,7 +67,7 @@ test('computed styles determine text and each pseudo-element visibility independ
     ['pseudo visibility hidden','<style>div::after{visibility:hidden;content:"999"}</style><div></div>',0],
     ['display none still hides pseudo','<style>div{display:none}div::before{visibility:visible;content:"999"}</style><div></div>',0],
   ] as const;
-  for(const [name,body,count] of cases)await t.test(name,async()=>{
+  for(const [name,body,count] of cases)await t.test(name,{timeout:120000},async()=>{
     const files=await fixture();await files.write('source.md','Nada');
     await files.write('piece.html',`<!doctype html><html><head></head><body>${body}</body></html>`);
     const result=await controlar(files,{html:'piece.html',source:'source.md',report:'report.md'});

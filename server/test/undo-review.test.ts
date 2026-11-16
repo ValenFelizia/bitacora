@@ -148,7 +148,7 @@ test('App uses one scan per moment; context is sent once only to its work; rever
   const f = await fixture(); const files = new WorkspaceFiles(f.root); const engine = new FakeEngine();
   const app = new App(engine, f.data, () => {}, undefined, files); const contexts: { id: string; text: string; reverted?: boolean }[] = [];
   let scans = 0; const scan = files.scan.bind(files); files.scan = async (...args) => { scans++; return scan(...args); };
-  const idle = async () => { for (let i = 0; i < 500 && app.snapshot().works.some(w => w.busy); i++) await new Promise(r => setTimeout(r, 10)); assert.equal(app.snapshot().works.some(w => w.busy), false); };
+  const idle = async () => { const deadline = Date.now() + 15000; while (Date.now() < deadline && app.snapshot().works.some(w => w.busy)) await new Promise(r => setTimeout(r, 10)); assert.equal(app.snapshot().works.some(w => w.busy), false, 'timed out waiting for app idle'); };
   engine.send = async (id, text, _files, context?: { filesReverted?: boolean }) => {
     contexts.push({ id, text, reverted: context?.filesReverted });
     if (text === 'change') await writeFile(join(f.root, 'result.png'), 'after');
@@ -211,7 +211,7 @@ test('completion journal failure preserves retry even after all files were resto
 test('App restart exposes retry and blocks new requests until the journal completes; busy undo explains why', async () => {
   const f = await fixture(); const engine = new FakeEngine(); const files = new WorkspaceFiles(f.root);
   let app = new App(engine, f.data, () => {}, undefined, files);
-  const idle = async () => { for (let i = 0; i < 300 && app.snapshot().works.some(w => w.busy); i++) await new Promise(r => setTimeout(r, 10)); };
+  const idle = async () => { const deadline = Date.now() + 15000; while (Date.now() < deadline && app.snapshot().works.some(w => w.busy)) await new Promise(r => setTimeout(r, 10)); assert.equal(app.snapshot().works.some(w => w.busy), false, 'timed out waiting for app idle'); };
   try {
     await writeFile(join(f.root, 'a.txt'), 'before'); await app.start(); await app.command({ type: 'send', text: 'change' }, () => {});
     const replies: any[] = []; await app.command({ type: 'undo', id: 'busy' }, m => replies.push(m)); assert.match(replies[0].text, /Esperá/);

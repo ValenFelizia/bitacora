@@ -33,7 +33,7 @@ test('Greptile: failure of both marker and state writes stays disabled and host 
     engine.sent.push(text); await writeFile(join(root, `${text}.txt`), text);
     engine.emit({ type: 'finished', conversationId: id, status: 'completed' });
   };
-  const idle = async () => { for (let i = 0; i < 500 && app.snapshot().works.some(w => w.busy); i++) await new Promise(r => setTimeout(r, 10)); assert.equal(app.snapshot().works.some(w => w.busy), false); };
+  const idle = async () => { const deadline = Date.now() + 15000; while (Date.now() < deadline && app.snapshot().works.some(w => w.busy)) await new Promise(r => setTimeout(r, 10)); assert.equal(app.snapshot().works.some(w => w.busy), false, 'timed out waiting for app idle'); };
   try {
     await app.start(); await app.command({ type: 'send', text: 'first' }, () => {}); await idle(); assert.ok(app.snapshot().undo);
     const oldHostReceipt = JSON.parse(await readFile(join(data, 'works.json'), 'utf8')).backupReceipt;

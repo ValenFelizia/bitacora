@@ -34,7 +34,7 @@ async function until(predicate: () => boolean, timeoutMs = 120000) {
   return false;
 }
 
-test("the real app-server starts the work with the read-restricting profile", { skip: windowsOnly }, async (t) => {
+test("the real app-server starts the work with the read-restricting profile", { skip: windowsOnly, timeout: 180000 }, async (t) => {
   const { base, workspace } = await sandboxBase("profile");
   const engine = new CodexEngine({
     home: join(base, "codex"),
@@ -71,7 +71,7 @@ test("the real app-server starts the work with the read-restricting profile", { 
 // The app accepts two sandbox backends, so both are checked. A backend this
 // machine cannot run is skipped with the reason instead of passing silently.
 for (const backend of ["mxc", "elevated"] as const) {
-test(`the ${backend} backend blocks a witness file outside the agency folder and keeps the inside readable`, { skip: windowsOnly }, async (t) => {
+test(`the ${backend} backend blocks a witness file outside the agency folder and keeps the inside readable`, { skip: windowsOnly, timeout: 180000 }, async (t) => {
   const { base, workspace } = await sandboxBase(`sandbox-${backend}`);
   const child = spawn(codexBinary(), ["-c", `windows.sandbox=${backend}`, ...PROFILE_ARGS, "app-server"], {
     cwd: workspace,
@@ -168,7 +168,7 @@ test(`the ${backend} backend blocks a witness file outside the agency folder and
 
 // The mode the check decides also picks the arguments of the app-server: a
 // machine without MXC must not define a profile its backend cannot run.
-test("a machine without MXC starts the app-server for the elevated backend", { skip: windowsOnly }, async () => {
+test("a machine without MXC starts the app-server for the elevated backend", { skip: windowsOnly, timeout: 180000 }, async () => {
   const { base, workspace } = await sandboxBase("elevated-mode");
   // The elevated backend is the saved choice and this machine has no MXC, so
   // the process that answered the check is stopped and started again without

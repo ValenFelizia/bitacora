@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { chromium } from 'playwright-core';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { callKitTool, connectKitClient } from './mcp-client';
 import { initializeKit } from '../src/tools/kit';
 import { allowedUrlsPath } from '../src/allowed-urls';
 import { withPage } from '../src/tools/page';
@@ -21,13 +22,13 @@ const calls: unknown[] = [];
 const transport = new StdioClientTransport({command:process.execPath,args:['--import',pathToFileURL(createRequire(import.meta.url).resolve('tsx/esm')).href,resolve('server/src/tools/mcp.ts'),root,allowedUrlsPath(data)],stderr:'pipe'});
 async function save(path:string, text:string) { await mkdir(join(root,path,'..'),{recursive:true}); await writeFile(join(root,path),text,'utf8'); }
 async function call(name:string,args:Record<string,unknown>,error=false) {
-  const result = await client.callTool({name,arguments:args}); calls.push({name,args,result});
+  const result = await callKitTool(client, name, args); calls.push({name,args,result});
   if(result.isError && !error && name==='dibujar') console.log(await withPage(new AgencyFiles(root),String(args.html),page=>page.evaluate(()=>Array.from(document.querySelectorAll('h1,h2,footer')).map(e=>({tag:e.tagName,text:e.textContent,client:[e.clientWidth,e.clientHeight],scroll:[e.scrollWidth,e.scrollHeight],box:JSON.stringify(e.getBoundingClientRect())})))));
   assert.equal(!!result.isError,error,JSON.stringify(result)); return result;
 }
 try {
   await initializeKit(root,data);
-  await client.connect(transport);
+  await connectKitClient(client, transport);
   await mkdir(join(root,'adjuntos'),{recursive:true});
   const browser = await chromium.launch({channel:'msedge',headless:true});
   try {
