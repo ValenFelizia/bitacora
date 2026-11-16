@@ -30,6 +30,7 @@ export type ClientCommand =
   | { type: "retry" }
   | { type: "prepareProtection" }
   | { type: "send"; workId?: string; text: string; attachments?: Upload[] }
+  | { type: "rename"; workId: string; title: string }
   | { type: "interrupt"; workId: string };
 export type ServerMessage =
   | { type: "snapshot"; state: Snapshot }

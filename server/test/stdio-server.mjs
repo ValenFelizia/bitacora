@@ -122,6 +122,31 @@ createInterface({ input: process.stdin })
       case "thread/resume":
         reply({ thread: { id: threadId }, activePermissionProfile: activeProfile(m.params) });
         break;
+      case "thread/sample": {
+        // The cheap title request. `BITACORA_FAKE_SAMPLE` picks the answer:
+        // `none` is a sample that only produced a tool call, `error` a failed
+        // request and `idle` a source that was still closing (the app retries).
+        const mode = process.env.BITACORA_FAKE_SAMPLE;
+        if (mode === "error") { send({ id: m.id, error: { message: "sample failed" } }); break; }
+        if (mode === "idle" && !existsSync(setupFile + ".idle-once")) {
+          writeFileSync(setupFile + ".idle-once", "1");
+          send({ id: m.id, error: { code: -32600, message: "sample source must be idle" } });
+          break;
+        }
+        reply({
+          sourceTurnId: m.params.expectedTurnId,
+          responseId: "sample-1",
+          text: mode === "none" ? null : !mode || mode === "idle" ? "Porto de Galinhas, febrero" : mode,
+          inputTokens: 1200,
+          cachedInputTokens: 1000,
+          outputTokens: 12,
+        });
+        break;
+      }
+      case "thread/name/set":
+        reply({});
+        notify("thread/name/updated", { threadId: m.params.threadId, threadName: m.params.name });
+        break;
       case "turn/interrupt":
         if (interruptRejects) send({ id: m.id, error: { message: "interrupt refused" } });
         else if (++interrupts > 1) send({ id: m.id, error: { message: "already interrupted" } });
