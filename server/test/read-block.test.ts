@@ -62,9 +62,12 @@ test("the real app-server starts the work with the read-restricting profile", { 
   }
 });
 
-test("the profile blocks a witness file outside the agency folder and keeps the inside readable", { skip: windowsOnly }, async (t) => {
-  const { base, workspace } = await sandboxBase("sandbox");
-  const child = spawn(codexBinary(), ["-c", "windows.sandbox=mxc", ...PROFILE_ARGS, "app-server"], {
+// The app accepts two sandbox backends, so both are checked. A backend this
+// machine cannot run is skipped with the reason instead of passing silently.
+for (const backend of ["mxc", "elevated"] as const) {
+test(`the ${backend} backend blocks a witness file outside the agency folder and keeps the inside readable`, { skip: windowsOnly }, async (t) => {
+  const { base, workspace } = await sandboxBase(`sandbox-${backend}`);
+  const child = spawn(codexBinary(), ["-c", `windows.sandbox=${backend}`, ...PROFILE_ARGS, "app-server"], {
     cwd: workspace,
     env: { ...process.env, CODEX_HOME: join(base, "codex") },
     windowsHide: true,
@@ -110,13 +113,26 @@ test("the profile blocks a witness file outside the agency folder and keeps the 
     child.stdin.write('{"method":"initialized"}\n');
     const readiness = await rpc<{ status: string }>("windowsSandbox/readiness", {});
     if (readiness.status !== "ready") {
-      t.skip(`Windows sandbox is not ready on this machine: ${readiness.status}`);
+      t.skip(`the ${backend} sandbox is not ready on this machine: ${readiness.status}`);
       return;
     }
     const profiles = await rpc<{ data: { id: string; allowed: boolean }[] }>("permissionProfile/list", { cwd: workspace });
     assert.equal(profiles.data.find((profile) => profile.id === PERMISSIONS_PROFILE)?.allowed, true);
 
-    const inside = await run(`Get-Content -LiteralPath ${quote(join(workspace, "inside.txt"))} -ErrorAction Stop`);
+    let inside: { exitCode: number; stdout: string; stderr: string };
+    try {
+      inside = await run(`Get-Content -LiteralPath ${quote(join(workspace, "inside.txt"))} -ErrorAction Stop`);
+    } catch (error) {
+      // The elevated backend refuses a profile that denies `:root` read, so the
+      // app reports that it cannot apply the profile instead of running. That
+      // is a backend limit, not a regression: the engine test covers the
+      // refusal itself.
+      if (/requires effective `:root` read access/.test(String(error))) {
+        t.skip(`the ${backend} sandbox cannot run the ${PERMISSIONS_PROFILE} profile: ${String(error)}`);
+        return;
+      }
+      throw error;
+    }
     assert.equal(inside.exitCode, 0);
     assert.match(inside.stdout, /INSIDE_WITNESS/);
 
@@ -142,3 +158,4 @@ test("the profile blocks a witness file outside the agency folder and keeps the 
     await rm(base, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
   }
 });
+}
