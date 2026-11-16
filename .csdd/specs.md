@@ -60,7 +60,9 @@ sin ayuda de Valentín.
 - Solo ChatGPT/Codex como proveedor en el MVP.
 - El público no es programador: nada en la interfaz puede exigir conocer git,
   terminal, archivos de código o permisos.
-- No se generan imágenes con IA. Las piezas se dibujan con código.
+- Las piezas se dibujan con código. Se pueden generar imágenes con IA solo si la
+  usuaria lo pide explícitamente, y nunca se presentan como fotos reales de un
+  hotel o un destino.
 
 ## Invariants
 

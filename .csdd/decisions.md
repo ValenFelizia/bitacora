@@ -161,3 +161,59 @@ accepted direction from implementation alone.
   leer sus carpetas superiores y la app va a informar que no puede aplicar el
   perfil; y apagar esa lectura con `project_doc_max_bytes = 0` dejaría al agente
   sin las instrucciones del kit, así que no se usa.
+
+## DEC-011 — Entorno curado para agencia de viajes, no un Codex recortado
+
+- Status: accepted (2026-11-16, decidido por el dueño)
+- Context: la investigación del issue #23 (`docs/research/issue23.md`) sobre
+  `@openai/codex@0.168.0` mostró que, de fábrica, `codex app-server` prende
+  `web_search` en modo `Cached`, `image_generation` junto con la skill `imagegen`,
+  cinco skills `.system` (`imagegen`, `openai-docs`, `review-agent`,
+  `skill-creator`, `skill-installer`), la clonación al arrancar de
+  `openai/plugins` (~58–81 MB), `tool_suggest`, conectores `apps` (`codex_apps`)
+  y subagentes `multi_agent`.
+- Decision: armar un entorno curado para agencias en un módulo propio e
+  independiente del proveedor (`server/src/agency-environment.ts`) y pasarlo
+  por línea de comandos con `-c` en `appServerArgs` (`server/src/codex/environment.ts`),
+  sin escribir en el `config.toml` de la usuaria:
+  - **Imágenes con IA prendidas y solo a pedido explícito:** se mantiene
+    `features.image_generation=true` (verificado en `codex-rs` que la
+    herramienta `image_gen.imagegen` depende de ese flag y no de la skill
+    `imagegen`, por lo que ese flag es el mínimo necesario). En
+    `developerInstructions` se reemplaza *"No generes imágenes con IA"* por la
+    regla en castellano simple: usar imágenes con IA solo si la usuaria lo pide
+    explícitamente, y nunca presentar una imagen con IA como si fuera una foto
+    real de un hotel o un destino (la regla del kit sigue vigente; las piezas se
+    siguen dibujando con código, refinando así la restricción general de
+    `.csdd/specs.md`).
+  - **Plugins y conectores por lista blanca, vacía por ahora:** el módulo
+    define `allowedPlugins` y `allowedConnectors` como listas vacías para que el
+    issue #38 pueda sumar una lista corta elegida mirando cómo trabaja Fer (#8)
+    sin rediseñar el contrato. Codex `0.168.0` tiene habilitación por ítem
+    (`plugins._default.enabled=false` / `plugins.<id>.enabled=true` y
+    `apps._default.enabled=false` / `apps.<id>.enabled=true`), pero **no**
+    ofrece una lista blanca de descarga para `openai/plugins`: si
+    `features.plugins=true` y `remote_plugin=false`, clona el catálogo entero al
+    arrancar. Por eso, mientras las listas estén vacías, se apagan con los
+    interruptores limpios (`features.plugins=false`, `features.remote_plugin=false`,
+    `features.plugin_discovery_prefetch=false`, `features.plugin_sharing=false`,
+    `features.tool_suggest=false`, `features.apps=false`,
+    `include_apps_instructions=false`, `plugins._default.enabled=false`,
+    `apps._default.enabled=false`).
+  - **Búsqueda web de Codex apagada:** `web_search="disabled"`; lo externo
+    entra únicamente por `traer`.
+  - **Subagentes y skills de fábrica que no usa una agencia apagados:**
+    `features.multi_agent=false`, `features.multi_agent_v2=false`,
+    `agents.enabled=false` y `skills.bundled.enabled=false`. Siguen prendidos
+    el servidor MCP `bitacora` (`traer`, `controlar`, `dibujar`), `view_image`
+    y las herramientas base de archivos y consola.
+- Rationale: el objetivo no es cortarle las patas a Codex sino darle a la
+  agencia un entorno limpio, sin descargas de catálogos ni herramientas de
+  programación o conectores sorpresa, dejando una estructura lista para que
+  otro proveedor (como Claude) o la lista corta de #38 usen la misma política.
+- Consequences: cualquier actualización de `@openai/codex` debe pasar la prueba
+  sin inferencia (`server/test/agency-environment.test.ts`), que comprueba bajo
+  los argumentos reales de Bitácora que `codex features list`, `config/read`,
+  `skills/list` y `mcpServerStatus/list` mantengan este estado y que no aparezcan
+  `.tmp/plugins` ni `skills/.system`. Queda pendiente el smoke test con pedido
+  real (`turn/start`) cuando vuelva el cupo (18/11).
