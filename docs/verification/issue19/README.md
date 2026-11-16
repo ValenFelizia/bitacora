@@ -41,7 +41,8 @@ Sin `default_permissions` el binario se niega a arrancar:
 ## Prueba de arena real
 
 `server/test/read-block.test.ts` (solo Windows) arranca el binario real con ese
-perfil y comprueba:
+perfil y comprueba, para cada backend que la máquina pueda correr (`mxc` y
+`elevated`; si uno no está listo, el test lo saltea con el motivo):
 
 - `permissionProfile/list` incluye `agencia` con `allowed: true`.
 - `thread/start` devuelve `activePermissionProfile.id = "agencia"`.
@@ -50,6 +51,19 @@ perfil y comprueba:
   `Access to the path ... is denied`).
 
 Salida: [read-block-tests.txt](read-block-tests.txt).
+
+## Cómo se comprueba que el perfil se puede aplicar
+
+Que el perfil figure en `permissionProfile/list` no alcanza: dice que existe, no
+que esta compu pueda correrlo. Por eso la app corre un comando inofensivo con el
+perfil (`cmd /d /c echo BITACORA_PROFILE_OK` por `command/exec`) antes de
+habilitar pedidos. Si falla, no trabaja y lo dice.
+
+Con `windows.sandbox=elevated` ese comando falla con
+`elevated Windows sandbox requires effective `:root` read access`: el backend
+"elevated" no acepta un perfil que niegue la lectura de `:root`. En esta compu
+además `windowsSandbox/readiness` para `elevated` da `updateRequired`, así que
+ese backend no se pudo probar sin el setup con permisos de administrador.
 
 ## Límites verificados
 

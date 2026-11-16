@@ -1,12 +1,13 @@
-WARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir "C:\\Users\\Valen\\AppData\\Local\\Temp\\" (codex_home: AbsolutePathBuf("C:\\Users\\Valen\\AppData\\Local\\Temp\\bitacora-profile-iqghl5\\codex"))
-WARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir "C:\\Users\\Valen\\AppData\\Local\\Temp\\" (codex_home: AbsolutePathBuf("C:\\Users\\Valen\\AppData\\Local\\Temp\\bitacora-profile-iqghl5\\codex"))
-Ô£ö the real app-server starts the work with the read-restricting profile (4603.9069ms)
-Ô£ö the profile blocks a witness file outside the agency folder and keeps the inside readable (4187.9354ms)
-Ôä╣ tests 2
+WARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir "C:\\Users\\Valen\\AppData\\Local\\Temp\\" (codex_home: AbsolutePathBuf("C:\\Users\\Valen\\AppData\\Local\\Temp\\bitacora-profile-jMeNuB\\codex"))
+WARNING: proceeding, even though we could not create PATH aliases: Refusing to create helper binaries under temporary dir "C:\\Users\\Valen\\AppData\\Local\\Temp\\" (codex_home: AbsolutePathBuf("C:\\Users\\Valen\\AppData\\Local\\Temp\\bitacora-profile-jMeNuB\\codex"))
+Ô£ö the real app-server starts the work with the read-restricting profile (4973.6108ms)
+Ô£ö the mxc backend blocks a witness file outside the agency folder and keeps the inside readable (4259.6392ms)
+´╣ú the elevated backend blocks a witness file outside the agency folder and keeps the inside readable (1130.7709ms) # the elevated sandbox is not ready on this machine: updateRequired
+Ôä╣ tests 3
 Ôä╣ suites 0
 Ôä╣ pass 2
 Ôä╣ fail 0
 Ôä╣ cancelled 0
-Ôä╣ skipped 0
+Ôä╣ skipped 1
 Ôä╣ todo 0
-Ôä╣ duration_ms 8969.5798
+Ôä╣ duration_ms 10559.8185

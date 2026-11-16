@@ -136,9 +136,13 @@ accepted direction from implementation alone.
   deliberado que exige volver a probar `permissionProfile/list`, el
   `activePermissionProfile` que devuelve `thread/start`, que `-c` siga aceptando
   el perfil como tabla TOML y la prueba de arena real de
-  `server/test/read-block.test.ts`. Dos límites verificados: Codex lee los
-  `AGENTS.md` desde la raíz del repositorio, así que una carpeta de agencia
-  dentro de un repo git necesita leer sus carpetas superiores y la app va a
-  informar que no puede aplicar el perfil; y apagar esa lectura con
-  `project_doc_max_bytes = 0` dejaría al agente sin las instrucciones del kit,
-  así que no se usa.
+  `server/test/read-block.test.ts`. Antes de habilitar pedidos la app corre un
+  comando inofensivo con el perfil (`command/exec`): que el perfil figure en la
+  lista no alcanza, porque el backend "elevated" de Windows rechaza cualquier
+  perfil que niegue la lectura de `:root` y una compu sin el sandbox nativo no
+  puede correrlo. Si ese comando falla, la app no trabaja y lo dice. Dos límites
+  verificados: Codex lee los `AGENTS.md` desde la raíz del repositorio, así que
+  una carpeta de agencia dentro de un repo git necesita leer sus carpetas
+  superiores y la app va a informar que no puede aplicar el perfil; y apagar esa
+  lectura con `project_doc_max_bytes = 0` dejaría al agente sin las
+  instrucciones del kit, así que no se usa.
