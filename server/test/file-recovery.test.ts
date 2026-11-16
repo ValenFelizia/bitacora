@@ -22,7 +22,9 @@ test('denied subfolder does not block subsequent requests or restart (real Windo
     restore = denyRead(denied);
     await writeFile(join(files.root, 'visible.png'), 'result');
     engine.emit({ type: 'finished', conversationId: 'conversation-1', status: 'completed' });
-    for (let i = 0; app.snapshot().works[0].busy && i < 300; i++) await new Promise(r => setTimeout(r, 10));
+    const deadline = Date.now() + 15000;
+    while (app.snapshot().works[0].busy && Date.now() < deadline) await new Promise(r => setTimeout(r, 10));
+    assert.equal(app.snapshot().works[0].busy, false, 'timed out waiting for work to finish');
     await app.command({ type: 'send', text: 'Segundo' }, () => {});
     assert.equal(engine.sent.length, 2, 'scan failure must never block another send');
     await app.close();

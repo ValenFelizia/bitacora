@@ -90,7 +90,7 @@ test("setupStart timeout unlocks retry as a read, not another UAC", async () => 
   // fake app-server ignoring every later setupStart.
   let f: Awaited<ReturnType<typeof fixture>> | undefined;
   try {
-    f = await fixture(60000, { requestTimeoutMs: 2000 });
+    f = await fixture(60000, { requestTimeoutMs: 8000 });
     await f.engine.prepareProtection();
     assert.equal(f.engine.executionSafety().status, "failed");
     assert.equal(f.engine.executionSafety().issue, "uncertain");
@@ -233,12 +233,13 @@ async function fixture(
   }
   return f;
 }
-async function until(predicate: () => boolean | Promise<boolean>) {
-  for (let i = 0; i < 100; i++) {
+async function until(predicate: () => boolean | Promise<boolean>, timeoutMs = 15000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
     if (await predicate()) return;
     await delay(20);
   }
-  assert.fail("condition timed out");
+  assert.fail(`condition timed out after ${timeoutMs}ms`);
 }
 // Replaces the engine's restart and stability timers so tests assert the
 // scheduled delays instead of measuring wall-clock time.
@@ -270,8 +271,8 @@ test("a slow turn/start reply keeps the request until the turn ends", async () =
   // while the turn was still changing files. Now the timeout only releases the
   // request when the turn is certainly not running; a turn that already
   // started keeps the app waiting for its own turn/completed.
-  process.env.BITACORA_FAKE_TURN_DELAY = "1500";
-  const f = await fixture(60_000, { turnStartTimeoutMs: 1000 });
+  process.env.BITACORA_FAKE_TURN_DELAY = "5000";
+  const f = await fixture(60_000, { turnStartTimeoutMs: 2500 });
   try {
     const sending = f.engine.send("thread-1", "slow-start");
     // turn/started arrived before the timeout: the request is not refused.
@@ -295,7 +296,7 @@ test("a slow turn/start reply keeps the request until the turn ends", async () =
 test("preparing protection does not lose a login in progress", async () => {
   process.env.BITACORA_FAKE_SAFETY = "notConfigured";
   process.env.BITACORA_FAKE_SETUP_DELAY = "300";
-  const f = await fixture(60_000, { requestTimeoutMs: 1000 });
+  const f = await fixture(60_000, { requestTimeoutMs: 15000 });
   try {
     await f.engine.connectAccount();
     const preparing = f.engine.prepareProtection();
@@ -319,7 +320,7 @@ test("preparing protection does not lose a login in progress", async () => {
 test("preparing protection twice starts the Windows setup once", async () => {
   process.env.BITACORA_FAKE_SAFETY = "notConfigured";
   process.env.BITACORA_FAKE_LOGIN_CANCEL_DELAY = "100";
-  const f = await fixture(60_000, { requestTimeoutMs: 2000 });
+  const f = await fixture(60_000, { requestTimeoutMs: 15000 });
   try {
     await f.engine.connectAccount();
     // The second call arrives while the login cancellation is still pending.

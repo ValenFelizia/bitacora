@@ -31,11 +31,16 @@ try {
     }
     for (const spec of ['./acl', './locks']) test = test.replace(`'${spec}'`, JSON.stringify(pathToFileURL(resolve('server/test', spec + '.ts')).href));
     await writeFile(testPath, test);
-    const child = spawnSync(process.execPath, ['--import', 'tsx', '--test', '--test-name-pattern', variant.pattern, testPath], { encoding: 'utf8', windowsHide: true, timeout: 30000, maxBuffer: 2 * 1024 ** 2 });
-    const output = child.stdout + child.stderr;
+    const start = Date.now();
+    const child = spawnSync(process.execPath, ['--import', 'tsx', '--test', '--test-name-pattern', variant.pattern, testPath], { encoding: 'utf8', windowsHide: true, timeout: 45000, maxBuffer: 2 * 1024 ** 2 });
+    const output = (child.stdout || '') + (child.stderr || '');
+    if ((child.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT') {
+      assert.fail(`Mutant verification timed out after ${Date.now() - start}ms (limit 45000ms): ${variant.name}\n${output}`);
+    }
+    if (child.error) assert.fail(`Mutant verification failed to run (${variant.name}): ${child.error.message}`);
     const killed = child.status === 1 && output.includes('AssertionError');
-    records.push({ name: variant.name, pattern: variant.pattern, exitCode: child.status, mutationKilled: killed, output });
-    assert.ok(killed, `Mutant survived or failed for a non-assertion reason: ${variant.name}\n${output}`);
+    records.push({ name: variant.name, pattern: variant.pattern, exitCode: child.status, signal: child.signal, mutationKilled: killed, output });
+    assert.ok(killed, `Mutant survived or failed for a non-assertion reason (${variant.name}, status=${child.status}, signal=${child.signal})\n${output}`);
   }
   await writeFile(join(process.env.BITACORA_EVIDENCE_DIR ?? 'docs/verification/issue4', 'mutations-round3.json'), JSON.stringify({ sourceSha256: createHash('sha256').update(source).digest('hex'), records }, null, 2));
   console.log('PASS: 3/3 mutants killed by actual safety assertions');

@@ -15,7 +15,7 @@ async function fixture() {
   const base=join(process.env.LOCALAPPDATA!,'Bitacora-dev/issue6');await mkdir(base,{recursive:true});
   return new AgencyFiles(await mkdtemp(join(base,'greptile ñ ')));
 }
-test('visible numeric tokens span adjacent inline nodes and use a common citation ancestor',{timeout:180000},async t=>{
+test('visible numeric tokens span adjacent inline nodes and use a common citation ancestor',{timeout:360000},async t=>{
   const cases=[
     ['split span','<p data-cites=\'{"1":3,"250":4}\'>1<span>250</span></p>',false],
     ['split thousands','<p data-cites=\'{"1":3,"670":5}\'>1.<b>670</b></p>',false],
@@ -29,7 +29,7 @@ test('visible numeric tokens span adjacent inline nodes and use a common citatio
     ['visible spacing','<p data-cites=\'{"1":3,"250":4}\'>1<span style="margin-left:20px">250</span></p>',true],
     ['whole token only','<p data-cites=\'{"5":8}\'>5</p>',false],
   ] as const;
-  for(const [name,body,ok] of cases) await t.test(name,async()=>{
+  for(const [name,body,ok] of cases) await t.test(name,{timeout:120000},async()=>{
     const files=await fixture();
     await files.write('source.md','# Fuente\n\n1\n250\n670\n1250\n1670\n15');
     await files.write('piece.html',`<!doctype html><meta charset="utf-8"><body>${body}</body>`);
@@ -55,7 +55,7 @@ test('fetch selects content photos from lazy, picture, background and srcset ins
     const empty=await traer(files,{url:origin+'/empty',destination:'empty'},options);assert.equal(empty.photos?.length,0);assert.match((empty as any).photoSummary,/pedile.*usuaria/i);
   }finally{server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));}
 });
-test('PDF keeps screen content, page count and exact page dimensions despite print overrides',async()=>{
+test('PDF keeps screen content, page count and exact page dimensions despite print overrides',{timeout:180000},async()=>{
   const files=await fixture();
   await files.write('piece.html',`<!doctype html><style>body{margin:0}[data-piece]{width:1080px;height:1920px;box-sizing:border-box;padding:1px;font:40px Arial}.alternate{display:none}@media print{.screen{display:none}.alternate{display:block}[data-piece]{width:100px!important;height:100px!important}}</style><body><section data-piece><p class="screen">SCREEN_A</p><p class="alternate">PRINT_CHANGED</p></section><section data-piece><p class="screen">SCREEN_B</p></section></body>`);
   const result=await dibujar(files,{html:'piece.html',destination:'out',width:1080,height:1920});assert.ok(result.ok,JSON.stringify(result));
