@@ -83,8 +83,12 @@ test("interrupted preparation remains retryable", async () => {
 test("setupStart timeout unlocks retry as a read, not another UAC", async () => {
   process.env.BITACORA_FAKE_SAFETY = "notConfigured";
   process.env.BITACORA_FAKE_SETUP_TIMEOUT = "1";
-  const f = await fixture(60000, { requestTimeoutMs: 200 });
+  // The request timeout also covers the handshake, so it must be generous
+  // enough for it: a failed start would skip the cleanup below and leave the
+  // fake app-server ignoring every later setupStart.
+  let f: Awaited<ReturnType<typeof fixture>> | undefined;
   try {
+    f = await fixture(60000, { requestTimeoutMs: 2000 });
     await f.engine.prepareProtection();
     assert.equal(f.engine.executionSafety().status, "failed");
     assert.equal(f.engine.executionSafety().issue, "uncertain");
@@ -94,7 +98,7 @@ test("setupStart timeout unlocks retry as a read, not another UAC", async () => 
   } finally {
     delete process.env.BITACORA_FAKE_SETUP_TIMEOUT;
     delete process.env.BITACORA_FAKE_SAFETY;
-    await f.close();
+    await f?.close();
   }
 });
 
@@ -138,7 +142,17 @@ async function fixture(stableAfterMs = 60_000, options: Partial<ConstructorParam
   });
   const events: EngineEvent[] = [];
   engine.subscribe((e) => events.push(e));
-  await engine.start();
+  try {
+    await engine.start();
+  } catch (error) {
+    // A failed start must not leave a process behind or poison the next test
+    // with this file's fake-app-server settings.
+    await engine.close().catch(() => {});
+    for (const key of Object.keys(process.env))
+      if (key.startsWith("BITACORA_FAKE_")) delete process.env[key];
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }).catch(() => {});
+    throw error;
+  }
   const records = async () =>
     (await readFile(log, "utf8"))
       .trim()
@@ -150,9 +164,12 @@ async function fixture(stableAfterMs = 60_000, options: Partial<ConstructorParam
     records,
     dir,
     close: async () => {
-      await engine.close();
-      delete process.env.BITACORA_FAKE_LOG;
-      await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+      try {
+        await engine.close();
+      } finally {
+        delete process.env.BITACORA_FAKE_LOG;
+        await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+      }
     },
   };
 }
@@ -188,24 +205,27 @@ function fakeClock() {
     },
   };
 }
-test("a slow turn/start reply keeps the request until the turn ends", {
-  // Reproduces the finding from PR #11: the request timeout releases the work
-  // while the turn is still changing files. Fixing it changes what the app
-  // should do when the engine stops answering, so it waits for a decision.
-  skip: "Pendiente de decisión: qué hacer cuando el motor no responde pero el turno sigue (issue #20)",
-}, async () => {
-  process.env.BITACORA_FAKE_TURN_DELAY = "1800";
-  const f = await fixture(60_000, { requestTimeoutMs: 1000 });
+test("a slow turn/start reply keeps the request until the turn ends", async () => {
+  // Reproduces the finding from PR #11: the request timeout released the work
+  // while the turn was still changing files. Now the timeout only releases the
+  // request when the turn is certainly not running; a turn that already
+  // started keeps the app waiting for its own turn/completed.
+  process.env.BITACORA_FAKE_TURN_DELAY = "1500";
+  const f = await fixture(60_000, { turnStartTimeoutMs: 1000 });
   try {
     const sending = f.engine.send("thread-1", "slow-start");
-    const outcome = await Promise.race([
-      sending.then(() => "sent", (error: Error) => `rejected: ${error.message}`),
-      delay(1400).then(() => "still running"),
-    ]);
-    // The turn already started: the request must not be released.
-    assert.equal(outcome, "still running");
-    await sending;
-    assert.ok(f.events.some((e) => e.type === "finished"));
+    // turn/started arrived before the timeout: the request is not refused.
+    await assert.doesNotReject(sending);
+    // Nothing is finished yet: the turn ends when the engine says so.
+    assert.equal(f.events.some((e) => e.type === "finished"), false);
+    await until(() => f.events.some((e) => e.type === "finished"));
+    // A turn whose reply never arrives can still be paused.
+    await assert.doesNotReject(f.engine.send("thread-1", "slow-start-pause"));
+    assert.equal(f.events.filter((e) => e.type === "finished").length, 1);
+    await f.engine.interrupt("thread-1");
+    await until(() => f.events.filter((e) => e.type === "finished").length === 2);
+    const finished = f.events.filter((e) => e.type === "finished");
+    assert.equal((finished[1] as { status: string }).status, "interrupted");
   } finally {
     delete process.env.BITACORA_FAKE_TURN_DELAY;
     await f.close();
