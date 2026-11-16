@@ -746,6 +746,7 @@ function App() {
                 ) : !state.engine.available ? (
                   <span
                     className="w-[34px] h-[34px] inline-grid place-items-center text-danger min-[960px]:hidden"
+                    role="img"
                     title="Bitácora se detuvo"
                     aria-label="Bitácora se detuvo"
                   >

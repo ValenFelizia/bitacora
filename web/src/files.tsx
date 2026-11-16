@@ -708,12 +708,16 @@ export function ImagePreviewModal({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        // Close only the preview, not the drawer underneath it.
+        e.stopPropagation();
+        onClose();
+      }
       if (e.key === "ArrowLeft" && index > 0) onSelect(list[index - 1]);
       if (e.key === "ArrowRight" && index >= 0 && index < list.length - 1) onSelect(list[index + 1]);
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
   }, [index, list, onClose, onSelect]);
 
   return (

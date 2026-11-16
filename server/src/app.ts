@@ -266,7 +266,7 @@ export class App {
     this.changed();
     try { await this.engine.renameWork(work.conversationId, work.title); }
     catch (error) {
-      work.details = (work.details + `No pude guardar el título en el motor: ${String(error)}\n`).slice(-100000);
+      work.details = (work.details + `No pude guardar el título en la sesión: ${String(error)}\n`).slice(-100000);
       this.changed();
     }
   }
@@ -444,7 +444,7 @@ export class App {
       this.changed();
       try { await this.engine.renameWork(work.conversationId, title); }
       catch (error) {
-        work.details = (work.details + `No pude guardar el nombre en el motor: ${String(error)}\n`).slice(-100000);
+        work.details = (work.details + `No pude guardar el nombre en la sesión: ${String(error)}\n`).slice(-100000);
         this.changed();
       }
       return;
@@ -568,7 +568,7 @@ export class App {
       await sending;
       if (this.backups?.hasNotice(work.id)) {
         try { await this.backups.acknowledge(work.id); }
-        catch { work.details += "No pude guardar que el motor recibió el aviso de Deshacer.\n"; }
+        catch { work.details += "No pude guardar que la sesión recibió el aviso de Deshacer.\n"; }
       }
     } catch (error) {
       if (work) {
