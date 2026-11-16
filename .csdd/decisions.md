@@ -217,3 +217,16 @@ accepted direction from implementation alone.
   `skills/list` y `mcpServerStatus/list` mantengan este estado y que no aparezcan
   `.tmp/plugins` ni `skills/.system`. Queda pendiente el smoke test con pedido
   real (`turn/start`) cuando vuelva el cupo (18/11).
+
+## DEC-012 — Sistema de diseño «De a bordo»
+
+- Status: accepted (2026-11-16, decidido por el dueño)
+- Context: la interfaz creció por partes (#25). Usaba la letra del sistema, Georgia en los títulos, verde y dorado sobre crema, y casi no tenía íconos. El dueño pidió buscar inspiración en herramientas de IA para gente no técnica (`docs/research/inspiracion-diseno.md`). También pidió darle a Bitácora una personalidad mínima, con colores y letras que no sean genéricos. Fijó cuatro principios: no bombardear de información, nada de decoración genérica, los entregables como foco con descarga clara, y menos texto y más íconos.
+- Decision: se adopta la dirección «De a bordo», elegida entre tres maquetas y ajustada en una segunda vuelta. Queda descrita en `design.md`, en la raíz del repo:
+  - Fondo papel `#f4efe4`, tinta azul marino `#1d2838` y un solo acento naranja de boya `#d4612a`.
+  - Young Serif para títulos y Atkinson Hyperlegible para el texto, empaquetadas con la app. Íconos Lucide.
+  - El progreso del agente se muestra como entradas con hora y los trabajos llevan fecha.
+  - El entregable va en la barra derecha, con la miniatura como protagonista y «Descargar» como texto con ícono subrayado, no como botón relleno.
+  - La cuenta se muestra con el mail. Si no hay cuenta, una invitación con una sola acción. Sin indicadores que laten.
+- Rationale: la personalidad sale del nombre (un cuaderno de a bordo es un registro con hora), no de adornos. Atkinson Hyperlegible está hecha para leerse fácil, y eso le sirve a una usuaria no técnica. El naranja se reserva para lo que está pasando ahora, para que la atención vaya ahí.
+- Consequences: todo cambio visual en `web/` sigue `design.md`. Si hace falta algo que no está, se agrega ahí. Aplicarlo a la interfaz es parte de #25. Las ideas de producto de la investigación (generar en segundo plano, editar señalando, historial, elegir qué placas mandar) quedan para después del MVP.
