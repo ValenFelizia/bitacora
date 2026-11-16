@@ -59,11 +59,15 @@ function sortPlates(files: FileRef[]): FileRef[] {
 }
 
 /**
- * Groups the work's results so the latest deliverable (a set of plates or the
- * newest image/PDF) becomes the hero in the right panel, and previous or
- * accompanying files stay available in the list below.
+ * Groups the work's results so the chosen batch (latest by default, or the
+ * requested message's batch) becomes the hero in the right panel, and files from
+ * other messages stay in the `older` list without overlapping the `allFiles`
+ * menu.
  */
-export function groupDeliverables(work: Work | undefined): GroupedDeliverables {
+export function groupDeliverables(
+  work: Work | undefined,
+  messageId?: string,
+): GroupedDeliverables {
   if (!work) return { older: [] };
   const batches = work.messages
     .filter((m) => m.results && m.results.length > 0)
@@ -71,13 +75,17 @@ export function groupDeliverables(work: Work | undefined): GroupedDeliverables {
 
   if (!batches.length) return { older: [] };
 
-  const latest = batches[batches.length - 1];
-  const earlierFiles = batches
-    .slice(0, -1)
+  const requestedIndex = messageId
+    ? batches.findIndex((b) => b.id === messageId)
+    : -1;
+  const chosenIndex = requestedIndex >= 0 ? requestedIndex : batches.length - 1;
+  const target = batches[chosenIndex];
+  const otherFiles = batches
+    .filter((_, idx) => idx !== chosenIndex)
     .flatMap((b) => b.files)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 
-  const files = latest.files;
+  const files = target.files;
   const plates = sortPlates(files.filter(isPlate));
   const images = files.filter((f) => f.mime.startsWith("image/") && !isOverview(f));
   const latestTime = files.reduce(
@@ -86,18 +94,19 @@ export function groupDeliverables(work: Work | undefined): GroupedDeliverables {
   );
   const timeText = formatTime(latestTime);
 
-  if (plates.length >= 2) {
+  if (plates.length >= 1) {
     const rest = files.filter((f) => !isPlate(f) && !isOverview(f));
+    const countLabel = plates.length === 1 ? "1 placa" : `${plates.length} placas`;
     return {
       featured: {
-        id: latest.id,
+        id: target.id,
         title: work.title,
-        meta: `${plates.length} placas${timeText ? ` · ${timeText}` : ""}`,
+        meta: `${countLabel}${timeText ? ` · ${timeText}` : ""}`,
         plates,
         primary: plates[0],
         allFiles: [...plates, ...files.filter(isOverview), ...rest],
       },
-      older: [...rest, ...earlierFiles],
+      older: otherFiles,
     };
   }
 
@@ -105,35 +114,34 @@ export function groupDeliverables(work: Work | undefined): GroupedDeliverables {
     const rest = files.filter((f) => !images.includes(f) && !isOverview(f));
     return {
       featured: {
-        id: latest.id,
+        id: target.id,
         title: work.title,
         meta: `${images.length} imágenes${timeText ? ` · ${timeText}` : ""}`,
         plates: images,
         primary: images[0],
         allFiles: [...images, ...files.filter(isOverview), ...rest],
       },
-      older: [...rest, ...earlierFiles],
+      older: otherFiles,
     };
   }
 
-  const sortedLatest = [...files].sort((a, b) => {
+  const sortedTarget = [...files].sort((a, b) => {
     const aImg = a.mime.startsWith("image/") ? 0 : 1;
     const bImg = b.mime.startsWith("image/") ? 0 : 1;
     if (aImg !== bImg) return aImg - bImg;
     return b.createdAt.localeCompare(a.createdAt);
   });
-  const primary = sortedLatest[0];
-  const remainingLatest = sortedLatest.slice(1);
+  const primary = sortedTarget[0];
 
   return {
     featured: {
-      id: latest.id,
+      id: target.id,
       title: primary.name,
       meta: timeText || "",
       plates: primary.mime.startsWith("image/") ? [primary] : [],
       primary,
-      allFiles: sortedLatest,
+      allFiles: sortedTarget,
     },
-    older: [...remainingLatest, ...earlierFiles],
+    older: otherFiles,
   };
 }

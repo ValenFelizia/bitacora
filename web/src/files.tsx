@@ -435,7 +435,13 @@ function FeaturedDeliverable({
         // Ignore individual failure
       }
     }
-    setNotice(count ? "Archivos guardados." : "No pude descargar los archivos.");
+    setNotice(
+      count === filesToGet.length
+        ? "Archivos guardados."
+        : count > 0
+          ? `Guardé ${count} de ${filesToGet.length} archivos.`
+          : "No pude descargar los archivos.",
+    );
   }
 
   async function copyPrimary() {
@@ -486,16 +492,17 @@ function FeaturedDeliverable({
         )}
       </div>
 
-      {primaryFetched.missing ? (
+      {primaryFetched.missing && (
         <p role="status" className="text-[13px] text-muted flex items-center gap-2 border-t border-line pt-[10px]">
           <FileX size={18} strokeWidth={1.75} aria-hidden="true" />
           Este archivo ya no está disponible.
         </p>
-      ) : (
+      )}
+      {(!primaryFetched.missing || group.allFiles.length > 1) && (
         <div className="flex items-center justify-between border-t border-line pt-[10px]">
           <button
             type="button"
-            disabled={!primaryFetched.url && !isMulti}
+            disabled={primaryFetched.missing ? !isMulti : (!primaryFetched.url && !isMulti)}
             className={downloadLink}
             onClick={() => void downloadAll()}
           >
@@ -503,31 +510,33 @@ function FeaturedDeliverable({
             Descargar
           </button>
           <div className="flex items-center gap-0.5">
-            {isImage ? (
-              <button
-                type="button"
-                className={iconBtn}
-                title="Ver"
-                aria-label="Ver entregable"
-                onClick={() => onPreview(group.primary, group.plates)}
-              >
-                <Eye size={18} strokeWidth={1.75} aria-hidden="true" />
-              </button>
-            ) : (
-              primaryFetched.url && (
-                <a
+            {!primaryFetched.missing && (
+              isImage ? (
+                <button
+                  type="button"
                   className={iconBtn}
-                  href={primaryFetched.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  title="Abrir"
-                  aria-label="Abrir PDF"
+                  title="Ver"
+                  aria-label="Ver entregable"
+                  onClick={() => onPreview(group.primary, group.plates)}
                 >
                   <Eye size={18} strokeWidth={1.75} aria-hidden="true" />
-                </a>
+                </button>
+              ) : (
+                primaryFetched.url && (
+                  <a
+                    className={iconBtn}
+                    href={primaryFetched.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    title="Abrir"
+                    aria-label="Abrir PDF"
+                  >
+                    <Eye size={18} strokeWidth={1.75} aria-hidden="true" />
+                  </a>
+                )
               )
             )}
-            {isImage && (
+            {!primaryFetched.missing && isImage && (
               <button
                 type="button"
                 disabled={!primaryFetched.blob}
@@ -582,22 +591,26 @@ function FeaturedDeliverable({
 
 export function DeliverablesPanel({
   work,
+  focusedMessageId,
   token,
   fileRevision,
   hasGalleryResults,
   onOpenGallery,
   onPreview,
   onCloseMobile,
+  closeMobileRef,
 }: {
   work?: Work;
+  focusedMessageId?: string;
   token?: string;
   fileRevision?: number;
   hasGalleryResults: boolean;
   onOpenGallery: () => void;
   onPreview: (file: FileRef, list: FileRef[]) => void;
   onCloseMobile?: () => void;
+  closeMobileRef?: React.RefObject<HTMLButtonElement | null>;
 }) {
-  const grouped = groupDeliverables(work);
+  const grouped = groupDeliverables(work, focusedMessageId);
 
   return (
     <div className="flex flex-col gap-4 h-full overflow-y-auto">
@@ -605,6 +618,7 @@ export function DeliverablesPanel({
         <h2 className="font-display text-[20px] font-normal text-ink">Entregables</h2>
         {onCloseMobile && (
           <button
+            ref={closeMobileRef}
             type="button"
             onClick={onCloseMobile}
             className={`${iconBtn} min-[960px]:hidden`}

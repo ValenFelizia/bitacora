@@ -78,15 +78,46 @@ test("groupDeliverables promotes multi-plate batch to hero and leaves older file
     ["pieza-1.png", "pieza-2.png", "pieza-3.png", "pieza-4.png"],
   );
   assert.equal(grouped.featured.primary.name, "pieza-1.png");
+  assert.ok(grouped.featured.allFiles.some((f) => f.name === "piezas.pdf"));
   assert.deepEqual(
     grouped.older.map((f) => f.name),
-    ["piezas.pdf", "Cotización.pdf"],
+    ["Cotización.pdf"],
   );
+  const menuIds = new Set(grouped.featured.allFiles.map((f) => f.id));
+  for (const older of grouped.older) {
+    assert.equal(menuIds.has(older.id), false, `${older.name} must not appear in both menu and older`);
+  }
+
+  const targeted = groupDeliverables(work, "m2");
+  assert.equal(targeted.featured?.id, "m2");
+  assert.equal(targeted.featured?.primary.name, "Cotización.pdf");
+  assert.equal(targeted.older.some((f) => f.name === "Cotización.pdf"), false);
+  assert.equal(targeted.older.some((f) => f.name === "pieza-1.png"), true);
 });
 
-test("groupDeliverables handles single deliverable and empty works", () => {
+test("groupDeliverables uses work title for single-plate batch and handles single PDF or empty works", () => {
   assert.deepEqual(groupDeliverables(undefined), { older: [] });
   assert.deepEqual(groupDeliverables(makeWork()), { older: [] });
+
+  const singlePlate = groupDeliverables(
+    makeWork({
+      messages: [
+        {
+          id: "m1",
+          role: "assistant",
+          text: "Placa única",
+          results: [
+            makeFile("pieza-1.png", "image/png"),
+            makeFile("piezas.pdf", "application/pdf"),
+          ],
+        },
+      ],
+    }),
+  );
+  assert.equal(singlePlate.featured?.title, "Porto de Galinhas, febrero");
+  assert.match(singlePlate.featured?.meta ?? "", /^1 placa/);
+  assert.equal(singlePlate.featured?.plates.length, 1);
+  assert.equal(singlePlate.older.length, 0);
 
   const single = groupDeliverables(
     makeWork({
