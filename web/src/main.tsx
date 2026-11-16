@@ -8,6 +8,7 @@ import type {
 import "./style.css";
 import { FileCard } from "./files";
 import type { Work } from "../../server/src/contracts";
+import { MAX_TITLE } from "../../server/src/titles";
 const latestResult = (work: Work) => work.messages.flatMap(m => m.results || []).reduce((latest, f) => f.createdAt > latest ? f.createdAt : latest, "");
 import type { Upload } from "../../server/src/contracts";
 import ReactMarkdown from "react-markdown";
@@ -42,6 +43,11 @@ function App() {
   const draftGeneration = useRef(0);
   const fileInput = useRef<HTMLInputElement>(null);
   const [selected, setSelected] = useState<string>();
+  const [renaming, setRenaming] = useState(false);
+  const [name, setName] = useState("");
+  // The name sent but not yet confirmed by the server: the form stays open
+  // until the work shows it, or until a problem says it was not saved.
+  const [savingName, setSavingName] = useState<string>();
   const [text, setText] = useState("");
   const [online, setOnline] = useState(false);
   const [pending, setPending] = useState(false);
@@ -107,6 +113,8 @@ function App() {
         if (message.type === "problem") {
           setProblem(message);
           setPending(false);
+          // A rename that was refused keeps its form open with the message.
+          setSavingName(undefined);
         }
         if (message.type === "login") {
           setLogin(message.url);
@@ -117,6 +125,9 @@ function App() {
       ws.onclose = () => {
         setOnline(false);
         setPending(false);
+        // A rename in flight may never be answered: the form stays open with
+        // the typed name so it can be saved again.
+        setSavingName(undefined);
         if (!disposed) timer = setTimeout(connect, 1500);
       };
     }
@@ -130,6 +141,14 @@ function App() {
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: "end" });
   }, [selected, work?.messages.length, work?.messages.at(-1)?.text]);
+  useEffect(() => {
+    // The form closes only when the server's snapshot shows the saved name.
+    // The input is locked while saving, so the submitted name is the one shown.
+    if (savingName && work?.title === savingName) {
+      setRenaming(false);
+      setSavingName(undefined);
+    }
+  }, [savingName, work?.title]);
   function send(command: ClientCommand) {
     if (socket.current?.readyState !== WebSocket.OPEN) return;
     setProblem(undefined);
@@ -214,6 +233,7 @@ function App() {
           className={`${buttonPrimary} w-full`}
           onClick={() => {
             setGallery(false);
+            setRenaming(false);
             draftGeneration.current++;
             setAttachments([]);
             setSelected(undefined);
@@ -223,7 +243,7 @@ function App() {
         >
           + Nuevo trabajo
         </button>
-        <button className={buttonSecondary} onClick={() => setGallery(true)} aria-pressed={gallery}>Galería</button>
+        <button className={buttonSecondary} onClick={() => { setGallery(true); setRenaming(false); }} aria-pressed={gallery}>Galería</button>
         <nav
           className="flex-1 [&>h2]:uppercase [&>h2]:tracking-[1.5px] [&>h2]:text-[11px] [&>h2]:mb-4 [&>h2]:text-[#58675e]"
           aria-label="Trabajos anteriores"
@@ -237,6 +257,7 @@ function App() {
                   aria-current={selected === w.id ? "page" : undefined}
                   onClick={() => {
                     setGallery(false);
+                    setRenaming(false);
                     setSelected(w.id);
                     setProblem(undefined);
                   }}
@@ -313,9 +334,53 @@ function App() {
         </section>
       </aside>
       <main tabIndex={-1} className="flex flex-col min-w-0 min-h-0">
-        <header className="py-5 px-9 border-b border-[#e6e7de] flex items-center justify-between gap-5 [&>p]:m-0 [&>p]:text-sm [&>p]:font-semibold [&>p]:truncate [&>span]:text-[#69756d] [&>span]:text-xs [&>span]:shrink-0 max-[720px]:p-4 max-[720px]:[&>span]:hidden">
-          <p>{gallery ? "Galería" : work?.title || "Un lugar para tus próximos pasos"}</p>
-          <span>{online ? "Tu espacio de trabajo" : "Reconectando…"}</span>
+        <header className="py-5 px-9 border-b border-[#e6e7de] flex items-center justify-between gap-5 max-[720px]:p-4">
+          {renaming && work ? (
+            <form
+              className="flex flex-1 min-w-0 items-center gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                // Same cleanup as the server, so the saved name can be recognised.
+                const title = name.trim().replace(/\s+/g, " ");
+                // While reconnecting nothing is sent: the form stays open so
+                // the typed name is not lost.
+                if (!title || title.length > MAX_TITLE || !online || savingName) return;
+                send({ type: "rename", workId: work.id, title });
+                // Saving the name as it is keeps it from being replaced by the
+                // automatic title. The snapshot cannot show that change, so the
+                // form closes now: the server accepts any name of this length.
+                if (title === work.title) setRenaming(false);
+                else setSavingName(title);
+              }}
+            >
+              <label className="sr-only" htmlFor="work-name">Nombre del trabajo</label>
+              <input
+                id="work-name"
+                autoFocus
+                value={name}
+                readOnly={!!savingName}
+                maxLength={MAX_TITLE}
+                onChange={(e) => setName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Escape") setRenaming(false); }}
+                className="min-w-0 flex-1 rounded-lg border border-[#c6d0c9] bg-[#fffefa] px-3 py-2 text-sm focus-visible:outline-3 focus-visible:outline-[#94733c] focus-visible:outline-offset-3"
+              />
+              <button className={buttonPrimary} type="submit" disabled={!name.trim() || name.trim().replace(/\s+/g, " ").length > MAX_TITLE || !online || !!savingName}>{savingName ? "Guardando…" : "Guardar"}</button>
+              <button className={buttonSecondary} type="button" onClick={() => setRenaming(false)}>Cancelar</button>
+            </form>
+          ) : (
+            <div className="flex min-w-0 items-center gap-3">
+              <p className="m-0 truncate text-sm font-semibold">{gallery ? "Galería" : work?.title || "Un lugar para tus próximos pasos"}</p>
+              {!gallery && work && (
+                <button
+                  className="shrink-0 cursor-pointer rounded-md border border-[#c6d0c9] px-2 py-1 text-xs text-[#4b6556] hover:bg-[#e4ebe5] focus-visible:outline-3 focus-visible:outline-[#94733c] focus-visible:outline-offset-3"
+                  onClick={() => { setName(work.title); setSavingName(undefined); setRenaming(true); }}
+                >
+                  Cambiar el nombre
+                </button>
+              )}
+            </div>
+          )}
+          <span className="shrink-0 text-xs text-[#69756d] max-[720px]:hidden">{online ? "Tu espacio de trabajo" : "Reconectando…"}</span>
         </header>
         <section aria-label="Deshacer el último pedido" className="px-5 py-3 border-b border-[#e6e7de]">
           {state.undo && !busy && <>
@@ -339,7 +404,7 @@ function App() {
               const results = w.messages.flatMap(m => m.results || []).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
               return results.length ? <section key={w.id} className="mb-8">
                 <h3 className="font-semibold">{w.title}</h3>
-                <button className={buttonSecondary} onClick={() => { setSelected(w.id); setGallery(false); }}>Ir al trabajo</button>
+                <button className={buttonSecondary} onClick={() => { setSelected(w.id); setGallery(false); setRenaming(false); }}>Ir al trabajo</button>
                 <div className="grid gap-4 sm:grid-cols-2">{results.map(f => <FileCard key={`${f.id}-${state.fileRevision}`} file={f} token={state.fileToken} result />)}</div>
               </section> : null;
             })}
