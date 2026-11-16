@@ -21,11 +21,34 @@ import type { ThreadResumeResponse } from "./generated/v2/ThreadResumeResponse";
 import type { Turn } from "./generated/v2/Turn";
 import type { TurnStartResponse } from "./generated/v2/TurnStartResponse";
 import type { ConfigReadResponse } from "./generated/v2/ConfigReadResponse";
+import type { PermissionProfileListResponse } from "./generated/v2/PermissionProfileListResponse";
 import type { WindowsSandboxReadinessResponse } from "./generated/v2/WindowsSandboxReadinessResponse";
+
+/**
+ * Named Codex permissions profile that keeps the agent's commands inside the
+ * agency folder: `:workspace` grants read and write there, `:root` deny keeps
+ * the rest of the disk out of reach and `:minimal` read leaves only the runtime
+ * paths PowerShell needs. Verified on Windows 11 with MXC in issue #4.
+ */
+export const PERMISSIONS_PROFILE = "agencia";
+
+/**
+ * Command-line overrides that define the profile for the app-server process.
+ * `-c` values are TOML, so the whole profile is one inline table; nothing is
+ * written to the user's config file and an upgrade cannot leave a stale copy.
+ * Exported so the real-sandbox test runs the very same profile.
+ */
+export const PROFILE_ARGS = [
+  "-c",
+  `default_permissions="${PERMISSIONS_PROFILE}"`,
+  "-c",
+  `permissions.${PERMISSIONS_PROFILE}={extends=":workspace",filesystem={":root"="deny",":minimal"="read",":tmpdir"="deny",":slash_tmp"="deny"},network={enabled=false}}`,
+];
 
 type Responses = {
   initialize: unknown;
   "windowsSandbox/readiness": WindowsSandboxReadinessResponse;
+  "permissionProfile/list": PermissionProfileListResponse;
   "config/read": ConfigReadResponse;
   "config/value/write": unknown;
   "windowsSandbox/setupStart": { started: boolean };
@@ -226,6 +249,7 @@ export class CodexEngine implements Engine {
         "stdio://",
         "-c",
         'cli_auth_credentials_store="file"',
+        ...PROFILE_ARGS,
       ],
       { cwd: this.options.workspace, env, windowsHide: true, stdio: "pipe" },
     );
@@ -264,7 +288,9 @@ export class CodexEngine implements Engine {
     try {
       await this.rpc("initialize", {
         clientInfo: { name: "bitacora", title: "Bitácora", version: "0.1.0" },
-        capabilities: { experimentalApi: false, requestAttestation: false },
+        // The read-restricting profile is an experimental field: without this
+        // capability the app-server refuses `permissions` on thread and turn.
+        capabilities: { experimentalApi: true, requestAttestation: false },
       });
       this.write({ method: "initialized" });
       this.environment = env;
@@ -329,9 +355,16 @@ export class CodexEngine implements Engine {
       const readiness = await this.rpc("windowsSandbox/readiness", undefined);
       const { config } = await this.rpc("config/read", { includeLayers: false });
       const mode = (config.windows as { sandbox?: string } | null)?.sandbox;
-      const detail = `windowsSandbox/readiness=${readiness.status}; windows.sandbox=${mode || "disabled"}; workspace-write`;
+      const detail = `windowsSandbox/readiness=${readiness.status}; windows.sandbox=${mode || "disabled"}; permissions=${PERMISSIONS_PROFILE}`;
       const mxc = mode === "elevated" && readiness.status === "ready" ? undefined : await this.probeMxc();
       if (readiness.status === "ready" && (mode === "elevated" || (mode === "mxc" && mxc))) {
+        const refusal = await this.readPermissions();
+        if (refusal) {
+          // The folder is protected for writes but the agent could still read
+          // every file on the computer: say so instead of working anyway.
+          this.setProtection({ allowed: false, status: "failed", detail: `${detail}; ${refusal}`, issue: "readBlock" });
+          return;
+        }
         this.setProtection({ allowed: true, status: "ready", detail });
         return;
       }
@@ -340,6 +373,23 @@ export class CodexEngine implements Engine {
         needsPermission: !mxc, detail, issue: interrupted ? "interrupted" : undefined });
     } catch (error) {
       this.setProtection({ allowed: false, status: "failed", detail: String(error), issue: "check" });
+    }
+  }
+  /**
+   * Asks the running app-server whether the read-restricting profile exists and
+   * may be used. Returns why it cannot be applied, or undefined when it can.
+   * An app-server that does not know the profile or the call is a refusal: the
+   * app must not fall back to a profile that reads the whole computer.
+   */
+  private async readPermissions(): Promise<string | undefined> {
+    try {
+      const { data } = await this.rpc("permissionProfile/list", { cwd: this.options.workspace });
+      const profile = data.find((p) => p.id === PERMISSIONS_PROFILE);
+      if (!profile) return `permissionProfile/list does not offer ${PERMISSIONS_PROFILE}`;
+      if (!profile.allowed) return `permissionProfile/list does not allow ${PERMISSIONS_PROFILE}`;
+      return undefined;
+    } catch (error) {
+      return `permissionProfile/list failed: ${String(error)}`;
     }
   }
   async prepareProtection() {
@@ -818,20 +868,38 @@ export class CodexEngine implements Engine {
     return {
       cwd: this.options.workspace,
       approvalPolicy: "never" as const,
-      sandbox: "workspace-write" as const,
+      // A named profile cannot be combined with `sandbox`: the profile decides
+      // both the writable root and what stays readable.
+      permissions: PERMISSIONS_PROFILE,
       developerInstructions:
         "Respondé en castellano rioplatense, simple y sin términos técnicos. Trabajá en la carpeta actual. No generes imágenes con IA.",
     };
   }
+  /**
+   * A thread that did not take the profile would run with the default one, so
+   * it is refused instead of used. `thread/start` always reports the profile it
+   * took; `thread/resume` reports it "when known", so a missing value there is
+   * not a refusal: the turn still sends the profile and the configured default
+   * is the same one. The app turns off execution and says why.
+   */
+  private checkProfile(active: { id: string } | null | undefined, required: boolean) {
+    if (active?.id === PERMISSIONS_PROFILE) return;
+    if (!required && !active) return;
+    const refusal = `the engine started the work with permissions=${active?.id ?? "none"} instead of ${PERMISSIONS_PROFILE}`;
+    this.setProtection({ allowed: false, status: "failed", detail: refusal, issue: "readBlock" });
+    throw new EngineFailure("other", refusal);
+  }
   async createWork() {
-    const { thread } = await this.rpc("thread/start", this.settings());
+    const { thread, activePermissionProfile } = await this.rpc("thread/start", this.settings());
+    this.checkProfile(activePermissionProfile, true);
     return { conversationId: thread.id, title: thread.name || undefined };
   }
   async resumeWork(conversationId: string) {
-    await this.rpc("thread/resume", {
+    const { activePermissionProfile } = await this.rpc("thread/resume", {
       threadId: conversationId,
       ...this.settings(),
     });
+    this.checkProfile(activePermissionProfile, false);
   }
   /**
    * Starts a turn and resolves with its reply. When the reply does not arrive
@@ -910,13 +978,9 @@ export class CodexEngine implements Engine {
         ],
         cwd: this.options.workspace,
         approvalPolicy: "never",
-        sandboxPolicy: {
-          type: "workspaceWrite",
-          writableRoots: [this.options.workspace],
-          networkAccess: false,
-          excludeTmpdirEnvVar: true,
-          excludeSlashTmp: true,
-        },
+        // Same profile as the thread: the turn cannot be widened back to a
+        // sandbox policy that reads the whole computer.
+        permissions: PERMISSIONS_PROFILE,
       }, state);
       if (!state.completed && this.available && (!turn || turn.status === "inProgress")) {
         if (turn) this.turns.set(conversationId, turn.id);

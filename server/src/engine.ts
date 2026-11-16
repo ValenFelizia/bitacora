@@ -1,6 +1,6 @@
 import { toolProgress } from './tools/progress';
 export type Account = { connected: boolean; email?: string };
-export type ExecutionSafety = { allowed: boolean; detail: string; status?: "needed" | "preparing" | "ready" | "failed"; needsPermission?: boolean; issue?: "check" | "setup" | "uncertain" | "interrupted" | "restart" };
+export type ExecutionSafety = { allowed: boolean; detail: string; status?: "needed" | "preparing" | "ready" | "failed"; needsPermission?: boolean; issue?: "check" | "setup" | "uncertain" | "interrupted" | "restart" | "readBlock" };
 export type Activity =
   | keyof typeof toolProgress
   | "preparing"
