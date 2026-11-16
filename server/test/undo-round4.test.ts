@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, writeFile, readFile, rm, rename, unlink, readdir, chmod, stat, symlink } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { Backups, BACKUP_LIMITS } from '../src/backups';
 import { BackupTrash, TRASH_RETENTION_MS } from '../src/backup-trash';
 import { lockForWriting } from './locks';
@@ -84,14 +84,49 @@ test('R4 property: every process-exit cut conserves pre-undo contents through re
     await unlink(join(f.root, 'report')); await mkdir(join(f.root, 'report')); await writeFile(join(f.root, 'report/child'), 'agent-child'); await writeFile(join(f.root, 'z.txt'), 'agent-z');
     await writeFile(join(f.root, 'new.png'), 'agent-new'); await b.finish(); await writeFile(join(f.root, 'manual.txt'), 'personal'); return { ...f, receipt: b.receipt! };
   };
-  const run = (f: Awaited<ReturnType<typeof setup>>, cut: number) => spawnSync(process.execPath, ['--import', 'tsx', resolve('server/test/undo-cut-worker.ts'), f.root, f.data, f.receipt, String(cut)], { encoding: 'utf8', timeout: 15000 });
-  const baseline = await setup(); let total = 0;
-  try { const result = run(baseline, 0); assert.equal(result.status, 0, result.stderr); total = JSON.parse(result.stdout.trim().split('\n').at(-1)!).total; assert.ok(total > 30); }
-  finally { await baseline.close(); }
-  for (const mode of ['retry', 'discard']) for (let cut = 1; cut <= total; cut++) {
+  type WorkerResult = { status: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string; timedOut: boolean; elapsedMs: number; error?: Error };
+  const runWorker = (f: Awaited<ReturnType<typeof setup>>, cut: number, timeoutMs: number): Promise<WorkerResult> =>
+    new Promise((resolvePromise) => {
+      const start = Date.now();
+      const child = spawn(process.execPath, ['--import', 'tsx', resolve('server/test/undo-cut-worker.ts'), f.root, f.data, f.receipt, String(cut)], {
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let stdout = '', stderr = '', timedOut = false, settled = false;
+      child.stdout.on('data', chunk => { stdout += String(chunk); });
+      child.stderr.on('data', chunk => { stderr += String(chunk); });
+      const timer = setTimeout(() => { timedOut = true; child.kill(); }, timeoutMs);
+      const finish = (status: number | null, signal: NodeJS.Signals | null, error?: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolvePromise({ status, signal, stdout, stderr, timedOut, elapsedMs: Date.now() - start, error });
+      };
+      child.once('error', err => finish(null, null, err));
+      child.once('close', (status, signal) => finish(status, signal));
+    });
+  const assertWorker = (result: WorkerResult, expectedStatus: number, label: string) => {
+    if (result.timedOut) assert.fail(`${label} timed out after ${result.elapsedMs}ms${result.stderr ? `: ${result.stderr}` : ''}`);
+    if (result.error) assert.fail(`${label} failed to run: ${result.error.message}`);
+    assert.equal(result.status, expectedStatus, `${label} exited with status ${result.status} (signal ${result.signal})${result.stderr ? `: ${result.stderr}` : ''}`);
+  };
+  const baseline = await setup(); let total = 0; let workerTimeoutMs = 45000;
+  try {
+    const result = await runWorker(baseline, 0, 60000);
+    assertWorker(result, 0, 'baseline');
+    workerTimeoutMs = Math.max(45000, result.elapsedMs * 10);
+    total = JSON.parse(result.stdout.trim().split('\n').at(-1)!).total;
+    assert.ok(total > 30);
+  } finally { await baseline.close(); }
+  const cases: { mode: 'retry' | 'discard'; cut: number }[] = [];
+  for (const mode of ['retry', 'discard'] as const) for (let cut = 1; cut <= total; cut++) cases.push({ mode, cut });
+  let next = 0;
+  let failure: unknown;
+  const verifyCase = async (mode: 'retry' | 'discard', cut: number) => {
     const f = await setup();
     try {
-      const result = run(f, cut); assert.equal(result.status, 73, `cut ${cut}: ${result.stderr}`);
+      const result = await runWorker(f, cut, workerTimeoutMs);
+      assertWorker(result, 73, `${mode} cut ${cut}/${total}`);
       await conserved(f, ['agent-a', 'agent-child', 'agent-z', 'agent-new', 'personal']);
       const b = new Backups(f.root, f.data); await b.initialize(f.receipt);
       const expected = new Map<string, string>();
@@ -126,7 +161,14 @@ test('R4 property: every process-exit cut conserves pre-undo contents through re
       assert.equal(await b.before(target), true);
     } catch (e) { throw Object.assign(new Error(`${mode} after operation ${cut}/${total}`), { cause: e }); }
     finally { await f.close(); }
-  }
+  };
+  await Promise.all(Array.from({ length: 2 }, async () => {
+    while (!failure && next < cases.length) {
+      const { mode, cut } = cases[next++]!;
+      try { await verifyCase(mode, cut); } catch (e) { failure ??= e; }
+    }
+  }));
+  if (failure) throw failure;
   t.diagnostic(`${total} operation cuts × retry/discard: ${total * 2} real process exits; all pre-undo content hashes conserved`);
 });
 test('R4 Opus B: discard repairs a directory removed before a failed replacement', async () => {

@@ -74,6 +74,7 @@ export async function serve(
       ].includes(req.headers.host || "") ||
       req.url !== "/ws"
     ) {
+      socket.on("error", () => {});
       socket.destroy();
       return;
     }
@@ -82,6 +83,7 @@ export async function serve(
     );
   });
   sockets.on("connection", (ws) => {
+    ws.on("error", () => ws.terminate());
     send(ws, { type: "snapshot", state: app.snapshot() });
     ws.on("message", (data) => {
       void (async () => {
@@ -122,6 +124,7 @@ export async function serve(
     async close() {
       for (const ws of sockets.clients) ws.terminate();
       await new Promise<void>((resolve) => sockets.close(() => resolve()));
+      http.closeAllConnections?.();
       await new Promise<void>((resolve) => http.close(() => resolve()));
       await app.close();
     },

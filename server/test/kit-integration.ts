@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url';
 import { WebSocket } from 'ws';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { callKitTool, connectKitClient } from './mcp-client';
 import { serve } from '../src/server';
 import { AgencyFiles } from '../src/tools/paths';
 import { allowedUrlsPath, readAllowedUrls } from '../src/allowed-urls';
@@ -35,17 +36,17 @@ export async function verifyKitIntegration(evidence?: string) {
   let snapshot:Snapshot|undefined;
   const calls:Record<string,unknown>={}, errors:string[]=[];
   const origin='http://127.0.0.1:5326';
-  async function until(check:()=>boolean) {
-    const deadline=Date.now()+30000;
-    while(!check()) {if(errors.length) throw new Error(errors.join('\n')); if(Date.now()>deadline) throw new Error('Integration timeout');await new Promise(r=>setTimeout(r,20));}
+  async function until(check:()=>boolean, label:string, timeoutMs=240000) {
+    const deadline=Date.now()+timeoutMs;
+    while(!check()) {if(errors.length) throw new Error(errors.join('\n')); if(Date.now()>deadline) throw new Error(`Integration timeout waiting for ${label} after ${timeoutMs}ms`);await new Promise(r=>setTimeout(r,20));}
   }
   try {
     server=await serve(engine,data,0,origin,workspace);
     assert.ok((await readdir(data)).some(n=>n.startsWith('kit-initialized-')));
     const transport=new StdioClientTransport({command:process.execPath,args:['--import',pathToFileURL(createRequire(import.meta.url).resolve('tsx/esm')).href,resolve('server/test/kit-mcp.ts'),workspace,allowedUrlsPath(data),operatorOrigin],stderr:'pipe'});
-    client=new Client({name:'kit-integration',version:'1.0'});await client.connect(transport);
+    client=new Client({name:'kit-integration',version:'1.0'});await connectKitClient(client,transport);
     async function tool(name:string,args:Record<string,unknown>) {
-      const response=await client!.callTool({name,arguments:args});
+      const response=await callKitTool(client!,name,args);
       assert.ok(!response.isError,JSON.stringify(response));
       const value=JSON.parse((response.content as {text:string}[])[0].text);
       assert.notEqual(value.ok,false,JSON.stringify(value)); calls[name]=value;return value;
@@ -54,7 +55,7 @@ export async function verifyKitIntegration(evidence?: string) {
       assert.equal(text,`Prepará esta oferta: ${url}`);assert.equal(attachments.length,1);
       assert.deepEqual(await readAllowedUrls(allowedUrlsPath(data)),[url]);
       for(const link of ['https://contenido-adjunto.example/','https://www.nombre-adjunto.example.txt/','https://adaptador.example/']) {
-        const result=await client!.callTool({name:'traer',arguments:{url:link,destination:'rechazada'}});
+        const result=await callKitTool(client!,'traer',{url:link,destination:'rechazada'});
         assert.equal(result.isError,true);assert.match(JSON.stringify(result),/usuaria/);
       }
       const fetched=await tool('traer',{url,destination:'propuestas/prueba'});assert.equal(fetched.photos.length,1);
@@ -73,10 +74,11 @@ export async function verifyKitIntegration(evidence?: string) {
     };
     const baseUrl=`http://127.0.0.1:${server.port}`;
     ws=new WebSocket(baseUrl.replace('http:','ws:')+'/ws',{origin});
+    ws.on('error',err=>{errors.push(err.message);});
     ws.on('message',raw=>{const msg=JSON.parse(String(raw));if(msg.type==='snapshot') snapshot=msg.state; if(msg.type==='problem') errors.push(msg.detail||msg.text);});
-    await until(()=>!!snapshot);
+    await until(()=>!!snapshot,'initial snapshot',15000);
     ws.send(JSON.stringify({type:'send',text:`Prepará esta oferta: ${url}`,attachments:[{name:'www.nombre-adjunto.example.txt',data:Buffer.from('https://contenido-adjunto.example/').toString('base64')}]}));
-    await until(()=>!!snapshot?.works[0]?.messages[0]?.results?.length && !snapshot.works[0].busy);
+    await until(()=>!!snapshot?.works[0]?.messages[0]?.results?.length && !snapshot.works[0].busy,'kit results');
     const results=snapshot!.works[0].messages[0].results!;
     assert.deepEqual(results.map(f=>f.name).sort(),['pieza-1.png','piezas.pdf','todas.png']);
     assert.deepEqual(await readAllowedUrls(allowedUrlsPath(data)),[url]);

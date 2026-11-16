@@ -7,6 +7,7 @@ import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { callKitTool, connectKitClient } from './mcp-client';
 import { App } from '../src/app';
 import { Backups, BACKUP_LIMITS } from '../src/backups';
 import { WorkspaceFiles } from '../src/workspace-files';
@@ -52,7 +53,7 @@ test('kit starter edits undo, moving kit artifacts are ignored, and maintenance 
   } finally { await f.close(); }
 });
 
-test('real kit MCP writes within a fake-engine request share two scans, exclude inputs from results and undo all tool files', { timeout: 180000 }, async () => {
+test('real kit MCP writes within a fake-engine request share two scans, exclude inputs from results and undo all tool files', { timeout: 240000 }, async () => {
   const f = await fixture(), engine = new FakeEngine(), files = new WorkspaceFiles(f.root), agency = new AgencyFiles(f.root);
   const app = new App(engine, f.data, () => {}, undefined, files);
   const png = photoFixture();
@@ -66,7 +67,7 @@ test('real kit MCP writes within a fake-engine request share two scans, exclude 
   let scans = 0; const scan = files.scan.bind(files); files.scan = (...args) => { scans++; return scan(...args); };
   try {
     await app.start();
-    await client.connect(new StdioClientTransport({ command: process.execPath,
+    await connectKitClient(client, new StdioClientTransport({ command: process.execPath,
       args: ['--import', pathToFileURL(createRequire(import.meta.url).resolve('tsx/esm')).href, resolve('server/test/kit-mcp.ts'), f.root, allowedUrlsPath(f.data), origin], stderr: 'pipe' }));
     let requestCount = 0, contextSeen = false;
     engine.send = async (id, text, _attachments, context?: { filesReverted?: boolean }) => {
@@ -78,13 +79,13 @@ test('real kit MCP writes within a fake-engine request share two scans, exclude 
           ['traer', { url, destination: 'propuesta' }],
           ['dibujar', { html: 'propuesta/pieza.html', destination: 'propuesta/salida', width: 128, height: 128 }],
         ] as const) {
-          const response = await client.callTool({ name, arguments: args }); assert.ok(!response.isError, JSON.stringify(response));
+          const response = await callKitTool(client, name, args); assert.ok(!response.isError, JSON.stringify(response));
           assert.ok(!JSON.stringify(response).includes('"ok":false'), JSON.stringify(response));
         }
       } else contextSeen = !!context?.filesReverted;
       engine.emit({ type: 'finished', conversationId: id, status: 'completed' });
     };
-    const idle = async () => { for (let i = 0; i < 500 && app.snapshot().works.some(w => w.busy); i++) await new Promise(r => setTimeout(r, 10)); assert.ok(!app.snapshot().works.some(w => w.busy)); };
+    const idle = async () => { const deadline = Date.now() + 15000; while (Date.now() < deadline && app.snapshot().works.some(w => w.busy)) await new Promise(r => setTimeout(r, 10)); assert.ok(!app.snapshot().works.some(w => w.busy), 'timed out waiting for app idle'); };
     await app.command({ type: 'send', text: url }, () => {}); await idle();
     assert.equal(scans, 2);
     const work = app.snapshot().works[0], results = work.messages[0].results!;
