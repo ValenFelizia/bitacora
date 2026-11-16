@@ -525,3 +525,90 @@ test("generic files become local images and named relative document mentions", a
     assert.equal(records.filter(m => m.method === 'turn/start').at(-1).params.input[0].text, 'Texto de la usuaria');
   } finally { await f.close(); }
 });
+
+test("every thread and turn is started with the read-restricting profile", async () => {
+  const f = await fixture();
+  try {
+    await f.engine.createWork();
+    await f.engine.send("thread-1", "race");
+    const records = await f.records();
+    const thread = records.find((m) => m.method === "thread/start");
+    assert.equal(thread.params.permissions, "agencia");
+    assert.equal(thread.params.sandbox, undefined);
+    const turn = records.find((m) => m.method === "turn/start");
+    assert.equal(turn.params.permissions, "agencia");
+    // The profile and a sandbox policy cannot be combined: the engine refuses
+    // the request instead of silently dropping the profile.
+    assert.equal(turn.params.sandboxPolicy, undefined);
+    assert.equal(records.filter((m) => m.method === "initialize")[0].params.capabilities.experimentalApi, true);
+  } finally { await f.close(); }
+});
+
+for (const refusal of ["missing", "denied", "error"] as const) {
+  test(`a refused permissions profile blocks work instead of reading the whole disk: ${refusal}`, async () => {
+    process.env.BITACORA_FAKE_PROFILE = refusal;
+    const f = await fixture();
+    try {
+      assert.equal(f.engine.executionSafety().allowed, false);
+      assert.equal(f.engine.executionSafety().issue, "readBlock");
+      assert.equal(f.engine.executionSafety().status, "failed");
+      assert.match(f.engine.executionSafety().detail, /permissionProfile\/list/);
+      await assert.rejects(f.engine.send("thread-1", "race"));
+      assert.equal((await f.records()).filter((m) => m.method === "turn/start").length, 0);
+      // Retrying asks the engine again instead of starting an administrative
+      // setup the user did not ask for.
+      await f.engine.prepareProtection();
+      assert.equal(f.engine.executionSafety().issue, "readBlock");
+      assert.equal((await f.records()).filter((m) => m.method === "windowsSandbox/setupStart").length, 0);
+    } finally {
+      delete process.env.BITACORA_FAKE_PROFILE;
+      await f.close();
+    }
+  });
+}
+
+test("a thread that did not take the profile is refused before any turn", async () => {
+  process.env.BITACORA_FAKE_THREAD_PROFILE = "none";
+  const f = await fixture();
+  try {
+    assert.equal(f.engine.executionSafety().allowed, true);
+    await assert.rejects(f.engine.createWork(), /permissions=none instead of agencia/);
+    // The engine turned execution off: the app can no longer send anything.
+    assert.equal(f.engine.executionSafety().allowed, false);
+    assert.equal(f.engine.executionSafety().issue, "readBlock");
+    await assert.rejects(f.engine.send("thread-1", "race"));
+    assert.equal((await f.records()).filter((m) => m.method === "turn/start").length, 0);
+  } finally {
+    delete process.env.BITACORA_FAKE_THREAD_PROFILE;
+    await f.close();
+  }
+});
+
+test("resuming an old work without the profile is refused too", async () => {
+  process.env.BITACORA_FAKE_THREAD_PROFILE = "other";
+  const f = await fixture();
+  try {
+    await assert.rejects(f.engine.resumeWork("thread-1"), /permissions=:workspace instead of agencia/);
+    assert.equal(f.engine.executionSafety().allowed, false);
+    assert.equal(f.engine.executionSafety().issue, "readBlock");
+  } finally {
+    delete process.env.BITACORA_FAKE_THREAD_PROFILE;
+    await f.close();
+  }
+});
+
+test("resuming a work that does not report a profile is not a refusal", async () => {
+  // `thread/resume` reports the profile only "when known"; the turn still sends
+  // it, so a missing value must not block continuing an older work.
+  process.env.BITACORA_FAKE_THREAD_PROFILE = "none";
+  const f = await fixture();
+  try {
+    await f.engine.resumeWork("thread-1");
+    assert.equal(f.engine.executionSafety().allowed, true);
+    await f.engine.send("thread-1", "race");
+    assert.equal((await f.records()).filter((m) => m.method === "turn/start")[0].params.permissions, "agencia");
+  } finally {
+    delete process.env.BITACORA_FAKE_THREAD_PROFILE;
+    await f.close();
+  }
+});

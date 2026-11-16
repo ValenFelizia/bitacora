@@ -14,6 +14,15 @@ let crashScheduled = false;
 if (process.env.BITACORA_FAKE_PID)
   appendFileSync(process.env.BITACORA_FAKE_PID, `${process.pid}\n`);
 const turn = (status = "inProgress") => ({ id: "turn-1", status, error: null });
+// The profile a thread reports back. `BITACORA_FAKE_THREAD_PROFILE=none` is an
+// engine that ignored the request and would run with the default profile;
+// `other` is an engine that reports a different profile.
+const activeProfile = () => {
+  const reported = process.env.BITACORA_FAKE_THREAD_PROFILE;
+  if (reported === "none") return null;
+  if (reported === "other") return { id: ":workspace", extends: null };
+  return { id: "agencia", extends: ":workspace" };
+};
 createInterface({ input: process.stdin })
   .on("line", (line) => {
     const m = JSON.parse(line);
@@ -35,6 +44,16 @@ createInterface({ input: process.stdin })
         if (process.env.BITACORA_FAKE_READ_FAIL) { send({ id: m.id, error: { message: "read failed" } }); break; }
         reply({ status: configuredMode ? "ready" : process.env.BITACORA_FAKE_SAFETY || "ready" });
         break;
+      case "permissionProfile/list": {
+        // The read-restricting profile the app sends on every turn. A fake that
+        // refuses it must never be trusted to run work.
+        const refusal = process.env.BITACORA_FAKE_PROFILE;
+        if (refusal === "error") { send({ id: m.id, error: { code: -32601, message: "method not found" } }); break; }
+        const data = [{ id: ":workspace", description: null, allowed: true }];
+        if (refusal !== "missing") data.push({ id: "agencia", description: null, allowed: refusal !== "denied" });
+        reply({ data, nextCursor: null });
+        break;
+      }
       case "config/read":
         reply({ config: { windows: { sandbox: configuredMode || (process.env.BITACORA_FAKE_MODE || (process.env.BITACORA_FAKE_SAFETY ? null : "elevated")) } } });
         break;
@@ -73,10 +92,10 @@ createInterface({ input: process.stdin })
         setTimeout(() => reply({}), Number(process.env.BITACORA_FAKE_LOGIN_CANCEL_DELAY || 0));
         break;
       case "thread/start":
-        reply({ thread: { id: threadId } });
+        reply({ thread: { id: threadId }, activePermissionProfile: activeProfile() });
         break;
       case "thread/resume":
-        reply({ thread: { id: threadId } });
+        reply({ thread: { id: threadId }, activePermissionProfile: activeProfile() });
         break;
       case "turn/interrupt":
         if (interruptRejects) send({ id: m.id, error: { message: "interrupt refused" } });
