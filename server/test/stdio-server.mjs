@@ -9,6 +9,7 @@ let configuredMode = existsSync(setupFile) ? readFileSync(setupFile, "utf8") : n
 const threadId = "thread-1";
 let interrupts = 0;
 let interruptHangs = false;
+let interruptRejects = false;
 let crashScheduled = false;
 if (process.env.BITACORA_FAKE_PID)
   appendFileSync(process.env.BITACORA_FAKE_PID, `${process.pid}\n`);
@@ -78,7 +79,8 @@ createInterface({ input: process.stdin })
         reply({ thread: { id: threadId } });
         break;
       case "turn/interrupt":
-        if (++interrupts > 1) send({ id: m.id, error: { message: "already interrupted" } });
+        if (interruptRejects) send({ id: m.id, error: { message: "interrupt refused" } });
+        else if (++interrupts > 1) send({ id: m.id, error: { message: "already interrupted" } });
         else {
           reply({});
           if (!interruptHangs) setTimeout(() => notify("turn/completed", { threadId, turn: turn("interrupted") }), 140);
@@ -166,6 +168,12 @@ createInterface({ input: process.stdin })
           interruptHangs = true;
           notify("turn/started", { threadId, turn: turn() });
           reply({ turn: turn() });
+          break;
+        }
+        if (scenario === "pause-refused") {
+          // The reply comes late, with the turn running, and the pause fails.
+          interruptRejects = true;
+          setTimeout(() => reply({ turn: turn() }), 80);
           break;
         }
         if (scenario === "spawn-child") {

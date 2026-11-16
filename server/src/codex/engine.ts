@@ -920,7 +920,10 @@ export class CodexEngine implements Engine {
       }, state);
       if (!state.completed && this.available && (!turn || turn.status === "inProgress")) {
         if (turn) this.turns.set(conversationId, turn.id);
-        if (state.interrupt) await this.interrupt(conversationId);
+        // A refused pause must not reject send(): the app would scan and release
+        // the work while the turn still runs. The pause deadline stops it.
+        if (state.interrupt)
+          await this.interrupt(conversationId).catch(error => this.emit({ type: "detail", conversationId, text: String(error) }));
       }
     } finally {
       this.starting.delete(conversationId);

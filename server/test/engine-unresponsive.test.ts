@@ -168,6 +168,25 @@ test("a pause requested before the turn starts still has a deadline", async () =
   }
 });
 
+test("a failed pause on a turn still starting keeps the work until the tree stops", async () => {
+  const f = await fixture({ turnStartTimeoutMs: 30_000, pauseTimeoutMs: 400 });
+  const { app } = await application(f);
+  try {
+    await app.start();
+    const sending = app.command({ type: "send", text: "pause-refused" }, () => {});
+    await until(() => app.snapshot().works[0]?.busy === true);
+    await app.command({ type: "interrupt", workId: app.snapshot().works[0].id }, () => {});
+    // The turn is running and refused the pause: the app must not scan and
+    // release the work while it may still write, only after the deadline.
+    await sending;
+    assert.equal(app.snapshot().works[0].busy, true);
+    await until(() => !app.snapshot().works[0].busy);
+    assert.match(app.snapshot().works[0].problem!, /El motor no respondió y lo reinicié/);
+  } finally {
+    try { await app.close(); } finally { await f.close(); }
+  }
+});
+
 test("a pause after the turn ended does not stop the engine", async () => {
   // The turn completed before its reply: `starting` is still there but nothing
   // is running, so the pause must not arm a deadline.
