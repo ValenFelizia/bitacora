@@ -11,7 +11,7 @@ import { problemText, EngineFailure, activityText } from "./engine";
 import { fallbackTitle, MAX_TITLE } from "./titles";
 import type { FileRef, Message, Work, Snapshot, ClientCommand, ServerMessage } from "./contracts";
 
-type SavedWork = Work & { conversationId: string; titlePending?: boolean; pendingFiles?: { messageId: string; before?: Record<string, string> } };
+type SavedWork = Work & { conversationId: string; titlePending?: boolean; renamedByUser?: boolean; pendingFiles?: { messageId: string; before?: Record<string, string> } };
 const isText = (value: unknown) => typeof value === "string";
 const isFileRef = (value: unknown) => {
   const file = value as Partial<FileRef> | null;
@@ -30,6 +30,7 @@ const isSavedWork = (value: unknown) => {
     (work.problem === undefined || isText(work.problem)) &&
     (work.busy === undefined || typeof work.busy === "boolean") &&
     (work.titlePending === undefined || typeof work.titlePending === "boolean") &&
+    (work.renamedByUser === undefined || typeof work.renamedByUser === "boolean") &&
     Array.isArray(work.messages) && work.messages.every(isMessage) &&
     (work.pendingFiles === undefined || (!!work.pendingFiles && isText(work.pendingFiles.messageId)));
 };
@@ -81,8 +82,11 @@ export class App {
       this.backupReceipt = typeof saved.backupReceipt === "string" ? saved.backupReceipt : undefined;
       // A work whose first request was paused or failed before it could be
       // titled stays pending across restarts, so its next finished request
-      // still names it.
-      for (const work of this.works) if (work.titlePending) this.titlePending.add(work.id);
+      // still names it. A name the user chose is final across restarts too.
+      for (const work of this.works) {
+        if (work.titlePending) this.titlePending.add(work.id);
+        if (work.renamedByUser) this.renamed.add(work.id);
+      }
       for (const work of this.works)
         if (work.busy) {
           work.busy = false;
@@ -130,7 +134,7 @@ export class App {
       notice: this.notice,
       undo: !this.submitting && !this.works.some(w => w.busy) ? this.backups?.target : undefined,
       fileRevision: this.fileRevision,
-      works: this.works.map(({ conversationId: _, pendingFiles: __, titlePending: ___, ...work }) => work),
+      works: this.works.map(({ conversationId: _, pendingFiles: __, titlePending: ___, renamedByUser: ____, ...work }) => work),
     };
   }
   private async renameWithRetry(source: string, target: string) {
@@ -409,9 +413,11 @@ export class App {
         return;
       }
       work.title = title;
-      // A chosen name is final: no automatic title replaces it later.
+      // A chosen name is final: no automatic title replaces it later, not even
+      // one the engine reports after a restart.
       this.titlePending.delete(work.id);
       delete work.titlePending;
+      work.renamedByUser = true;
       this.renamed.add(work.id);
       this.changed();
       try { await this.engine.renameWork(work.conversationId, title); }

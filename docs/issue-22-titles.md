@@ -50,7 +50,9 @@ Título automático: 1200 de entrada (1000 en caché), 12 de salida.
 El encabezado del trabajo tiene «Cambiar el nombre». El nombre elegido gana
 sobre el automático (aunque la respuesta llegue después, y aunque sea el mismo
 nombre provisorio), se guarda en `works.json` y se manda al motor con
-`thread/name/set`. Se aceptan hasta 60 letras; un nombre vacío o más largo se
+`thread/name/set`. La elección queda marcada con el trabajo (`renamedByUser`),
+así que sobrevive a cerrar y abrir la app y ningún nombre que informe el motor
+después la reemplaza. Se aceptan hasta 60 letras; un nombre vacío o más largo se
 rechaza con un aviso en castellano. Mientras la app se está reconectando, el
 botón de guardar queda apagado y el formulario sigue abierto para no perder lo
 escrito.

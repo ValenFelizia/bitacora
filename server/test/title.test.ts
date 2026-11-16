@@ -132,6 +132,27 @@ test("saving the temporary name while the sample is in flight keeps it", async (
   }
 });
 
+test("a name the user chose survives a restart and later engine titles", async () => {
+  const f = await appFixture();
+  try {
+    await f.app.command({ type: "send", text: "Armame una propuesta" }, f.reply);
+    const id = f.app.snapshot().works[0].id;
+    await f.app.command({ type: "rename", workId: id, title: "Brasil, febrero" }, f.reply);
+    await f.app.close();
+    const engine = new FakeEngine();
+    const restarted = new App(engine, f.dir, f.reply);
+    await restarted.start();
+    // The engine can still report a name of its own after a restart; the one
+    // the user chose is the one that stays.
+    engine.emit({ type: "title", conversationId: "conversation-1", title: "Porto de Galinhas, febrero" });
+    assert.equal(restarted.snapshot().works[0].title, "Brasil, febrero");
+    await restarted.close();
+  } finally {
+    await f.app.close();
+    await rm(f.dir, { recursive: true });
+  }
+});
+
 test("a name the user chooses wins over the automatic one", async () => {
   const f = await appFixture();
   try {
