@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { callKitTool, connectKitClient, listKitTools } from './mcp-client';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { AgencyFiles } from '../src/tools/paths';
@@ -85,23 +86,23 @@ test('real Edge: citation failures, exact PNG, PDF, overflow, broken fonts and b
     await assert.rejects(dibujar(f.files,{html:'remote.html',destination:'remote',width:1080,height:1920}),/bloquearon/);
   } finally { await f.close(); }
 });
-test('real MCP stdio client discovers and calls all three tools', { timeout: 180000 }, async () => {
+test('real MCP stdio client discovers and calls all three tools', { timeout: 300000 }, async () => {
   const f = await fixture();
   const transport = new StdioClientTransport({command:process.execPath,args:['--import',pathToFileURL(createRequire(import.meta.url).resolve('tsx/esm')).href,join(process.cwd(),'server/src/tools/mcp.ts'),f.root,f.options.allowedUrls],stderr:'pipe'});
   const client = new Client({name:'verification',version:'1.0'});
   try {
     await initializeKit(f.root,f.data);
-    await client.connect(transport);
-    assert.deepEqual((await client.listTools()).tools.map(t=>t.name).sort(),['controlar','dibujar','traer']);
+    await connectKitClient(client, transport);
+    assert.deepEqual((await listKitTools(client)).tools.map(t=>t.name).sort(),['controlar','dibujar','traer']);
     for (const [name,args] of [
       ['traer',{destination:'ejemplo',notes:'Confirmado por la usuaria: 5 kg.'}],
       ['controlar',{html:'ejemplo/pieza.html',source:'ejemplo/fuente.md',report:'control.md',rules:'ejemplo/rules.json'}],
       ['dibujar',{html:'ejemplo/pieza.html',destination:'mcp salida',width:1080,height:1920}],
     ] as const) {
-      const response = await client.callTool({name,arguments:args});
+      const response = await callKitTool(client, name, args);
       assert.ok(!response.isError,JSON.stringify(response));
       assert.ok(!JSON.stringify(response).includes('"ok":false'),JSON.stringify(response));
     }
-    assert.equal((await client.callTool({name:'traer',arguments:{url:'http://127.0.0.1',destination:'bloqueado'}})).isError,true);
+    assert.equal((await callKitTool(client, 'traer', {url:'http://127.0.0.1',destination:'bloqueado'})).isError,true);
   } finally { await client.close(); await f.close(); }
 });

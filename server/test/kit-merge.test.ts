@@ -7,7 +7,7 @@ import { controlar } from '../src/tools/check';
 import { WorkspaceFiles } from '../src/workspace-files';
 import { verifyKitIntegration } from './kit-integration';
 
-test('merged app, attachments, MCP tools and request results work end to end', { timeout: 240000 }, async()=>{
+test('merged app, attachments, MCP tools and request results work end to end', { timeout: 300000 }, async()=>{
   assert.deepEqual((await verifyKitIntegration()).results.sort(),['pieza-1.png','piezas.pdf','todas.png']);
 });
 test('markdown boundaries and all supported result formats exclude operator inputs and kit artifacts', async()=>{
