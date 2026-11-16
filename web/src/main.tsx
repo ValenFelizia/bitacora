@@ -45,6 +45,9 @@ function App() {
   const [selected, setSelected] = useState<string>();
   const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState("");
+  // The name sent but not yet confirmed by the server: the form stays open
+  // until the work shows it, or until a problem says it was not saved.
+  const [savingName, setSavingName] = useState<string>();
   const [text, setText] = useState("");
   const [online, setOnline] = useState(false);
   const [pending, setPending] = useState(false);
@@ -110,6 +113,8 @@ function App() {
         if (message.type === "problem") {
           setProblem(message);
           setPending(false);
+          // A rename that was refused keeps its form open with the message.
+          setSavingName(undefined);
         }
         if (message.type === "login") {
           setLogin(message.url);
@@ -133,6 +138,13 @@ function App() {
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: "end" });
   }, [selected, work?.messages.length, work?.messages.at(-1)?.text]);
+  useEffect(() => {
+    // The form closes only when the server's snapshot shows the saved name.
+    if (savingName && work?.title === savingName && name.trim() === savingName) {
+      setRenaming(false);
+      setSavingName(undefined);
+    }
+  }, [savingName, work?.title, name]);
   function send(command: ClientCommand) {
     if (socket.current?.readyState !== WebSocket.OPEN) return;
     setProblem(undefined);
@@ -327,9 +339,9 @@ function App() {
                 const title = name.trim();
                 // While reconnecting nothing is sent: the form stays open so
                 // the typed name is not lost.
-                if (!title || !online) return;
+                if (!title || !online || savingName) return;
+                setSavingName(title);
                 send({ type: "rename", workId: work.id, title });
-                setRenaming(false);
               }}
             >
               <label className="sr-only" htmlFor="work-name">Nombre del trabajo</label>
@@ -342,7 +354,7 @@ function App() {
                 onKeyDown={(e) => { if (e.key === "Escape") setRenaming(false); }}
                 className="min-w-0 flex-1 rounded-lg border border-[#c6d0c9] bg-[#fffefa] px-3 py-2 text-sm focus-visible:outline-3 focus-visible:outline-[#94733c] focus-visible:outline-offset-3"
               />
-              <button className={buttonPrimary} type="submit" disabled={!name.trim() || !online}>Guardar</button>
+              <button className={buttonPrimary} type="submit" disabled={!name.trim() || !online || !!savingName}>{savingName ? "Guardando…" : "Guardar"}</button>
               <button className={buttonSecondary} type="button" onClick={() => setRenaming(false)}>Cancelar</button>
             </form>
           ) : (
@@ -351,7 +363,7 @@ function App() {
               {!gallery && work && (
                 <button
                   className="shrink-0 cursor-pointer rounded-md border border-[#c6d0c9] px-2 py-1 text-xs text-[#4b6556] hover:bg-[#e4ebe5] focus-visible:outline-3 focus-visible:outline-[#94733c] focus-visible:outline-offset-3"
-                  onClick={() => { setName(work.title); setRenaming(true); }}
+                  onClick={() => { setName(work.title); setSavingName(undefined); setRenaming(true); }}
                 >
                   Cambiar el nombre
                 </button>
