@@ -55,15 +55,44 @@ Salida: [read-block-tests.txt](read-block-tests.txt).
 ## Cómo se comprueba que el perfil se puede aplicar
 
 Que el perfil figure en `permissionProfile/list` no alcanza: dice que existe, no
-que esta compu pueda correrlo. Por eso la app corre un comando inofensivo con el
-perfil (`cmd /d /c echo BITACORA_PROFILE_OK` por `command/exec`) antes de
-habilitar pedidos. Si falla, no trabaja y lo dice.
+que esta compu pueda correrlo. Por eso, en una compu con MXC, la app corre un
+comando inofensivo con el perfil (`cmd /d /c echo BITACORA_PROFILE_OK` por
+`command/exec`) antes de habilitar pedidos. Si falla, no trabaja y lo dice.
 
 Con `windows.sandbox=elevated` ese comando falla con
 `elevated Windows sandbox requires effective `:root` read access`: el backend
 "elevated" no acepta un perfil que niegue la lectura de `:root`. En esta compu
 además `windowsSandbox/readiness` para `elevated` da `updateRequired`, así que
 ese backend no se pudo probar sin el setup con permisos de administrador.
+
+## Qué pasa en una compu sin MXC
+
+Decisión de la dueña (2026-11-16, DEC-010): en una compu sin MXC la app trabaja
+con la protección de escritura anterior y avisa, en vez de negarse a trabajar.
+
+- El modo lo decide la comprobación de arranque: `windows.sandbox=elevated` con
+  `windowsSandbox/readiness=ready` es el modo sin MXC; `windows.sandbox=mxc` con
+  el sondeo de MXC en verde es el modo con perfil.
+- En el modo sin MXC el app-server no arranca con el perfil: los argumentos `-c`
+  no llevan `default_permissions` ni `permissions.agencia`, porque el backend
+  "elevated" rechaza ese perfil y, al ser el default, todo comando fallaría. Si
+  el proceso se abrió con el perfil, el motor lo detiene y lo vuelve a abrir sin
+  él antes de habilitar pedidos.
+- Cada `thread/start` y `thread/resume` manda `sandbox: "workspace-write"` y cada
+  `turn/start` manda `sandboxPolicy` workspaceWrite con `writableRoots` la
+  carpeta, `networkAccess: false`, `excludeTmpdirEnvVar: true` y
+  `excludeSlashTmp: true`: lo mismo que antes del issue #19.
+- `executionSafety()` queda `allowed: true`, `status: "ready"` y
+  `readBlock: false`, y la UI muestra el aviso: «En esta compu no puedo impedir
+  que el agente lea archivos fuera de tu carpeta. Igual no puede cambiarlos ni
+  borrarlos.»
+- En una compu con MXC no cambia nada: el perfil es obligatorio y, si no se
+  puede aplicar, la app no trabaja.
+
+La prueba de arena real cubre ese arranque: con `windows.sandbox=elevated`
+guardado y el sondeo de MXC en falso, el motor reinicia el app-server sin el
+perfil y llega a la comprobación. En esta compu pide el setup de Windows; en una
+donde `elevated` esté listo, arranca el trabajo con la protección de escritura.
 
 ## Límites verificados
 
