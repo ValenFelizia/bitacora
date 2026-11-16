@@ -54,6 +54,13 @@ createInterface({ input: process.stdin })
         reply({ data, nextCursor: null });
         break;
       }
+      case "command/exec":
+        // The app runs one harmless command under the profile to know whether
+        // this machine can really use it.
+        if (process.env.BITACORA_FAKE_PROFILE_EXEC === "refuse")
+          send({ id: m.id, error: { code: -32603, message: "exec failed: windows sandbox: elevated Windows sandbox requires effective `:root` read access" } });
+        else reply({ exitCode: 0, stdout: "BITACORA_PROFILE_OK\r\n", stderr: "" });
+        break;
       case "config/read":
         reply({ config: { windows: { sandbox: configuredMode || (process.env.BITACORA_FAKE_MODE || (process.env.BITACORA_FAKE_SAFETY ? null : "elevated")) } } });
         break;

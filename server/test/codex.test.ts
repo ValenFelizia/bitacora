@@ -541,7 +541,28 @@ test("every thread and turn is started with the read-restricting profile", async
     // the request instead of silently dropping the profile.
     assert.equal(turn.params.sandboxPolicy, undefined);
     assert.equal(records.filter((m) => m.method === "initialize")[0].params.capabilities.experimentalApi, true);
+    // One harmless command proves the machine can run the profile before the
+    // app lets the user work.
+    const probe = records.find((m) => m.method === "command/exec");
+    assert.equal(probe.params.permissionProfile, "agencia");
+    assert.equal(probe.params.sandboxPolicy, undefined);
   } finally { await f.close(); }
+});
+
+test("a machine that cannot run the profile blocks work instead of reading the whole disk", async () => {
+  // The elevated Windows backend refuses a profile that denies `:root` read.
+  process.env.BITACORA_FAKE_PROFILE_EXEC = "refuse";
+  const f = await fixture();
+  try {
+    assert.equal(f.engine.executionSafety().allowed, false);
+    assert.equal(f.engine.executionSafety().issue, "readBlock");
+    assert.match(f.engine.executionSafety().detail, /requires effective `:root` read access/);
+    await assert.rejects(f.engine.send("thread-1", "race"));
+    assert.equal((await f.records()).filter((m) => m.method === "turn/start").length, 0);
+  } finally {
+    delete process.env.BITACORA_FAKE_PROFILE_EXEC;
+    await f.close();
+  }
 });
 
 for (const refusal of ["missing", "denied", "error"] as const) {

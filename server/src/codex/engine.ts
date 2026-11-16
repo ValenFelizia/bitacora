@@ -21,6 +21,7 @@ import type { ThreadResumeResponse } from "./generated/v2/ThreadResumeResponse";
 import type { Turn } from "./generated/v2/Turn";
 import type { TurnStartResponse } from "./generated/v2/TurnStartResponse";
 import type { ConfigReadResponse } from "./generated/v2/ConfigReadResponse";
+import type { CommandExecResponse } from "./generated/v2/CommandExecResponse";
 import type { PermissionProfileListResponse } from "./generated/v2/PermissionProfileListResponse";
 import type { WindowsSandboxReadinessResponse } from "./generated/v2/WindowsSandboxReadinessResponse";
 
@@ -49,6 +50,7 @@ type Responses = {
   initialize: unknown;
   "windowsSandbox/readiness": WindowsSandboxReadinessResponse;
   "permissionProfile/list": PermissionProfileListResponse;
+  "command/exec": CommandExecResponse;
   "config/read": ConfigReadResponse;
   "config/value/write": unknown;
   "windowsSandbox/setupStart": { started: boolean };
@@ -358,7 +360,7 @@ export class CodexEngine implements Engine {
       const detail = `windowsSandbox/readiness=${readiness.status}; windows.sandbox=${mode || "disabled"}; permissions=${PERMISSIONS_PROFILE}`;
       const mxc = mode === "elevated" && readiness.status === "ready" ? undefined : await this.probeMxc();
       if (readiness.status === "ready" && (mode === "elevated" || (mode === "mxc" && mxc))) {
-        const refusal = await this.readPermissions();
+        const refusal = await this.checkPermissions();
         if (refusal) {
           // The folder is protected for writes but the agent could still read
           // every file on the computer: say so instead of working anyway.
@@ -376,20 +378,36 @@ export class CodexEngine implements Engine {
     }
   }
   /**
-   * Asks the running app-server whether the read-restricting profile exists and
-   * may be used. Returns why it cannot be applied, or undefined when it can.
-   * An app-server that does not know the profile or the call is a refusal: the
-   * app must not fall back to a profile that reads the whole computer.
+   * Asks the running app-server whether the read-restricting profile can really
+   * be used. Returns why it cannot, or undefined when it can.
+   *
+   * The profile list alone is not enough: it says the profile exists, not that
+   * this machine can run it. The elevated Windows backend refuses a profile
+   * that denies `:root` read, and a machine without the native sandbox cannot
+   * run it at all. One harmless command under the profile answers both, and an
+   * app-server that does not know the call is a refusal too: the app never
+   * falls back to a profile that reads the whole computer.
    */
-  private async readPermissions(): Promise<string | undefined> {
+  private async checkPermissions(): Promise<string | undefined> {
     try {
       const { data } = await this.rpc("permissionProfile/list", { cwd: this.options.workspace });
       const profile = data.find((p) => p.id === PERMISSIONS_PROFILE);
       if (!profile) return `permissionProfile/list does not offer ${PERMISSIONS_PROFILE}`;
       if (!profile.allowed) return `permissionProfile/list does not allow ${PERMISSIONS_PROFILE}`;
-      return undefined;
     } catch (error) {
       return `permissionProfile/list failed: ${String(error)}`;
+    }
+    try {
+      const { exitCode, stdout, stderr } = await this.rpc("command/exec", {
+        command: [join(process.env.SystemRoot || "C:\\Windows", "System32", "cmd.exe"), "/d", "/c", "echo BITACORA_PROFILE_OK"],
+        cwd: this.options.workspace,
+        permissionProfile: PERMISSIONS_PROFILE,
+        timeoutMs: 15000,
+      });
+      if (exitCode === 0 && stdout.includes("BITACORA_PROFILE_OK")) return undefined;
+      return `command/exec under ${PERMISSIONS_PROFILE} exited ${exitCode}: ${stderr.slice(0, 400)}`;
+    } catch (error) {
+      return `command/exec under ${PERMISSIONS_PROFILE} failed: ${String(error)}`;
     }
   }
   async prepareProtection() {
