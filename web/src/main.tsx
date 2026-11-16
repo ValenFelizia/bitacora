@@ -68,6 +68,7 @@ function App() {
   const [gallery, setGallery] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [deliverablesOpen, setDeliverablesOpen] = useState(false);
+  const [focusedMessageId, setFocusedMessageId] = useState<string>();
   const [preview, setPreview] = useState<{ file: FileRef; list: FileRef[] }>();
   const [attachments, setAttachments] = useState<Upload[]>([]);
   const [readingFiles, setReadingFiles] = useState(false);
@@ -76,6 +77,11 @@ function App() {
   const draftGeneration = useRef(0);
   const fileInput = useRef<HTMLInputElement>(null);
   const composerInput = useRef<HTMLTextAreaElement>(null);
+  const navToggleRef = useRef<HTMLButtonElement>(null);
+  const navCloseRef = useRef<HTMLButtonElement>(null);
+  const deliverablesToggleRef = useRef<HTMLButtonElement>(null);
+  const deliverablesCloseRef = useRef<HTMLButtonElement>(null);
+  const reconnectRef = useRef<() => void>(() => {});
   const [selected, setSelected] = useState<string>();
   const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState("");
@@ -175,6 +181,19 @@ function App() {
         if (!disposed) timer = setTimeout(connect, 1500);
       };
     }
+    reconnectRef.current = () => {
+      clearTimeout(timer);
+      const prev = socket.current;
+      if (prev && prev.readyState !== WebSocket.OPEN) {
+        prev.onclose = null;
+        try {
+          prev.close();
+        } catch {
+          // Ignore close error
+        }
+      }
+      if (!disposed && socket.current?.readyState !== WebSocket.OPEN) connect();
+    };
     connect();
     return () => {
       disposed = true;
@@ -182,6 +201,44 @@ function App() {
       socket.current?.close();
     };
   }, []);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 960px)");
+    const onChange = (e: MediaQueryListEvent) => {
+      if (e.matches) {
+        setNavOpen(false);
+        setDeliverablesOpen(false);
+        setFocusedMessageId(undefined);
+      }
+    };
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+
+  useEffect(() => {
+    if (navOpen) navCloseRef.current?.focus();
+  }, [navOpen]);
+
+  useEffect(() => {
+    if (deliverablesOpen) deliverablesCloseRef.current?.focus();
+  }, [deliverablesOpen]);
+
+  useEffect(() => {
+    if (!navOpen && !deliverablesOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (navOpen) {
+        setNavOpen(false);
+        navToggleRef.current?.focus();
+      } else if (deliverablesOpen) {
+        setDeliverablesOpen(false);
+        setFocusedMessageId(undefined);
+        deliverablesToggleRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [navOpen, deliverablesOpen]);
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: "end" });
@@ -322,6 +379,9 @@ function App() {
       )
     : -1;
 
+  const isPausedProgress = work?.progress === "Trabajo pausado.";
+  const isDoneProgress = work?.progress === "Listo.";
+
   const progressBlock = work && (work.busy || work.progress) && (
     <div
       className="grid grid-cols-[48px_20px_minmax(0,1fr)] gap-y-[7px] items-center text-[14px] text-muted"
@@ -347,22 +407,31 @@ function App() {
           <time className="text-[13px] tabular-nums">
             {formatTime(work.updatedAt)}
           </time>
-          {work.progress === "Listo." ? (
+          {isDoneProgress ? (
             <Check
               size={18}
               strokeWidth={1.75}
               className="text-ok"
               aria-hidden="true"
             />
-          ) : (
+          ) : isPausedProgress ? (
             <AlertCircle
               size={18}
               strokeWidth={1.75}
               className="text-muted"
               aria-hidden="true"
             />
+          ) : (
+            <AlertCircle
+              size={18}
+              strokeWidth={1.75}
+              className="text-danger"
+              aria-hidden="true"
+            />
           )}
-          <span>{work.progress}</span>
+          <span className={!isDoneProgress && !isPausedProgress ? "text-danger" : undefined}>
+            {work.progress}
+          </span>
         </>
       )}
     </div>
@@ -373,6 +442,31 @@ function App() {
     state.engine.available &&
     state.engine.safety.allowed &&
     state.account.connected;
+
+  const showCenterNotConnected =
+    !gallery &&
+    !work &&
+    online &&
+    state.engine.available &&
+    state.engine.safety.allowed &&
+    !state.account.connected;
+
+  const showSidebarNotConnected =
+    online &&
+    state.engine.available &&
+    !state.account.connected &&
+    !showCenterNotConnected;
+
+  function closeNavDrawer(restoreFocus = false) {
+    setNavOpen(false);
+    if (restoreFocus) navToggleRef.current?.focus();
+  }
+
+  function closeDeliverablesDrawer(restoreFocus = false) {
+    setDeliverablesOpen(false);
+    setFocusedMessageId(undefined);
+    if (restoreFocus) deliverablesToggleRef.current?.focus();
+  }
 
   return (
     <div
@@ -386,8 +480,8 @@ function App() {
         <div
           className="fixed inset-0 z-30 bg-ink/40 min-[960px]:hidden"
           onClick={() => {
-            setNavOpen(false);
-            setDeliverablesOpen(false);
+            if (navOpen) closeNavDrawer(true);
+            if (deliverablesOpen) closeDeliverablesDrawer(true);
           }}
         />
       )}
@@ -408,8 +502,9 @@ function App() {
             </em>
           </div>
           <button
+            ref={navCloseRef}
             type="button"
-            onClick={() => setNavOpen(false)}
+            onClick={() => closeNavDrawer(true)}
             className={`${iconButton} min-[960px]:hidden`}
             aria-label="Cerrar menú"
             title="Cerrar"
@@ -425,6 +520,7 @@ function App() {
             setGallery(false);
             setRenaming(false);
             setNavOpen(false);
+            setFocusedMessageId(undefined);
             draftGeneration.current++;
             setAttachments([]);
             setSelected(undefined);
@@ -448,6 +544,7 @@ function App() {
             setGallery(true);
             setRenaming(false);
             setNavOpen(false);
+            setFocusedMessageId(undefined);
           }}
         >
           <LayoutGrid size={18} strokeWidth={1.75} aria-hidden="true" />
@@ -476,6 +573,7 @@ function App() {
                       setGallery(false);
                       setRenaming(false);
                       setNavOpen(false);
+                      setFocusedMessageId(undefined);
                       setSelected(w.id);
                       setProblem(undefined);
                     }}
@@ -500,61 +598,62 @@ function App() {
           )}
         </nav>
 
-        <section
-          className="mt-auto border-t border-line pt-3 px-[10px] flex flex-col gap-2 text-[13px] text-muted"
-          aria-label="Cuenta de ChatGPT"
-        >
-          {!online ? (
-            <div className="flex items-center gap-2">
-              <WifiOff size={18} strokeWidth={1.75} className="shrink-0" aria-hidden="true" />
-              <span>Reconectando…</span>
-            </div>
-          ) : !state.engine.available ? (
-            <div className="flex items-center gap-2 text-danger">
-              <AlertCircle size={18} strokeWidth={1.75} className="shrink-0" aria-hidden="true" />
-              <span>Bitácora se detuvo</span>
-            </div>
-          ) : state.account.connected ? (
-            <div
-              className="flex items-center gap-2 min-w-0"
-              title={state.account.email || "Cuenta conectada"}
-            >
-              <Mail size={18} strokeWidth={1.75} className="shrink-0" aria-hidden="true" />
-              <span className="truncate">
-                {state.account.email || "Cuenta conectada"}
-              </span>
-            </div>
-          ) : (
-            <div className="flex flex-col gap-2">
-              <p>Para trabajar, conectá tu cuenta de ChatGPT.</p>
-              <button
-                type="button"
-                className={`${buttonBordered} self-start`}
-                disabled={!online || !state.engine.available}
-                onClick={startConnect}
+        {(!online || !state.engine.available || state.account.connected || showSidebarNotConnected) && (
+          <section
+            className="mt-auto border-t border-line pt-3 px-[10px] flex flex-col gap-2 text-[13px] text-muted"
+            aria-label="Cuenta de ChatGPT"
+          >
+            {!online ? (
+              <div className="flex items-center gap-2">
+                <WifiOff size={18} strokeWidth={1.75} className="shrink-0" aria-hidden="true" />
+                <span>Reconectando…</span>
+              </div>
+            ) : !state.engine.available ? (
+              <div className="flex items-center gap-2 text-danger">
+                <AlertCircle size={18} strokeWidth={1.75} className="shrink-0" aria-hidden="true" />
+                <span>Bitácora se detuvo</span>
+              </div>
+            ) : state.account.connected ? (
+              <div
+                className="flex items-center gap-2 min-w-0"
+                title={state.account.email || "Cuenta conectada"}
               >
-                <LogIn size={18} strokeWidth={1.75} aria-hidden="true" />
-                Conectar cuenta
-              </button>
-            </div>
-          )}
+                <Mail size={18} strokeWidth={1.75} className="shrink-0" aria-hidden="true" />
+                <span className="truncate">
+                  {state.account.email || "Cuenta conectada"}
+                </span>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2">
+                <p>Para trabajar, conectá tu cuenta de ChatGPT.</p>
+                <button
+                  type="button"
+                  className={`${buttonBordered} self-start`}
+                  onClick={startConnect}
+                >
+                  <LogIn size={18} strokeWidth={1.75} aria-hidden="true" />
+                  Conectar cuenta
+                </button>
+              </div>
+            )}
 
-          {login && (
-            <p className="text-[12px]">
-              <a
-                className={`text-ink font-bold underline decoration-accent decoration-2 underline-offset-4 ${focusRing}`}
-                href={login}
-                target="_blank"
-                rel="noreferrer"
-              >
-                Continuar en el navegador
-              </a>
-              <span className="block mt-1">
-                Cuando termines, volvé a esta ventana.
-              </span>
-            </p>
-          )}
-        </section>
+            {login && showSidebarNotConnected && (
+              <p className="text-[12px]">
+                <a
+                  className={`text-ink font-bold underline decoration-accent decoration-2 underline-offset-4 ${focusRing}`}
+                  href={login}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Continuar en el navegador
+                </a>
+                <span className="block mt-1">
+                  Cuando termines, volvé a esta ventana.
+                </span>
+              </p>
+            )}
+          </section>
+        )}
       </aside>
 
       {/* Center column: header, notices, conversation/gallery, composer */}
@@ -618,7 +717,9 @@ function App() {
             <>
               <div className="flex min-w-0 items-center gap-2.5">
                 <button
+                  ref={navToggleRef}
                   type="button"
+                  aria-expanded={navOpen}
                   onClick={() => setNavOpen(true)}
                   className={`${iconButton} min-[960px]:hidden shrink-0`}
                   title="Trabajos"
@@ -632,6 +733,35 @@ function App() {
               </div>
 
               <div className="flex items-center gap-1 shrink-0">
+                {!online ? (
+                  <button
+                    type="button"
+                    onClick={() => reconnectRef.current()}
+                    className={`${iconButton} min-[960px]:hidden`}
+                    title="Sin conexión. Reintentar conexión"
+                    aria-label="Sin conexión. Reintentar conexión"
+                  >
+                    <WifiOff size={18} strokeWidth={1.75} aria-hidden="true" />
+                  </button>
+                ) : !state.engine.available ? (
+                  <span
+                    className="w-[34px] h-[34px] inline-grid place-items-center text-danger min-[960px]:hidden"
+                    title="Bitácora se detuvo"
+                    aria-label="Bitácora se detuvo"
+                  >
+                    <AlertCircle size={18} strokeWidth={1.75} aria-hidden="true" />
+                  </span>
+                ) : !state.account.connected && !showCenterNotConnected ? (
+                  <button
+                    type="button"
+                    onClick={startConnect}
+                    className={`${iconButton} min-[960px]:hidden text-accent-ink`}
+                    title="Conectar cuenta"
+                    aria-label="Conectar cuenta"
+                  >
+                    <LogIn size={18} strokeWidth={1.75} aria-hidden="true" />
+                  </button>
+                ) : null}
                 {!gallery && work && (
                   <button
                     type="button"
@@ -649,8 +779,13 @@ function App() {
                 )}
                 {!gallery && (
                   <button
+                    ref={deliverablesToggleRef}
                     type="button"
-                    onClick={() => setDeliverablesOpen(true)}
+                    aria-expanded={deliverablesOpen}
+                    onClick={() => {
+                      setFocusedMessageId(undefined);
+                      setDeliverablesOpen(true);
+                    }}
                     className={`min-[960px]:hidden inline-flex items-center gap-1.5 px-2.5 h-[34px] rounded-[6px] border border-line bg-surface text-ink text-[13px] font-bold hover:bg-soft cursor-pointer ${focusRing}`}
                     title="Entregables"
                     aria-label="Abrir entregables"
@@ -675,14 +810,17 @@ function App() {
           >
             {state.undo && !busy && (
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="flex flex-1 items-center gap-2 text-ink min-w-0">
+                <p className="flex flex-1 items-start gap-2 text-ink min-w-0">
                   <RotateCcw
                     size={18}
                     strokeWidth={1.75}
-                    className="text-muted shrink-0"
+                    className="text-muted shrink-0 mt-0.5"
                     aria-hidden="true"
                   />
-                  <span className="truncate">
+                  <span
+                    className="line-clamp-2 [overflow-wrap:anywhere]"
+                    title={`Último pedido con cambios: ${state.undo.title} · «${state.undo.request}»`}
+                  >
                     Último pedido con cambios: {state.undo.title} · «
                     {state.undo.request}»
                   </span>
@@ -849,163 +987,45 @@ function App() {
                 <button
                   type="button"
                   className={buttonBordered}
-                  onClick={() => window.location.reload()}
+                  onClick={() => reconnectRef.current()}
                 >
                   Reintentar
                 </button>
               </section>
             )}
 
-            {/* Engine stopped / error state */}
-            {!gallery && online && !state.engine.available && (
-              <section className="rounded-[6px] border border-danger bg-surface p-5 flex flex-col items-start gap-3">
-                <span className="w-9 h-9 rounded-[6px] border border-line bg-paper grid place-items-center text-danger">
-                  <AlertCircle size={18} strokeWidth={1.75} aria-hidden="true" />
+            {/* Not connected empty state */}
+            {showCenterNotConnected && (
+              <section className="my-12 mx-auto max-w-[460px] w-full flex flex-col items-start gap-3">
+                <span className="w-9 h-9 rounded-[6px] border border-line bg-surface grid place-items-center text-ink">
+                  <Mail size={18} strokeWidth={1.75} aria-hidden="true" />
                 </span>
-                <p role="status" className="text-[15px] text-ink">
-                  {state.engine.exhausted
-                    ? "Bitácora se detuvo y no pudo volver a iniciarse."
-                    : "Bitácora se detuvo. Estoy intentando volver a iniciarla."}
+                <p className="text-[17px] leading-relaxed text-ink">
+                  Para trabajar, conectá tu cuenta de ChatGPT.
                 </p>
-                {state.engine.exhausted && (
-                  <button
-                    type="button"
-                    className={buttonBordered}
-                    onClick={() => send({ type: "retry" })}
-                  >
-                    Reintentar
-                  </button>
+                <button
+                  type="button"
+                  className={buttonBordered}
+                  onClick={startConnect}
+                >
+                  <LogIn size={18} strokeWidth={1.75} aria-hidden="true" />
+                  Conectar cuenta
+                </button>
+                {login && (
+                  <p className="text-[13px] text-muted">
+                    <a
+                      className={`text-ink font-bold underline decoration-accent decoration-2 underline-offset-4 ${focusRing}`}
+                      href={login}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Continuar en el navegador
+                    </a>{" "}
+                    Cuando termines, volvé a esta ventana.
+                  </p>
                 )}
               </section>
             )}
-
-            {/* Protection setup / failed state */}
-            {!gallery &&
-              online &&
-              state.engine.available &&
-              !state.engine.safety.allowed && (
-                state.engine.safety.status !== "failed" &&
-                !state.engine.safety.needsPermission ? (
-                  <div
-                    role="status"
-                    className="rounded-[6px] border border-line bg-surface p-5 flex items-center gap-3 text-[15px] text-ink"
-                  >
-                    <Shield
-                      size={18}
-                      strokeWidth={1.75}
-                      className="text-muted shrink-0"
-                      aria-hidden="true"
-                    />
-                    <span>Preparando la protección de tu carpeta…</span>
-                  </div>
-                ) : (
-                  <section
-                    aria-labelledby="protection-title"
-                    className="rounded-[6px] border border-line bg-surface p-5 flex flex-col items-start gap-3"
-                  >
-                    <span className="w-9 h-9 rounded-[6px] border border-line bg-paper grid place-items-center text-accent-ink">
-                      <ShieldAlert size={18} strokeWidth={1.75} aria-hidden="true" />
-                    </span>
-                    <h2
-                      id="protection-title"
-                      className="font-display text-[20px] font-normal text-ink"
-                    >
-                      {state.engine.safety.status === "failed"
-                        ? "No pude dejar todo listo"
-                        : "Antes de empezar"}
-                    </h2>
-                    {state.engine.safety.needsPermission && (
-                      <p className="text-[14px] text-muted">
-                        Para trabajar en tu carpeta sin cambiar tus otros
-                        archivos, Bitácora necesita preparar la protección de tu
-                        compu. Windows va a mostrar un cartel para permitir
-                        cambios. Tocá «Sí» si querés continuar.
-                      </p>
-                    )}
-                    <p role="status" className="text-[14px] text-ink">
-                      {protectionText(state.engine.safety)}
-                    </p>
-                    <button
-                      type="button"
-                      className={buttonBordered}
-                      disabled={state.engine.safety.status === "preparing"}
-                      onClick={() => send({ type: "prepareProtection" })}
-                    >
-                      {state.engine.safety.status === "preparing"
-                        ? "Preparando…"
-                        : state.engine.safety.status === "failed"
-                          ? "Reintentar"
-                          : "Preparar la protección"}
-                    </button>
-                  </section>
-                )
-              )}
-
-            {/* Safety detail toggle when engine unavailable or protection failed */}
-            {!gallery &&
-              online &&
-              (!state.engine.available ||
-                (!state.engine.safety.allowed &&
-                  (state.engine.safety.needsPermission ||
-                    state.engine.safety.status === "failed"))) &&
-              state.engine.safety.detail && (
-                <details className="text-[12px] text-muted">
-                  <summary className={`cursor-pointer ${focusRing}`}>
-                    Ver detalle
-                  </summary>
-                  <pre className="mt-2 whitespace-pre-wrap [overflow-wrap:anywhere] max-h-[220px] overflow-auto p-3 bg-soft border border-line rounded-[6px] text-ink">
-                    {state.engine.safety.detail}
-                  </pre>
-                </details>
-              )}
-
-            {/* Elevated-mode read-block warning */}
-            {!gallery &&
-              online &&
-              state.engine.available &&
-              state.engine.safety.allowed &&
-              protectionWarning(state.engine.safety) && (
-                <p
-                  role="status"
-                  className="rounded-[6px] border border-line bg-surface px-4 py-3 text-[13px] text-muted flex items-start gap-2.5"
-                >
-                  <ShieldAlert
-                    size={18}
-                    strokeWidth={1.75}
-                    className="text-accent-ink shrink-0 mt-0.5"
-                    aria-hidden="true"
-                  />
-                  <span>{protectionWarning(state.engine.safety)}</span>
-                </p>
-              )}
-
-            {/* Not connected empty state */}
-            {!gallery &&
-              !work &&
-              online &&
-              state.engine.available &&
-              state.engine.safety.allowed &&
-              !state.account.connected && (
-                <section className="my-10 mx-auto max-w-[440px] w-full rounded-[6px] border border-line bg-surface p-6 flex flex-col items-start gap-3">
-                  <span className="w-9 h-9 rounded-[6px] border border-line bg-paper grid place-items-center text-ink">
-                    <Mail size={18} strokeWidth={1.75} aria-hidden="true" />
-                  </span>
-                  <h2 className="font-display text-[20px] font-normal text-ink">
-                    Conectá tu cuenta
-                  </h2>
-                  <p className="text-[15px] text-muted">
-                    Para trabajar, conectá tu cuenta de ChatGPT.
-                  </p>
-                  <button
-                    type="button"
-                    className={buttonBordered}
-                    onClick={startConnect}
-                  >
-                    <LogIn size={18} strokeWidth={1.75} aria-hidden="true" />
-                    Conectar cuenta
-                  </button>
-                </section>
-              )}
 
             {/* Ready empty state */}
             {!gallery && !work && canSend && (
@@ -1116,8 +1136,11 @@ function App() {
                   {!!m.results?.length && (
                     <button
                       type="button"
-                      onClick={() => setDeliverablesOpen(true)}
-                      className={`min-[960px]:hidden inline-flex items-center gap-1.5 text-[13px] font-bold text-ink underline decoration-accent decoration-2 underline-offset-4 cursor-pointer ${
+                      onClick={() => {
+                        setFocusedMessageId(m.id);
+                        setDeliverablesOpen(true);
+                      }}
+                      className={`min-[960px]:hidden inline-flex items-center gap-1.5 text-[13px] font-bold text-ink underline decoration-accent decoration-2 underline-offset-4 cursor-pointer ${focusRing} ${
                         m.role === "user" ? "self-end -mt-2" : "self-start -mt-2"
                       }`}
                     >
@@ -1132,66 +1155,239 @@ function App() {
 
             {!gallery && work && lastUserIndex === -1 && progressBlock}
 
-            {/* Error state on active work / request */}
-            {!gallery && (problem || work?.problem) && (
-              <div
-                role="alert"
-                className="rounded-[6px] border border-danger bg-surface px-4 py-3 text-[14px] text-ink flex flex-col gap-2"
-              >
-                <div className="flex items-start gap-2.5">
-                  <AlertCircle
-                    size={18}
-                    strokeWidth={1.75}
-                    className="text-danger shrink-0 mt-0.5"
-                    aria-hidden="true"
-                  />
-                  <span className="flex-1">{problem?.text || work?.problem}</span>
-                  {state.engine.exhausted && (
-                    <button
-                      type="button"
-                      className={buttonQuiet}
-                      onClick={() => send({ type: "retry" })}
-                    >
-                      Reintentar
-                    </button>
-                  )}
-                </div>
-                {(work?.details || problem?.detail) && (
-                  <details className="text-[12px] text-muted">
-                    <summary className={`cursor-pointer ${focusRing}`}>
-                      Ver detalle
-                    </summary>
-                    <pre className="mt-2 whitespace-pre-wrap [overflow-wrap:anywhere] max-h-[220px] overflow-auto p-3 bg-soft border border-line rounded-[6px] text-ink">
-                      {problem?.detail}
-                      {work?.details}
-                    </pre>
-                  </details>
-                )}
-              </div>
+            {/* Details toggle inside conversation log when no active error banner */}
+            {!gallery && !(problem || work?.problem) && work?.details && (
+              <details className="text-[12px] text-muted">
+                <summary className={`cursor-pointer ${focusRing}`}>
+                  Ver detalle
+                </summary>
+                <pre className="mt-2 whitespace-pre-wrap [overflow-wrap:anywhere] max-h-[220px] overflow-auto p-3 bg-soft border border-line rounded-[6px] text-ink">
+                  {work.details}
+                </pre>
+              </details>
             )}
-
-            {/* Details toggle even when no active error text if details exist */}
-            {!gallery &&
-              !(problem || work?.problem) &&
-              work?.details && (
-                <details className="text-[12px] text-muted">
-                  <summary className={`cursor-pointer ${focusRing}`}>
-                    Ver detalle
-                  </summary>
-                  <pre className="mt-2 whitespace-pre-wrap [overflow-wrap:anywhere] max-h-[220px] overflow-auto p-3 bg-soft border border-line rounded-[6px] text-ink">
-                    {work.details}
-                  </pre>
-                </details>
-              )}
 
             <div ref={bottom} />
           </div>
         </div>
 
+        {/* Status & error banners pinned above composer */}
+        {!gallery &&
+          ((!online && !!work) ||
+            (online && !state.engine.available) ||
+            (online && state.engine.available && !state.engine.safety.allowed) ||
+            (online &&
+              state.engine.available &&
+              state.engine.safety.allowed &&
+              !!protectionWarning(state.engine.safety)) ||
+            !!problem ||
+            !!work?.problem) && (
+            <div className="shrink-0 max-h-[40dvh] overflow-y-auto px-5 min-[960px]:px-7 pt-2 pb-3">
+              <div className="mx-auto w-full max-w-[720px] flex flex-col gap-2.5">
+                {!online && work && (
+                  <section
+                    role="status"
+                    className="rounded-[6px] border border-line bg-surface px-4 py-3 text-[14px] text-ink flex flex-wrap items-center justify-between gap-2.5"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <WifiOff
+                        size={18}
+                        strokeWidth={1.75}
+                        className="text-muted shrink-0"
+                        aria-hidden="true"
+                      />
+                      <span>
+                        Se perdió la conexión con Bitácora. Estoy intentando reconectar.
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className={buttonQuiet}
+                      onClick={() => reconnectRef.current()}
+                    >
+                      Reintentar
+                    </button>
+                  </section>
+                )}
+
+                {/* Engine stopped / error state */}
+                {online && !state.engine.available && (
+                  <section className="rounded-[6px] border border-danger bg-surface p-4 flex flex-col items-start gap-2.5">
+                    <div className="flex items-center gap-2.5">
+                      <AlertCircle
+                        size={18}
+                        strokeWidth={1.75}
+                        className="text-danger shrink-0"
+                        aria-hidden="true"
+                      />
+                      <p role="status" className="text-[14px] text-ink">
+                        {state.engine.exhausted
+                          ? "Bitácora se detuvo y no pudo volver a iniciarse."
+                          : "Bitácora se detuvo. Estoy intentando volver a iniciarla."}
+                      </p>
+                    </div>
+                    {state.engine.exhausted && (
+                      <button
+                        type="button"
+                        className={buttonBordered}
+                        onClick={() => send({ type: "retry" })}
+                      >
+                        Reintentar
+                      </button>
+                    )}
+                    {state.engine.safety.detail && (
+                      <details className="w-full text-[12px] text-muted">
+                        <summary className={`cursor-pointer ${focusRing}`}>
+                          Ver detalle
+                        </summary>
+                        <pre className="mt-2 whitespace-pre-wrap [overflow-wrap:anywhere] max-h-[220px] overflow-auto p-3 bg-soft border border-line rounded-[6px] text-ink">
+                          {state.engine.safety.detail}
+                        </pre>
+                      </details>
+                    )}
+                  </section>
+                )}
+
+                {/* Protection setup / failed state */}
+                {online &&
+                  state.engine.available &&
+                  !state.engine.safety.allowed && (
+                    state.engine.safety.status !== "failed" &&
+                    !state.engine.safety.needsPermission ? (
+                      <div
+                        role="status"
+                        className="rounded-[6px] border border-line bg-surface px-4 py-3 flex items-center gap-3 text-[14px] text-ink"
+                      >
+                        <Shield
+                          size={18}
+                          strokeWidth={1.75}
+                          className="text-muted shrink-0"
+                          aria-hidden="true"
+                        />
+                        <span>Preparando la protección de tu carpeta…</span>
+                      </div>
+                    ) : (
+                      <section
+                        aria-labelledby="protection-title"
+                        className="rounded-[6px] border border-line bg-surface p-4 flex flex-col items-start gap-2.5"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <ShieldAlert
+                            size={18}
+                            strokeWidth={1.75}
+                            className="text-accent-ink shrink-0"
+                            aria-hidden="true"
+                          />
+                          <h2
+                            id="protection-title"
+                            className="font-display text-[18px] font-normal text-ink"
+                          >
+                            {state.engine.safety.status === "failed"
+                              ? "No pude dejar todo listo"
+                              : "Antes de empezar"}
+                          </h2>
+                        </div>
+                        {state.engine.safety.needsPermission && (
+                          <p className="text-[14px] text-muted">
+                            Para trabajar en tu carpeta sin cambiar tus otros
+                            archivos, Bitácora necesita preparar la protección de tu
+                            compu. Windows va a mostrar un cartel para permitir
+                            cambios. Tocá «Sí» si querés continuar.
+                          </p>
+                        )}
+                        <p role="status" className="text-[14px] text-ink">
+                          {protectionText(state.engine.safety)}
+                        </p>
+                        <button
+                          type="button"
+                          className={buttonBordered}
+                          disabled={state.engine.safety.status === "preparing"}
+                          onClick={() => send({ type: "prepareProtection" })}
+                        >
+                          {state.engine.safety.status === "preparing"
+                            ? "Preparando…"
+                            : state.engine.safety.status === "failed"
+                              ? "Reintentar"
+                              : "Preparar la protección"}
+                        </button>
+                        {state.engine.safety.detail && (
+                          <details className="w-full text-[12px] text-muted">
+                            <summary className={`cursor-pointer ${focusRing}`}>
+                              Ver detalle
+                            </summary>
+                            <pre className="mt-2 whitespace-pre-wrap [overflow-wrap:anywhere] max-h-[220px] overflow-auto p-3 bg-soft border border-line rounded-[6px] text-ink">
+                              {state.engine.safety.detail}
+                            </pre>
+                          </details>
+                        )}
+                      </section>
+                    )
+                  )}
+
+                {/* Elevated-mode read-block warning */}
+                {online &&
+                  state.engine.available &&
+                  state.engine.safety.allowed &&
+                  protectionWarning(state.engine.safety) && (
+                    <p
+                      role="status"
+                      className="rounded-[6px] border border-line bg-surface px-4 py-3 text-[13px] text-muted flex items-start gap-2.5"
+                    >
+                      <ShieldAlert
+                        size={18}
+                        strokeWidth={1.75}
+                        className="text-accent-ink shrink-0 mt-0.5"
+                        aria-hidden="true"
+                      />
+                      <span>{protectionWarning(state.engine.safety)}</span>
+                    </p>
+                  )}
+
+                {/* Error state on active work / request / attachments */}
+                {(problem || work?.problem) && (
+                  <div
+                    role="alert"
+                    className="rounded-[6px] border border-danger bg-surface px-4 py-3 text-[14px] text-ink flex flex-col gap-2"
+                  >
+                    <div className="flex items-start gap-2.5">
+                      <AlertCircle
+                        size={18}
+                        strokeWidth={1.75}
+                        className="text-danger shrink-0 mt-0.5"
+                        aria-hidden="true"
+                      />
+                      <span className="flex-1">{problem?.text || work?.problem}</span>
+                      {state.engine.exhausted && (
+                        <button
+                          type="button"
+                          className={buttonQuiet}
+                          onClick={() => send({ type: "retry" })}
+                        >
+                          Reintentar
+                        </button>
+                      )}
+                    </div>
+                    {(work?.details || problem?.detail) && (
+                      <details className="text-[12px] text-muted">
+                        <summary className={`cursor-pointer ${focusRing}`}>
+                          Ver detalle
+                        </summary>
+                        <pre className="mt-2 whitespace-pre-wrap [overflow-wrap:anywhere] max-h-[220px] overflow-auto p-3 bg-soft border border-line rounded-[6px] text-ink">
+                          {problem?.detail}
+                          {work?.details}
+                        </pre>
+                      </details>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
         {/* Composer */}
         {!gallery && (
           <form
-            className="mx-5 min-[960px]:mx-7 mb-5 bg-surface border border-line rounded-[6px] px-3 py-2.5 flex flex-col gap-2"
+            className="mx-5 min-[960px]:mx-7 mb-5 bg-surface border border-line focus-within:border-ink has-[textarea:focus-visible]:outline-2 has-[textarea:focus-visible]:outline-accent has-[textarea:focus-visible]:outline-offset-2 rounded-[6px] px-3 py-2.5 flex flex-col gap-2"
             onSubmit={(e) => {
               e.preventDefault();
               submitRequest();
@@ -1264,17 +1460,7 @@ function App() {
                 maxLength={MAX_REQUEST_TEXT}
                 placeholder="Escribí qué necesitás…"
                 onChange={(e) => setText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (
-                    e.key === "Enter" &&
-                    !e.shiftKey &&
-                    !e.nativeEvent.isComposing
-                  ) {
-                    e.preventDefault();
-                    submitRequest();
-                  }
-                }}
-                className={`flex-1 min-w-0 resize-y min-h-[44px] max-h-48 border-0 bg-transparent py-1.5 text-[15px] leading-[1.45] text-ink placeholder:text-muted focus:outline-none ${focusRing}`}
+                className="flex-1 min-w-0 resize-y min-h-[44px] max-h-48 border-0 bg-transparent py-1.5 text-[15px] leading-[1.45] text-ink placeholder:text-muted focus:outline-none"
               />
 
               {busy ? (
@@ -1325,15 +1511,18 @@ function App() {
         >
           <DeliverablesPanel
             work={work}
+            focusedMessageId={focusedMessageId}
             token={state.fileToken}
             fileRevision={state.fileRevision}
             hasGalleryResults={hasGalleryResults}
             onOpenGallery={() => {
               setGallery(true);
               setDeliverablesOpen(false);
+              setFocusedMessageId(undefined);
             }}
             onPreview={(file, list) => setPreview({ file, list })}
-            onCloseMobile={() => setDeliverablesOpen(false)}
+            onCloseMobile={() => closeDeliverablesDrawer(true)}
+            closeMobileRef={deliverablesCloseRef}
           />
         </aside>
       )}
