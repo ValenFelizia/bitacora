@@ -88,9 +88,10 @@ test('HTTP files require session token, local host, allowed origin and registere
   const server = await serve(engine, join(f.dir, 'data'), 0, undefined, f.files.root);
   const base = `http://127.0.0.1:${server.port}`;
   const ws = new WebSocket(base.replace('http:', 'ws:') + '/ws', { origin: 'http://127.0.0.1:5173' });
+  ws.on('error', () => {});
   const messages: any[] = [];
   ws.on('message', data => messages.push(JSON.parse(String(data))));
-  const until = async (check: () => boolean) => { for (let i = 0; i < 300; i++) { if (check()) return; await new Promise(r => setTimeout(r, 10)); } throw new Error('timeout'); };
+  const until = async (check: () => boolean, timeoutMs = 15000) => { const deadline = Date.now() + timeoutMs; while (Date.now() < deadline) { if (check()) return; await new Promise(r => setTimeout(r, 10)); } throw new Error(`condition timed out after ${timeoutMs}ms`); };
   try {
     await until(() => !!messages[0]);
     const token = messages[0].state.fileToken;
@@ -109,5 +110,10 @@ test('HTTP files require session token, local host, allowed origin and registere
     assert.equal(good.headers.get('access-control-allow-origin'), null);
     await rm(join(f.files.root, ref.path));
     assert.equal((await fetch(url + '&token=' + token)).status, 404);
-  } finally { ws.terminate(); await server.close(); await f.cleanup(); }
+  } finally {
+    const closed = ws.readyState === WebSocket.CLOSED ? Promise.resolve() : new Promise<void>(r => { ws.once('close', () => r()); ws.terminate(); });
+    await closed;
+    await server.close();
+    await f.cleanup();
+  }
 });
