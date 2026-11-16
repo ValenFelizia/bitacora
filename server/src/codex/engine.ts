@@ -10,6 +10,7 @@ import { codexBinary, codexVersion } from "../../../scripts/codex-runtime.mjs";
 import { createInterface } from "node:readline";
 import { mkdir } from "node:fs/promises";
 import { registerKit } from './kit';
+import { cleanTitle, TITLE_PROMPT } from "../titles";
 import type { Engine, EngineEvent, Account, ExecutionSafety } from "../engine";
 import { EngineFailure } from "../engine";
 import type { ClientRequest } from "./generated/ClientRequest";
@@ -18,6 +19,8 @@ import type { GetAccountResponse } from "./generated/v2/GetAccountResponse";
 import type { LoginAccountResponse } from "./generated/v2/LoginAccountResponse";
 import type { ThreadStartResponse } from "./generated/v2/ThreadStartResponse";
 import type { ThreadResumeResponse } from "./generated/v2/ThreadResumeResponse";
+import type { ThreadSampleResponse } from "./generated/v2/ThreadSampleResponse";
+import type { ThreadSetNameResponse } from "./generated/v2/ThreadSetNameResponse";
 import type { Turn } from "./generated/v2/Turn";
 import type { TurnStartResponse } from "./generated/v2/TurnStartResponse";
 import type { ConfigReadResponse } from "./generated/v2/ConfigReadResponse";
@@ -81,6 +84,8 @@ type Responses = {
   "account/login/cancel": unknown;
   "thread/start": ThreadStartResponse;
   "thread/resume": ThreadResumeResponse;
+  "thread/sample": ThreadSampleResponse;
+  "thread/name/set": ThreadSetNameResponse;
   "turn/start": TurnStartResponse;
   "turn/interrupt": unknown;
 };
@@ -192,6 +197,8 @@ export class CodexEngine implements Engine {
   >();
   private listeners = new Set<(event: EngineEvent) => void>();
   private turns = new Map<string, string>();
+  /** Last finished turn of each conversation: the only source `thread/sample` accepts. */
+  private lastTurn = new Map<string, string>();
   private loginId?: string;
   private stopping = false;
   private startAttempt?: Promise<void>;
@@ -915,6 +922,7 @@ export class CodexEngine implements Engine {
         break;
       case "turn/started":
         this.turns.set(n.params.threadId, n.params.turn.id);
+        this.lastTurn.delete(n.params.threadId);
         {
           const starting = this.starting.get(n.params.threadId);
           if (starting) {
@@ -1005,6 +1013,7 @@ export class CodexEngine implements Engine {
       case "turn/completed": {
         const { threadId: conversationId, turn } = n.params;
         this.turns.delete(conversationId);
+        this.lastTurn.set(conversationId, turn.id);
         this.interrupted.delete(conversationId);
         this.clearPause(conversationId);
         const starting = this.starting.get(conversationId);
@@ -1085,6 +1094,48 @@ export class CodexEngine implements Engine {
       ...this.settings(),
     });
     this.checkProfile(activePermissionProfile, false);
+  }
+  /**
+   * Asks the engine for a short name without starting a visible turn:
+   * `thread/sample` runs one model request on an ephemeral fork of the last
+   * finished turn, so it sees the conversation and costs one extra call. The
+   * answer is only the text: a tool call makes the sample empty and the work
+   * keeps its fallback name.
+   */
+  async suggestTitle(conversationId: string) {
+    const expectedTurnId = this.lastTurn.get(conversationId);
+    if (!this.available || !expectedTurnId) return undefined;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const sample = await this.rpc("thread/sample", {
+          threadId: conversationId,
+          expectedTurnId,
+          prompt: TITLE_PROMPT,
+          disableMcp: true,
+        });
+        const title = cleanTitle(sample.text);
+        if (!title) return undefined;
+        const count = (value: bigint | null) => (value === null ? 0 : Number(value));
+        return {
+          title,
+          usage: {
+            input: count(sample.inputTokens),
+            cached: count(sample.cachedInputTokens),
+            output: count(sample.outputTokens),
+          },
+        };
+      } catch (error) {
+        // The finished turn may still be closing when the app asks: one retry.
+        if (attempt === 0 && /must be idle/.test(String(error))) {
+          await new Promise((resolve) => setTimeout(resolve, 200));
+          continue;
+        }
+        return undefined;
+      }
+    }
+  }
+  async renameWork(conversationId: string, title: string) {
+    await this.rpc("thread/name/set", { threadId: conversationId, name: title });
   }
   /**
    * Starts a turn and resolves with its reply. When the reply does not arrive

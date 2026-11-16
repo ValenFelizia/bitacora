@@ -1,4 +1,4 @@
-import type { Engine, EngineEvent, Account, ExecutionSafety } from "../src/engine";
+import type { Engine, EngineEvent, Account, ExecutionSafety, SuggestedTitle } from "../src/engine";
 export class FakeEngine implements Engine {
   listeners = new Set<(event: EngineEvent) => void>();
   connected = true;
@@ -7,6 +7,11 @@ export class FakeEngine implements Engine {
   calls: string[] = [];
   count = 0;
   safe = true;
+  /** What `suggestTitle` answers; undefined behaves like an engine that fails. */
+  suggested?: string;
+  /** Held open by a test to rename while the suggestion is in flight. */
+  titleGate?: Promise<void>;
+  renamed: { conversationId: string; title: string }[] = [];
   async retry() {}
   async prepareProtection() { this.safe = true; this.emit({ type: "protection", safety: this.executionSafety() }); }
   executionSafety(): ExecutionSafety {
@@ -26,6 +31,17 @@ export class FakeEngine implements Engine {
   }
   async resumeWork(id: string) {
     this.resumed.push(id);
+  }
+  async suggestTitle(id: string): Promise<SuggestedTitle | undefined> {
+    this.calls.push(`title:${id}`);
+    if (this.titleGate) await this.titleGate;
+    return this.suggested
+      ? { title: this.suggested, usage: { input: 1200, cached: 1000, output: 8 } }
+      : undefined;
+  }
+  async renameWork(id: string, title: string) {
+    this.calls.push(`rename:${id}`);
+    this.renamed.push({ conversationId: id, title });
   }
   async send(id: string, text: string, _files?: import("../src/engine").EngineFile[]) {
     this.calls.push(`send:${id}`);

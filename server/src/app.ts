@@ -6,8 +6,9 @@ import { basename, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { rememberUserUrls } from './allowed-urls';
 import { initializeKit } from './tools/kit';
-import type { Engine, EngineEvent } from "./engine";
+import type { Engine, EngineEvent, SuggestedTitle } from "./engine";
 import { problemText, EngineFailure, activityText } from "./engine";
+import { fallbackTitle, MAX_TITLE } from "./titles";
 import type { FileRef, Message, Work, Snapshot, ClientCommand, ServerMessage } from "./contracts";
 
 type SavedWork = Work & { conversationId: string; pendingFiles?: { messageId: string; before?: Record<string, string> } };
@@ -53,6 +54,11 @@ export class App {
   // requested during that window: they are delivered once the turn starts.
   private unsent = new Set<string>();
   private pauseRequested = new Set<string>();
+  // Works created in this session whose first request has not been titled yet,
+  // and works the user named by hand: a chosen name is never replaced.
+  private titlePending = new Set<string>();
+  private renamed = new Set<string>();
+  private titleTasks = new Set<Promise<void>>();
   constructor(
     private engine: Engine,
     private data: string,
@@ -209,6 +215,25 @@ export class App {
     const scan = this.collectResults(work).finally(() => { work.busy = false; this.changed(); this.scans.delete(scan); this.scanning.delete(work.id); });
     this.scans.add(scan);
   }
+  /**
+   * Replaces the fallback name with the engine's short one, once, after the
+   * first request. It never overwrites a name the user chose meanwhile, and a
+   * failure leaves the fallback in place.
+   */
+  private async generateTitle(work: SavedWork) {
+    if (!this.titlePending.delete(work.id)) return;
+    const before = work.title;
+    let suggestion: SuggestedTitle | undefined;
+    try { suggestion = await this.engine.suggestTitle(work.conversationId); }
+    catch { return; }
+    if (!suggestion || work.title !== before) return;
+    work.title = suggestion.title;
+    if (suggestion.usage)
+      work.details = (work.details + `Título automático: ${suggestion.usage.input} de entrada (${suggestion.usage.cached} en caché), ${suggestion.usage.output} de salida.\n`).slice(-100000);
+    this.changed();
+    try { await this.engine.renameWork(work.conversationId, work.title); }
+    catch (error) { work.details = (work.details + `No pude guardar el título en el motor: ${String(error)}\n`).slice(-100000); }
+  }
   private event(event: EngineEvent) {
     if (event.type === "protection") {
       this.publish({ type: "snapshot", state: this.snapshot() });
@@ -251,7 +276,7 @@ export class App {
     }
     switch (event.type) {
       case "title":
-        work.title = event.title;
+        if (!this.renamed.has(work.id)) work.title = event.title;
         break;
       case "progress":
         work.progress = activityText[event.activity];
@@ -287,6 +312,14 @@ export class App {
             : event.status === "failed"
               ? "El pedido no se pudo completar."
               : "Listo.";
+        // Only a completed request has a conversation worth summarizing: a
+        // failed or paused one keeps the fallback name, and the next completed
+        // request titles the work instead.
+        if (event.status === "completed") {
+          const task = this.generateTitle(work);
+          this.titleTasks.add(task);
+          void task.catch(() => {}).finally(() => this.titleTasks.delete(task));
+        }
         break;
     }
     work.updatedAt = new Date().toISOString();
@@ -357,6 +390,26 @@ export class App {
       reply({ type: "login", ...(await this.engine.connectAccount()) });
       return;
     }
+    if (command.type === "rename") {
+      const work = this.works.find((w) => w.id === command.workId);
+      if (!work) throw new Error("Unknown work");
+      const title = typeof command.title === "string" ? command.title.trim().replace(/\s+/g, " ") : "";
+      if (!title || title.length > MAX_TITLE) {
+        reply({ type: "problem", text: `Escribí un nombre de hasta ${MAX_TITLE} letras.` });
+        return;
+      }
+      work.title = title;
+      // A chosen name is final: no automatic title replaces it later.
+      this.titlePending.delete(work.id);
+      this.renamed.add(work.id);
+      this.changed();
+      try { await this.engine.renameWork(work.conversationId, title); }
+      catch (error) {
+        work.details = (work.details + `No pude guardar el nombre en el motor: ${String(error)}\n`).slice(-100000);
+        this.changed();
+      }
+      return;
+    }
     if (command.type === "interrupt") {
       const work = this.works.find((w) => w.id === command.workId);
       if (!work) throw new Error("Unknown work");
@@ -422,9 +475,7 @@ export class App {
         const now = new Date().toISOString();
         work = {
           id: randomUUID(),
-          title:
-            created.title ||
-            command.text.trim().replace(/\s+/g, " ").slice(0, 64),
+          title: created.title || fallbackTitle(command.text),
           conversationId: created.conversationId,
           createdAt: now,
           updatedAt: now,
@@ -434,6 +485,8 @@ export class App {
           progress: "",
         };
         newWork = true;
+        // A name the engine already provides is used as is.
+        if (!created.title) this.titlePending.add(work.id);
       }
       attachments = await this.workspace?.attach(work.id, uploads || []) || [];
       const messageId = randomUUID();
@@ -485,6 +538,7 @@ export class App {
       if (!committed) {
         await this.workspace?.removeAttachments(attachments);
         if (work) {
+          this.titlePending.delete(work.id);
           delete work.pendingFiles;
           await rm(this.pendingPath(work), { force: true });
         }
@@ -511,6 +565,9 @@ export class App {
     await this.engine.close();
     this.unsubscribe?.();
     await Promise.all(this.scans);
+    // A title that was already on its way finishes before the last save, so
+    // nothing writes after close() returns.
+    await Promise.all([...this.titleTasks].map((task) => task.catch(() => {})));
     clearTimeout(this.flushTimer);
     // Wait for the last write so a failure marks the change as unsaved, then
     // retry it before closing.

@@ -51,6 +51,12 @@ export type EngineEvent =
 
 export type EngineFile = { path: string; mime: string };
 
+/** Short name for a work, with what the extra request cost when the engine reports it. */
+export type SuggestedTitle = {
+  title: string;
+  usage?: { input: number; cached: number; output: number };
+};
+
 export interface Engine {
   start(): Promise<void>;
   retry(): Promise<void>;
@@ -60,6 +66,13 @@ export interface Engine {
   account(): Promise<Account>;
   createWork(): Promise<{ conversationId: string; title?: string }>;
   resumeWork(conversationId: string): Promise<void>;
+  /**
+   * Cheap name for a work whose last request already finished, or undefined
+   * when the engine cannot suggest one. Never starts a visible request.
+   */
+  suggestTitle(conversationId: string): Promise<SuggestedTitle | undefined>;
+  /** Stores the name in the engine so both sides show the same one. */
+  renameWork(conversationId: string, title: string): Promise<void>;
   send(conversationId: string, text: string, files?: EngineFile[], context?: { filesReverted?: boolean }): Promise<void>;
   interrupt(conversationId: string): Promise<void>;
   subscribe(listener: (event: EngineEvent) => void): () => void;
