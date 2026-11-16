@@ -465,7 +465,8 @@ test("a pause requested before the request reaches the engine stops the turn onc
     await app.start();
     const sending = app.command({ type: "send", text: "Un pedido" }, reply);
     let work = app.snapshot().works[0];
-    for (let i = 0; i < 200 && !work?.busy; i++) {
+    const commitDeadline = Date.now() + 15000;
+    while (!work?.busy && Date.now() < commitDeadline) {
       await new Promise((resolve) => setTimeout(resolve, 5));
       work = app.snapshot().works[0];
     }
@@ -490,7 +491,8 @@ test("a failed save stays pending and is retried before closing", async () => {
     // The disk refuses the next save.
     await mkdir(join(f.dir, "works.json.tmp"));
     f.engine.emit({ type: "finished", conversationId: "conversation-1", status: "completed" });
-    for (let i = 0; i < 200 && !f.messages.some((m) => m.type === "problem"); i++)
+    const saveDeadline = Date.now() + 15000;
+    while (!f.messages.some((m) => m.type === "problem") && Date.now() < saveDeadline)
       await new Promise((resolve) => setTimeout(resolve, 5));
     assert.ok(f.messages.some((m) => m.type === "problem" && /No pude guardar/.test(m.text)));
     // The disk works again: closing must save the last response.

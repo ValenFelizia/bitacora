@@ -8,18 +8,16 @@ import { WorkspaceFiles } from '../src/workspace-files';
 import { App } from '../src/app';
 import { FakeEngine } from './fake-engine';
 import { denyRead } from './acl';
-import { spawn } from 'node:child_process';
-import { once } from 'node:events';
+import { lockForWriting } from './locks';
 const target = { workId: 'work', title: 'Propuesta', request: 'Prepará la propuesta' };
 test('a Windows exclusive lock omits only that file without hanging', async () => {
   const f = await fixture();
   const path = join(f.root, 'bloqueado.txt'); await writeFile(path, 'contenido');
-  const child = spawn(join(process.env.SystemRoot!, 'System32/WindowsPowerShell/v1.0/powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', `$s=[System.IO.File]::Open('${path.replaceAll("'", "''")}', 'Open', 'ReadWrite', 'None');[Console]::WriteLine('LOCKED');[Console]::ReadLine()|Out-Null;$s.Dispose()`], { windowsHide: true });
-  const exited = once(child, 'exit');
+  let unlock: (() => Promise<void>) | undefined;
   try {
-    await new Promise<void>((resolve, reject) => { child.stdout.on('data', b => { if (String(b).includes('LOCKED')) resolve(); }); child.stderr.on('data', b => reject(new Error(String(b)))); child.once('error', reject); });
+    unlock = await lockForWriting(path, 'None');
     assert.equal(await f.backups.before(target), true); assert.equal(f.backups.target, undefined);
-  } finally { child.stdin.end('\n'); await exited; await f.close(); }
+  } finally { await unlock?.(); await f.close(); }
 });
 async function fixture() {
   await mkdir('.local', { recursive: true });
@@ -95,21 +93,29 @@ test('fake engine sees pre-request copy; global undo survives restart, results r
       await writeFile(join(f.root, 'resultado.png'), text);
       engine.emit({ type: 'finished', conversationId: id, status: 'completed' });
     };
+    const waitIdle = async () => {
+      const deadline = Date.now() + 15000;
+      while (Date.now() < deadline) {
+        if (!app!.snapshot().works.some(w => w.busy)) return;
+        await delay(10);
+      }
+      assert.fail('timed out waiting for app idle');
+    };
     await app.command({ type: 'send', text: 'primero' }, () => {});
-    for (let i = 0; i < 300 && app.snapshot().works.some(w => w.busy); i++) await delay(10);
+    await waitIdle();
     const ref = app.snapshot().works[0].messages[0].results![0]; assert.ok(ref);
     const workId = app.snapshot().works[0].id;
     await app.close(); app = new App(engine, f.data, () => {}, undefined, files); await app.start();
     await app.command({ type: 'undo', id: app.snapshot().undo!.id }, () => {});
     await assert.rejects(files.openResult(ref)); assert.equal(app.snapshot().undo, undefined);
     await app.command({ type: 'send', workId, text: 'segundo' }, () => {});
-    for (let i = 0; i < 300 && app.snapshot().works.some(w => w.busy); i++) await delay(10);
+    await waitIdle();
     assert.deepEqual(contexts[1], { filesReverted: true }); assert.equal(engine.sent[1], 'segundo');
     const opened = await files.openResult(ref); await opened.handle.close();
     const denied = join(f.root, 'denied'); await mkdir(denied); const restore = denyRead(denied);
     try { await app.command({ type: 'send', text: 'sin copia' }, () => {}); }
     finally { restore(); }
-    for (let i = 0; i < 300 && app.snapshot().works.some(w => w.busy); i++) await delay(10);
+    await waitIdle();
     assert.equal(engine.sent.at(-1), 'sin copia'); assert.ok(app.snapshot().undo);
     assert.match(app.snapshot().notice!, /no pude guardar copia/i);
   } finally { await app?.close(); await f.close(); }

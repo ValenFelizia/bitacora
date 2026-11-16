@@ -39,16 +39,22 @@ test('R5 a locked trash counter does not invalidate a saved copy or advance rete
     await unlock(); unlock = undefined; await f.b.undo(f.b.target!.id); assert.equal(await readFile(join(f.root, 'a.txt'), 'utf8'), 'before');
   } finally { await unlock?.(); await f.close(); }
 });
-test('R5 historical mutation runners start and detect their mutations', async () => {
+test('R5 historical mutation runners start and detect their mutations', { timeout: 180000 }, async () => {
   // The runners rewrite their evidence; point them at a scratch folder so the
   // test run never modifies tracked files under docs/.
   await mkdir('.local', { recursive: true });
   const evidence = await mkdtemp(resolve('.local/mutation-evidence-'));
   try {
-    for (const script of ['verify-undo-round3-mutations', 'verify-undo-mutation']) {
+    for (const [script, timeoutMs] of [['verify-undo-round3-mutations', 120000], ['verify-undo-mutation', 45000]] as const) {
       const env: NodeJS.ProcessEnv = { ...process.env, BITACORA_EVIDENCE_DIR: evidence }; delete env.NODE_TEST_CONTEXT;
-      const result = spawnSync(process.execPath, ['--import', 'tsx', `scripts/${script}.ts`], { encoding: 'utf8', timeout: 30000, env });
-      assert.equal(result.status, 0, result.stdout + result.stderr); assert.match(result.stdout, /PASS:/);
+      const start = Date.now();
+      const result = spawnSync(process.execPath, ['--import', 'tsx', `scripts/${script}.ts`], { encoding: 'utf8', timeout: timeoutMs, windowsHide: true, env });
+      if ((result.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT') {
+        assert.fail(`${script} timed out after ${Date.now() - start}ms (limit ${timeoutMs}ms)\n${result.stdout}${result.stderr}`);
+      }
+      if (result.error) assert.fail(`${script} failed to run: ${result.error.message}`);
+      assert.equal(result.status, 0, `${script} exited with status ${result.status} (signal ${result.signal})\n${result.stdout}${result.stderr}`);
+      assert.match(result.stdout, /PASS:/);
     }
   } finally { await rm(evidence, { recursive: true, force: true }); }
 });

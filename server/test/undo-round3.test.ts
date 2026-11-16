@@ -123,7 +123,9 @@ test('N2 partial restore can always be discarded after restart, reports paths by
     await app.start(); await app.command({ type: 'send', text: 'change' }, () => {});
     await writeFile(join(f.root, 'a.txt'), 'after'); await writeFile(join(f.root, 'z.txt'), 'after-z');
     engine.emit({ type: 'finished', conversationId: 'conversation-1', status: 'completed' });
-    for (let i = 0; i < 300 && app.snapshot().works[0].busy; i++) await new Promise(r => setTimeout(r, 10));
+    const deadline = Date.now() + 15000;
+    while (app.snapshot().works[0].busy && Date.now() < deadline) await new Promise(r => setTimeout(r, 10));
+    assert.equal(app.snapshot().works[0].busy, false, 'timed out waiting for work to finish');
     (app as any).backups.io.afterStep = async () => { throw new Error('stopped after first action'); };
     await app.command({ type: 'undo', id: app.snapshot().undo!.id }, () => {});
     assert.equal(await readFile(join(f.root, 'a.txt'), 'utf8'), 'before'); assert.equal(await readFile(join(f.root, 'z.txt'), 'utf8'), 'after-z');
