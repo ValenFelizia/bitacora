@@ -29,6 +29,8 @@ async function fixture(
     home: join(dir, "home"),
     workspace: join(dir, "agency"),
     binary: process.execPath,
+    // This fake runs the elevated backend, the mode the check decides here, so
+    // it is spawned without the profile: the arguments already match.
     args: [resolve("server/test/stdio-server.mjs")],
     restartDelayMs: options.restartDelayMs ?? 30,
     stableAfterMs: 60_000,

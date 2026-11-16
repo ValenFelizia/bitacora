@@ -109,3 +109,55 @@ accepted direction from implementation alone.
   comprobar que ninguna quedó en error, y fallar si alguna falló.
 - Rejected: Bun y Deno (sin ventaja que compense), Node SEA (no corre scripts
   sueltos), `msedge --headless` por línea de comandos.
+
+## DEC-010 — Cada pedido corre con un perfil de permisos que no deja leer afuera
+
+- Status: accepted (2026-11-15)
+- Context: el issue #4 probó en Windows 11, con MXC y Codex 0.168.0, que un
+  perfil de permisos con nombre impide leer un archivo testigo fuera de la
+  carpeta sin romper PowerShell ni la lectura adentro. R4 decía que el bloqueo
+  de lecturas se sumaba solo si esa prueba salía bien: salió bien. El issue #19
+  lo activa en la app.
+- Decision: el app-server arranca con un perfil propio, `agencia`, definido con
+  `-c` en la línea de comandos (no en el `config.toml` de la usuaria): extiende
+  `:workspace`, deja `:root` y `:tmpdir` en `deny`, `:minimal` en `read` y la red
+  apagada. Cada `thread/start`, `thread/resume` y `turn/start` manda
+  `permissions = "agencia"`. Antes de habilitar pedidos, la app pide
+  `permissionProfile/list` y exige que el perfil exista y esté permitido; si no,
+  no trabaja y lo dice en castellano simple.
+- Update (2026-11-16, decidido por la dueña): en una compu sin MXC el backend
+  `elevated` no puede correr el perfil, y negarse a trabajar deja a la usuaria
+  sin app. En esa compu la app trabaja con la protección de escritura anterior
+  —el hilo con `sandbox: "workspace-write"` y el turno con `sandboxPolicy`
+  workspaceWrite, `writableRoots` la carpeta, red apagada y sin `:tmpdir`— y
+  avisa en castellano simple que el agente puede leer afuera pero no cambiarlo
+  ni borrarlo. El aviso va en `ExecutionSafety.readBlock = false` y no es un
+  fallo: no bloquea pedidos. En una compu con MXC no cambia nada: el perfil es
+  obligatorio y, si no se puede aplicar, la app no trabaja. El modo lo decide
+  la comprobación de arranque; si el proceso se abrió con los argumentos del
+  otro modo, se lo detiene y se lo vuelve a abrir con los que corresponden, así
+  un mismo proceso nunca mezcla los dos. El modo sin MXC es el último recurso:
+  el sondeo de MXC corre aunque el modo guardado sea `elevated`, así una compu
+  que gana MXC con una actualización de Windows pasa sola al perfil.
+- Rationale: cierra la vía principal de fuga de datos: el agente ya no podía
+  escribir afuera, pero podía leer cualquier archivo de la usuaria. El perfil
+  reemplaza al `sandboxPolicy` del turno porque Codex no acepta los dos juntos.
+- Consequences: la app pasa a depender de la API experimental de Codex. Los
+  campos `permissions` (en thread y turn) y `permissionProfile` (en
+  `command/exec`) no son estables, y el cliente tiene que negociar
+  `experimentalApi: true` en `initialize`: sin eso el app-server rechaza el
+  perfil con -32600. Por eso los tipos del protocolo se generan con
+  `--experimental` desde la versión fijada, y actualizar Codex es un cambio
+  deliberado que exige volver a probar `permissionProfile/list`, el
+  `activePermissionProfile` que devuelve `thread/start`, que `-c` siga aceptando
+  el perfil como tabla TOML y la prueba de arena real de
+  `server/test/read-block.test.ts`. Antes de habilitar pedidos, en una compu con
+  MXC la app corre un comando inofensivo con el perfil (`command/exec`): que el
+  perfil figure en la lista no alcanza, porque el backend "elevated" de Windows
+  rechaza cualquier perfil que niegue la lectura de `:root` y una compu sin el
+  sandbox nativo no puede correrlo. Si ese comando falla, la app no trabaja y lo
+  dice. Dos límites verificados: Codex lee los `AGENTS.md` desde la raíz del
+  repositorio, así que una carpeta de agencia dentro de un repo git necesita
+  leer sus carpetas superiores y la app va a informar que no puede aplicar el
+  perfil; y apagar esa lectura con `project_doc_max_bytes = 0` dejaría al agente
+  sin las instrucciones del kit, así que no se usa.

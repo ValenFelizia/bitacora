@@ -384,12 +384,15 @@ export class App {
       return;
     }
     if (!this.available || !this.engine.executionSafety().allowed) {
+      const safety = this.engine.executionSafety();
       reply({
         type: "problem",
         text: !this.available
           ? "El motor está detenido. Esperá a que vuelva para enviar el pedido."
-          : "No puedo enviar pedidos porque la protección de la carpeta no está preparada. Hace falta completar la preparación de Windows.",
-        detail: this.engine.executionSafety().detail,
+          : safety.issue === "readBlock"
+            ? "No pude activar el bloqueo que impide leer archivos fuera de tu carpeta. Sin eso no puedo empezar tus pedidos. Tocá Reintentar para volver a intentarlo."
+            : "No puedo enviar pedidos porque la protección de la carpeta no está preparada. Hace falta completar la preparación de Windows.",
+        detail: safety.detail,
       });
       return;
     }

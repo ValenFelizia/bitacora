@@ -334,6 +334,38 @@ test("app rejects unsafe sends even when the fake engine would accept them", asy
 
 
 
+test("a refused read block stops the work with a plain message", async () => {
+
+  const f = await fixture();
+
+  try {
+
+    f.engine.executionSafety = () => ({ allowed: false, status: "failed", issue: "readBlock", detail: "permissionProfile/list does not offer agencia" });
+
+    await f.app.command({ type: "send", text: "Armá una propuesta" }, f.reply);
+
+    assert.equal(f.engine.sent.length, 0);
+
+    assert.equal(f.app.snapshot().works.length, 0);
+
+    const problem = f.messages.find(m => m.type === "problem");
+
+    assert.ok(problem && problem.type === "problem");
+
+    assert.match(problem.text, /bloqueo que impide leer archivos fuera de tu carpeta/);
+
+    assert.match(problem.text, /Reintentar/);
+
+    assert.doesNotMatch(problem.text, /permissionProfile|sandbox|API/);
+
+    assert.match(problem.detail || "", /permissionProfile\/list/);
+
+  } finally { await f.app.close(); await rm(f.dir, { recursive: true }); }
+
+});
+
+
+
 test("persistence retries EPERM once or twice before succeeding", async () => {
 
   for (const failures of [1, 2]) {

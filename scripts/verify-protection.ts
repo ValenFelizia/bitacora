@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 import assert from 'node:assert/strict';
 import { serve } from '../server/src/server';
 import { CodexEngine } from '../server/src/codex/engine';
+import { fakeAppServerArgs } from '../server/test/fake-app-server';
 
 const parent = join(process.env.LOCALAPPDATA!, 'Bitacora-dev', 'issue12-browser');
 await mkdir(parent, { recursive: true });
@@ -16,7 +17,7 @@ process.env.BITACORA_FAKE_SAFETY = 'notConfigured';
 process.env.BITACORA_FAKE_SETUP_FAIL = '1';
 process.env.BITACORA_FAKE_SETUP_DELAY = '1500';
 const engine = () => new CodexEngine({ home: join(base, 'home'), workspace: join(base, 'workspace'),
-  binary: process.execPath, args: [resolve('server/test/stdio-server.mjs')], probeProtection: async () => false });
+  binary: process.execPath, args: fakeAppServerArgs, probeProtection: async () => false });
 let app: Awaited<ReturnType<typeof serve>> | undefined;
 const vite = await createServer({ configFile: resolve('web/vite.config.ts'), root: resolve('web'),
   server: { port: 5174, proxy: { '/ws': { target: 'ws://127.0.0.1:4318', ws: true, changeOrigin: true } } } });
@@ -67,7 +68,7 @@ try {
   let release!: () => void;
   const gate = new Promise<boolean>(r => { release = () => r(true); });
   const automatic = new CodexEngine({ home: join(base, 'automatic-home'), workspace: join(base, 'workspace'),
-    binary: process.execPath, args: [resolve('server/test/stdio-server.mjs')], probeProtection: () => gate });
+    binary: process.execPath, args: fakeAppServerArgs, probeProtection: () => gate });
   const starting = serve(automatic, join(base, 'automatic-data'), 4318, 'http://127.0.0.1:5174');
   // Start needs to finish before the server listens: delay config persistence
   // in the peer so the UI observes the real automatic preparing state.

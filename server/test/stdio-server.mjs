@@ -13,7 +13,27 @@ let interruptRejects = false;
 let crashScheduled = false;
 if (process.env.BITACORA_FAKE_PID)
   appendFileSync(process.env.BITACORA_FAKE_PID, `${process.pid}\n`);
+// The arguments this process was started with: the engine picks them from the
+// sandbox mode, so a test can tell which mode each process was spawned for.
+if (process.env.BITACORA_FAKE_SPAWN)
+  appendFileSync(
+    process.env.BITACORA_FAKE_SPAWN,
+    JSON.stringify({ pid: process.pid, args: process.argv.slice(2) }) + "\n",
+  );
 const turn = (status = "inProgress") => ({ id: "turn-1", status, error: null });
+// The profile a thread reports back. `BITACORA_FAKE_THREAD_PROFILE=none` is an
+// engine that ignored the request and would run with the default profile;
+// `other` is an engine that reports a different profile. A real app-server
+// reports the profile the request asked for, and none when the thread runs
+// with a plain sandbox policy.
+const activeProfile = (params) => {
+  const reported = process.env.BITACORA_FAKE_THREAD_PROFILE;
+  if (reported === "none") return null;
+  if (reported === "other") return { id: ":workspace", extends: null };
+  return params && params.permissions
+    ? { id: params.permissions, extends: ":workspace" }
+    : null;
+};
 createInterface({ input: process.stdin })
   .on("line", (line) => {
     const m = JSON.parse(line);
@@ -32,8 +52,32 @@ createInterface({ input: process.stdin })
         reply({ userAgent: "fake" });
         break;
       case "windowsSandbox/readiness":
+        // `BITACORA_FAKE_READ_FAIL_ONCE` fails only for the first process that
+        // asks, so a test can make the startup check fail and the retry work.
+        if (process.env.BITACORA_FAKE_READ_FAIL_ONCE && !existsSync(setupFile + ".read-failed")) {
+          writeFileSync(setupFile + ".read-failed", "1");
+          send({ id: m.id, error: { message: "read failed" } });
+          break;
+        }
         if (process.env.BITACORA_FAKE_READ_FAIL) { send({ id: m.id, error: { message: "read failed" } }); break; }
         reply({ status: configuredMode ? "ready" : process.env.BITACORA_FAKE_SAFETY || "ready" });
+        break;
+      case "permissionProfile/list": {
+        // The read-restricting profile the app sends on every turn. A fake that
+        // refuses it must never be trusted to run work.
+        const refusal = process.env.BITACORA_FAKE_PROFILE;
+        if (refusal === "error") { send({ id: m.id, error: { code: -32601, message: "method not found" } }); break; }
+        const data = [{ id: ":workspace", description: null, allowed: true }];
+        if (refusal !== "missing") data.push({ id: "agencia", description: null, allowed: refusal !== "denied" });
+        reply({ data, nextCursor: null });
+        break;
+      }
+      case "command/exec":
+        // The app runs one harmless command under the profile to know whether
+        // this machine can really use it.
+        if (process.env.BITACORA_FAKE_PROFILE_EXEC === "refuse")
+          send({ id: m.id, error: { code: -32603, message: "exec failed: windows sandbox: elevated Windows sandbox requires effective `:root` read access" } });
+        else reply({ exitCode: 0, stdout: "BITACORA_PROFILE_OK\r\n", stderr: "" });
         break;
       case "config/read":
         reply({ config: { windows: { sandbox: configuredMode || (process.env.BITACORA_FAKE_MODE || (process.env.BITACORA_FAKE_SAFETY ? null : "elevated")) } } });
@@ -73,10 +117,10 @@ createInterface({ input: process.stdin })
         setTimeout(() => reply({}), Number(process.env.BITACORA_FAKE_LOGIN_CANCEL_DELAY || 0));
         break;
       case "thread/start":
-        reply({ thread: { id: threadId } });
+        reply({ thread: { id: threadId }, activePermissionProfile: activeProfile(m.params) });
         break;
       case "thread/resume":
-        reply({ thread: { id: threadId } });
+        reply({ thread: { id: threadId }, activePermissionProfile: activeProfile(m.params) });
         break;
       case "turn/interrupt":
         if (interruptRejects) send({ id: m.id, error: { message: "interrupt refused" } });
