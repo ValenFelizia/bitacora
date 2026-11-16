@@ -34,8 +34,8 @@ la app se cierra y se vuelve a abrir entre medio.
 
 Si la muestra no llegó a correr (la app se está cerrando, el hilo todavía está
 ocupado porque la usuaria ya mandó otro pedido, o el motor devolvió un error),
-el trabajo sigue esperando: lo titula el próximo pedido que termine bien, o el
-próximo arranque. Solo se deja de esperar cuando hay un título o cuando la
+el trabajo sigue esperando: lo titula el próximo pedido que termine bien, aunque
+sea después de volver a abrir la app (abrirla sola no alcanza). Solo se deja de esperar cuando hay un título o cuando la
 muestra contestó sin texto usable. Al cerrar, la app le da a una muestra en
 curso hasta dos segundos para terminar antes de apagar el motor; si no llega,
 queda pendiente.

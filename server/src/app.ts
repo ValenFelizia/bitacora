@@ -233,8 +233,8 @@ export class App {
    *
    * The work stays pending until a title is applied or the sample answered
    * with no usable text: a sample that could not run (engine stopping, thread
-   * busy, request error) is retried by the next finished request or the next
-   * start.
+   * busy, request error) is retried by the next finished request, even in a
+   * later session: a start alone does not title it.
    */
   private clearTitlePending(work: SavedWork) {
     this.titlePending.delete(work.id);
@@ -246,6 +246,9 @@ export class App {
     let suggestion: SuggestedTitle | undefined;
     try { suggestion = await this.engine.suggestTitle(work.conversationId); }
     catch { return; }
+    // Another sample for this work settled first (a second request finished
+    // while this one was in flight): only one may name it.
+    if (!this.titlePending.has(work.id)) return;
     // A name the user saved while the sample was in flight wins, even when it
     // is the same temporary name the work had.
     if (this.renamed.has(work.id)) return;

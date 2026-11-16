@@ -344,11 +344,13 @@ function App() {
                 const title = name.trim().replace(/\s+/g, " ");
                 // While reconnecting nothing is sent: the form stays open so
                 // the typed name is not lost.
-                if (!title || !online || savingName) return;
-                // An unchanged name has nothing to save.
-                if (title === work.title) { setRenaming(false); return; }
-                setSavingName(title);
+                if (!title || title.length > MAX_TITLE || !online || savingName) return;
                 send({ type: "rename", workId: work.id, title });
+                // Saving the name as it is keeps it from being replaced by the
+                // automatic title. The snapshot cannot show that change, so the
+                // form closes now: the server accepts any name of this length.
+                if (title === work.title) setRenaming(false);
+                else setSavingName(title);
               }}
             >
               <label className="sr-only" htmlFor="work-name">Nombre del trabajo</label>
@@ -362,7 +364,7 @@ function App() {
                 onKeyDown={(e) => { if (e.key === "Escape") setRenaming(false); }}
                 className="min-w-0 flex-1 rounded-lg border border-[#c6d0c9] bg-[#fffefa] px-3 py-2 text-sm focus-visible:outline-3 focus-visible:outline-[#94733c] focus-visible:outline-offset-3"
               />
-              <button className={buttonPrimary} type="submit" disabled={!name.trim() || !online || !!savingName}>{savingName ? "Guardando…" : "Guardar"}</button>
+              <button className={buttonPrimary} type="submit" disabled={!name.trim() || name.trim().replace(/\s+/g, " ").length > MAX_TITLE || !online || !!savingName}>{savingName ? "Guardando…" : "Guardar"}</button>
               <button className={buttonSecondary} type="button" onClick={() => setRenaming(false)}>Cancelar</button>
             </form>
           ) : (

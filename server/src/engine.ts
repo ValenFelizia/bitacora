@@ -70,7 +70,7 @@ export interface Engine {
    * Cheap name for a work whose last request already finished. Resolves with
    * undefined when the sample ran but produced no usable text; rejects when it
    * could not run at all (engine stopping, thread busy, request error), so the
-   * work stays pending for the next finished request or the next start.
+   * work stays pending for the next finished request, even in a later session.
    */
   suggestTitle(conversationId: string): Promise<SuggestedTitle | undefined>;
   /** Stores the name in the engine so both sides show the same one. */
