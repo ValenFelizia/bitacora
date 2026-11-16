@@ -15,7 +15,7 @@ if (version !== codexVersion)
   throw new Error(`Se requiere codex-cli 0.168.0; instalado: ${version}`);
 execFileSync(
   binary,
-  ["app-server", "generate-ts", "--out", "server/src/codex/generated"],
+  ["app-server", "generate-ts", "--experimental", "--out", "server/src/codex/generated"],
   options,
 );
 writeFileSync("server/src/codex/VERSION", version + "\n");
