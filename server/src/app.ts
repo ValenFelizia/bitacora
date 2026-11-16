@@ -11,7 +11,7 @@ import { problemText, EngineFailure, activityText } from "./engine";
 import { fallbackTitle, MAX_TITLE } from "./titles";
 import type { FileRef, Message, Work, Snapshot, ClientCommand, ServerMessage } from "./contracts";
 
-type SavedWork = Work & { conversationId: string; pendingFiles?: { messageId: string; before?: Record<string, string> } };
+type SavedWork = Work & { conversationId: string; titlePending?: boolean; pendingFiles?: { messageId: string; before?: Record<string, string> } };
 const isText = (value: unknown) => typeof value === "string";
 const isFileRef = (value: unknown) => {
   const file = value as Partial<FileRef> | null;
@@ -29,6 +29,7 @@ const isSavedWork = (value: unknown) => {
     isText(work.createdAt) && isText(work.updatedAt) && isText(work.progress) &&
     (work.problem === undefined || isText(work.problem)) &&
     (work.busy === undefined || typeof work.busy === "boolean") &&
+    (work.titlePending === undefined || typeof work.titlePending === "boolean") &&
     Array.isArray(work.messages) && work.messages.every(isMessage) &&
     (work.pendingFiles === undefined || (!!work.pendingFiles && isText(work.pendingFiles.messageId)));
 };
@@ -78,6 +79,10 @@ export class App {
         throw new SyntaxError("Invalid saved work list");
       this.works = saved.works;
       this.backupReceipt = typeof saved.backupReceipt === "string" ? saved.backupReceipt : undefined;
+      // A work whose first request was paused or failed before it could be
+      // titled stays pending across restarts, so its next finished request
+      // still names it.
+      for (const work of this.works) if (work.titlePending) this.titlePending.add(work.id);
       for (const work of this.works)
         if (work.busy) {
           work.busy = false;
@@ -125,7 +130,7 @@ export class App {
       notice: this.notice,
       undo: !this.submitting && !this.works.some(w => w.busy) ? this.backups?.target : undefined,
       fileRevision: this.fileRevision,
-      works: this.works.map(({ conversationId: _, pendingFiles: __, ...work }) => work),
+      works: this.works.map(({ conversationId: _, pendingFiles: __, titlePending: ___, ...work }) => work),
     };
   }
   private async renameWithRetry(source: string, target: string) {
@@ -222,11 +227,16 @@ export class App {
    */
   private async generateTitle(work: SavedWork) {
     if (!this.titlePending.delete(work.id)) return;
+    // The attempt is saved with the work: a sample that fails is not retried
+    // after a restart, and the fallback name stays.
+    delete work.titlePending;
     const before = work.title;
     let suggestion: SuggestedTitle | undefined;
     try { suggestion = await this.engine.suggestTitle(work.conversationId); }
     catch { return; }
-    if (!suggestion || work.title !== before) return;
+    // A name the user saved while the sample was in flight wins, even when it
+    // is the same temporary name the work had.
+    if (!suggestion || this.renamed.has(work.id) || work.title !== before) return;
     work.title = suggestion.title;
     if (suggestion.usage)
       work.details = (work.details + `Título automático: ${suggestion.usage.input} de entrada (${suggestion.usage.cached} en caché), ${suggestion.usage.output} de salida.\n`).slice(-100000);
@@ -401,6 +411,7 @@ export class App {
       work.title = title;
       // A chosen name is final: no automatic title replaces it later.
       this.titlePending.delete(work.id);
+      delete work.titlePending;
       this.renamed.add(work.id);
       this.changed();
       try { await this.engine.renameWork(work.conversationId, title); }
@@ -486,7 +497,10 @@ export class App {
         };
         newWork = true;
         // A name the engine already provides is used as is.
-        if (!created.title) this.titlePending.add(work.id);
+        if (!created.title) {
+          work.titlePending = true;
+          this.titlePending.add(work.id);
+        }
       }
       attachments = await this.workspace?.attach(work.id, uploads || []) || [];
       const messageId = randomUUID();

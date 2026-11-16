@@ -28,7 +28,9 @@ contra el binario instalado, sin inferencia:
    conversación se vea igual si se retoma desde Codex.
 
 Si el pedido falla o se pausa, no se gasta la llamada: el trabajo conserva el
-nombre provisorio y el primer pedido que termine bien lo titula.
+nombre provisorio y el primer pedido que termine bien lo titula. Esa espera se
+guarda con el trabajo (`titlePending` en `works.json`), así que también vale si
+la app se cierra y se vuelve a abrir entre medio.
 
 ## Cuánto cuesta
 
@@ -46,9 +48,12 @@ Título automático: 1200 de entrada (1000 en caché), 12 de salida.
 ## La usuaria puede cambiarlo
 
 El encabezado del trabajo tiene «Cambiar el nombre». El nombre elegido gana
-sobre el automático (aunque la respuesta llegue después), se guarda en
-`works.json` y se manda al motor con `thread/name/set`. Se aceptan hasta 60
-letras; un nombre vacío o más largo se rechaza con un aviso en castellano.
+sobre el automático (aunque la respuesta llegue después, y aunque sea el mismo
+nombre provisorio), se guarda en `works.json` y se manda al motor con
+`thread/name/set`. Se aceptan hasta 60 letras; un nombre vacío o más largo se
+rechaza con un aviso en castellano. Mientras la app se está reconectando, el
+botón de guardar queda apagado y el formulario sigue abierto para no perder lo
+escrito.
 
 ## Límites y qué queda para la inferencia real
 

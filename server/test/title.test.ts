@@ -89,6 +89,49 @@ test("the first finished request gets a short name and the engine keeps it", asy
   }
 });
 
+test("a work paused before it was titled is titled after a restart", async () => {
+  const f = await appFixture();
+  try {
+    await f.app.command({ type: "send", text: "Armame una propuesta" }, f.reply);
+    f.engine.emit({ type: "finished", conversationId: "conversation-1", status: "interrupted" });
+    // The pending flag travels with the work, never in the snapshot.
+    assert.equal("titlePending" in f.app.snapshot().works[0], false);
+    await f.app.close();
+    const engine = new FakeEngine();
+    engine.suggested = "Porto de Galinhas, febrero";
+    const restarted = new App(engine, f.dir, f.reply);
+    await restarted.start();
+    engine.emit({ type: "finished", conversationId: "conversation-1", status: "completed" });
+    await until(() => restarted.snapshot().works[0].title === "Porto de Galinhas, febrero");
+    await restarted.close();
+  } finally {
+    await f.app.close();
+    await rm(f.dir, { recursive: true });
+  }
+});
+
+test("saving the temporary name while the sample is in flight keeps it", async () => {
+  const f = await appFixture();
+  try {
+    f.engine.suggested = "Porto de Galinhas, febrero";
+    let release!: () => void;
+    f.engine.titleGate = new Promise<void>((resolve) => { release = resolve; });
+    await f.app.command({ type: "send", text: "Armame una propuesta" }, f.reply);
+    const work = f.app.snapshot().works[0];
+    f.engine.emit({ type: "finished", conversationId: "conversation-1", status: "completed" });
+    await until(() => f.engine.calls.includes("title:conversation-1"));
+    // The user opens the name and saves the same temporary one.
+    await f.app.command({ type: "rename", workId: work.id, title: work.title }, f.reply);
+    release();
+    await delay(20);
+    assert.equal(f.app.snapshot().works[0].title, work.title);
+    assert.equal(f.engine.renamed.at(-1)?.title, work.title);
+  } finally {
+    await f.app.close();
+    await rm(f.dir, { recursive: true });
+  }
+});
+
 test("a name the user chooses wins over the automatic one", async () => {
   const f = await appFixture();
   try {
