@@ -325,7 +325,9 @@ function App() {
               onSubmit={(e) => {
                 e.preventDefault();
                 const title = name.trim();
-                if (!title) return;
+                // While reconnecting nothing is sent: the form stays open so
+                // the typed name is not lost.
+                if (!title || !online) return;
                 send({ type: "rename", workId: work.id, title });
                 setRenaming(false);
               }}
@@ -340,7 +342,7 @@ function App() {
                 onKeyDown={(e) => { if (e.key === "Escape") setRenaming(false); }}
                 className="min-w-0 flex-1 rounded-lg border border-[#c6d0c9] bg-[#fffefa] px-3 py-2 text-sm focus-visible:outline-3 focus-visible:outline-[#94733c] focus-visible:outline-offset-3"
               />
-              <button className={buttonPrimary} type="submit" disabled={!name.trim()}>Guardar</button>
+              <button className={buttonPrimary} type="submit" disabled={!name.trim() || !online}>Guardar</button>
               <button className={buttonSecondary} type="button" onClick={() => setRenaming(false)}>Cancelar</button>
             </form>
           ) : (
