@@ -13,6 +13,8 @@ import type { FileRef, Message, Work, Snapshot, ClientCommand, ServerMessage } f
 
 type SavedWork = Work & { conversationId: string; titlePending?: boolean; renamedByUser?: boolean; pendingFiles?: { messageId: string; before?: Record<string, string> } };
 const isText = (value: unknown) => typeof value === "string";
+/** How long close() lets a title request already in flight finish before stopping the engine. */
+const TITLE_CLOSE_WAIT_MS = 2000;
 const isFileRef = (value: unknown) => {
   const file = value as Partial<FileRef> | null;
   return !!file && isText(file.id) && isText(file.path) && isText(file.name) && isText(file.mime) && isText(file.createdAt);
@@ -228,25 +230,42 @@ export class App {
    * Replaces the fallback name with the engine's short one, once, after the
    * first request. It never overwrites a name the user chose meanwhile, and a
    * failure leaves the fallback in place.
+   *
+   * The work stays pending until a title is applied or the sample answered
+   * with no usable text: a sample that could not run (engine stopping, thread
+   * busy, request error) is retried by the next finished request or the next
+   * start.
    */
-  private async generateTitle(work: SavedWork) {
-    if (!this.titlePending.delete(work.id)) return;
-    // The attempt is saved with the work: a sample that fails is not retried
-    // after a restart, and the fallback name stays.
+  private clearTitlePending(work: SavedWork) {
+    this.titlePending.delete(work.id);
     delete work.titlePending;
+  }
+  private async generateTitle(work: SavedWork) {
+    if (!this.titlePending.has(work.id)) return;
     const before = work.title;
     let suggestion: SuggestedTitle | undefined;
     try { suggestion = await this.engine.suggestTitle(work.conversationId); }
     catch { return; }
     // A name the user saved while the sample was in flight wins, even when it
     // is the same temporary name the work had.
-    if (!suggestion || this.renamed.has(work.id) || work.title !== before) return;
+    if (this.renamed.has(work.id)) return;
+    // Someone else named the work, or the sample answered without text: there
+    // is nothing left to wait for.
+    if (work.title !== before || !suggestion) {
+      this.clearTitlePending(work);
+      this.changed();
+      return;
+    }
     work.title = suggestion.title;
+    this.clearTitlePending(work);
     if (suggestion.usage)
       work.details = (work.details + `Título automático: ${suggestion.usage.input} de entrada (${suggestion.usage.cached} en caché), ${suggestion.usage.output} de salida.\n`).slice(-100000);
     this.changed();
     try { await this.engine.renameWork(work.conversationId, work.title); }
-    catch (error) { work.details = (work.details + `No pude guardar el título en el motor: ${String(error)}\n`).slice(-100000); }
+    catch (error) {
+      work.details = (work.details + `No pude guardar el título en el motor: ${String(error)}\n`).slice(-100000);
+      this.changed();
+    }
   }
   private event(event: EngineEvent) {
     if (event.type === "protection") {
@@ -558,7 +577,9 @@ export class App {
       if (!committed) {
         await this.workspace?.removeAttachments(attachments);
         if (work) {
-          this.titlePending.delete(work.id);
+          // Only a work created by this request is discarded: an existing one
+          // keeps its own flags, including a pending title.
+          if (newWork) this.clearTitlePending(work);
           delete work.pendingFiles;
           await rm(this.pendingPath(work), { force: true });
         }
@@ -582,11 +603,21 @@ export class App {
   }
   async close() {
     clearTimeout(this.flushTimer);
+    // A title already on its way gets a short, bounded chance to finish before
+    // the engine stops. If it does not, the work stays pending and the next
+    // start titles it.
+    await Promise.race([
+      Promise.all([...this.titleTasks].map((task) => task.catch(() => {}))),
+      new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, TITLE_CLOSE_WAIT_MS);
+        timer.unref?.();
+      }),
+    ]);
     await this.engine.close();
     this.unsubscribe?.();
     await Promise.all(this.scans);
-    // A title that was already on its way finishes before the last save, so
-    // nothing writes after close() returns.
+    // Stopping the engine settles whatever title request was still in flight,
+    // so nothing writes after close() returns.
     await Promise.all([...this.titleTasks].map((task) => task.catch(() => {})));
     clearTimeout(this.flushTimer);
     // Wait for the last write so a failure marks the change as unsaved, then

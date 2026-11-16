@@ -67,8 +67,10 @@ export interface Engine {
   createWork(): Promise<{ conversationId: string; title?: string }>;
   resumeWork(conversationId: string): Promise<void>;
   /**
-   * Cheap name for a work whose last request already finished, or undefined
-   * when the engine cannot suggest one. Never starts a visible request.
+   * Cheap name for a work whose last request already finished. Resolves with
+   * undefined when the sample ran but produced no usable text; rejects when it
+   * could not run at all (engine stopping, thread busy, request error), so the
+   * work stays pending for the next finished request or the next start.
    */
   suggestTitle(conversationId: string): Promise<SuggestedTitle | undefined>;
   /** Stores the name in the engine so both sides show the same one. */

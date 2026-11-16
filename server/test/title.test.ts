@@ -34,7 +34,16 @@ test("a long title is cut at a word boundary", () => {
 
 test("the fallback name is the start of the first request", () => {
   assert.equal(fallbackTitle("  Armemos   una propuesta  "), "Armemos una propuesta");
-  assert.equal(fallbackTitle("x".repeat(100)).length, 64);
+  assert.equal(fallbackTitle("x".repeat(100)).length, MAX_TITLE);
+});
+
+test("the fallback name fits the rename limit", () => {
+  // A name the app pre-fills must be accepted by the rename command as is.
+  assert.equal(fallbackTitle("x".repeat(100)).length, MAX_TITLE);
+  const words = fallbackTitle("Armame una propuesta de viaje a Porto de Galinhas para febrero con todo incluido");
+  assert.ok(words.length <= MAX_TITLE);
+  assert.ok(words.length > 0);
+  assert.equal(words, words.trim());
 });
 
 async function appFixture() {
@@ -126,6 +135,88 @@ test("saving the temporary name while the sample is in flight keeps it", async (
     await delay(20);
     assert.equal(f.app.snapshot().works[0].title, work.title);
     assert.equal(f.engine.renamed.at(-1)?.title, work.title);
+  } finally {
+    await f.app.close();
+    await rm(f.dir, { recursive: true });
+  }
+});
+
+test("a sample that could not run leaves the work pending for the next start", async () => {
+  const f = await appFixture();
+  try {
+    f.engine.suggested = "Porto de Galinhas, febrero";
+    f.engine.titleFails = true;
+    await f.app.command({ type: "send", text: "Armame una propuesta" }, f.reply);
+    f.engine.emit({ type: "finished", conversationId: "conversation-1", status: "completed" });
+    await until(() => f.engine.calls.includes("title:conversation-1"));
+    await delay(20);
+    assert.match(f.app.snapshot().works[0].title, /^Armame una propuesta/);
+    await f.app.close();
+    const engine = new FakeEngine();
+    engine.suggested = "Porto de Galinhas, febrero";
+    const restarted = new App(engine, f.dir, f.reply);
+    await restarted.start();
+    engine.emit({ type: "finished", conversationId: "conversation-1", status: "completed" });
+    await until(() => restarted.snapshot().works[0].title === "Porto de Galinhas, febrero");
+    await restarted.close();
+  } finally {
+    await f.app.close();
+    await rm(f.dir, { recursive: true });
+  }
+});
+
+test("a sample with no usable text does not ask again", async () => {
+  const f = await appFixture();
+  try {
+    await f.app.command({ type: "send", text: "Armame una propuesta" }, f.reply);
+    f.engine.emit({ type: "finished", conversationId: "conversation-1", status: "completed" });
+    await until(() => f.engine.calls.includes("title:conversation-1"));
+    await delay(20);
+    f.engine.emit({ type: "finished", conversationId: "conversation-1", status: "completed" });
+    await delay(30);
+    assert.equal(f.engine.calls.filter((call) => call === "title:conversation-1").length, 1);
+  } finally {
+    await f.app.close();
+    await rm(f.dir, { recursive: true });
+  }
+});
+
+test("a send that fails before it starts keeps an existing work pending", async () => {
+  const f = await appFixture();
+  try {
+    await f.app.command({ type: "send", text: "Armame una propuesta" }, f.reply);
+    f.engine.emit({ type: "finished", conversationId: "conversation-1", status: "interrupted" });
+    await f.app.close();
+    // After a restart the work is still pending, and its conversation is
+    // resumed on the next request: that resume fails before the send commits.
+    const engine = new FakeEngine();
+    engine.suggested = "Porto de Galinhas, febrero";
+    const restarted = new App(engine, f.dir, f.reply);
+    await restarted.start();
+    const id = restarted.snapshot().works[0].id;
+    engine.resumeFails = true;
+    await assert.rejects(restarted.command({ type: "send", workId: id, text: "Seguí" }, f.reply));
+    engine.resumeFails = false;
+    engine.emit({ type: "finished", conversationId: "conversation-1", status: "completed" });
+    await until(() => restarted.snapshot().works[0].title === "Porto de Galinhas, febrero");
+    await restarted.close();
+  } finally {
+    await f.app.close();
+    await rm(f.dir, { recursive: true });
+  }
+});
+
+test("a name the engine refuses is saved in the detail", async () => {
+  const f = await appFixture();
+  try {
+    f.engine.suggested = "Porto de Galinhas, febrero";
+    f.engine.renameFails = true;
+    await f.app.command({ type: "send", text: "Armame una propuesta" }, f.reply);
+    f.engine.emit({ type: "finished", conversationId: "conversation-1", status: "completed" });
+    await until(() => f.app.snapshot().works[0].title === "Porto de Galinhas, febrero");
+    await delay(100);
+    const saved = JSON.parse(await readFile(join(f.dir, "works.json"), "utf8"));
+    assert.match(saved.works[0].details, /No pude guardar el título en el motor/);
   } finally {
     await f.app.close();
     await rm(f.dir, { recursive: true });
@@ -316,7 +407,9 @@ test("no sample is asked before a request finished", async () => {
   const f = await engineFixture();
   try {
     const { conversationId } = await f.engine.createWork();
-    assert.equal(await f.engine.suggestTitle(conversationId), undefined);
+    // No finished turn yet: the sample cannot run, so the work must stay
+    // pending instead of being marked as answered.
+    await assert.rejects(f.engine.suggestTitle(conversationId));
     assert.equal((await f.records()).filter((m) => m.method === "thread/sample").length, 0);
   } finally {
     await f.close();

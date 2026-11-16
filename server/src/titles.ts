@@ -17,6 +17,14 @@ export const TITLE_PROMPT =
 /** Longest name the app accepts, both for the automatic one and for a rename. */
 export const MAX_TITLE = 60;
 
+/** Cuts a name to the limit without leaving half a word behind. */
+function cutToLimit(title: string): string {
+  if (title.length <= MAX_TITLE) return title;
+  const cut = title.slice(0, MAX_TITLE);
+  const space = cut.lastIndexOf(" ");
+  return (space > 20 ? cut.slice(0, space) : cut).trim();
+}
+
 /** Turns the model's answer into a name: first line, no quotes, no trailing dots. */
 export function cleanTitle(text: string | null | undefined): string | undefined {
   if (!text) return undefined;
@@ -29,15 +37,14 @@ export function cleanTitle(text: string | null | undefined): string | undefined 
   title = title.replace(/[.;,]+$/, "");
   title = strip(title).replace(/\s+/g, " ");
   if (!title) return undefined;
-  if (title.length > MAX_TITLE) {
-    const cut = title.slice(0, MAX_TITLE);
-    const space = cut.lastIndexOf(" ");
-    title = (space > 20 ? cut.slice(0, space) : cut).trim();
-  }
-  return title || undefined;
+  return cutToLimit(title) || undefined;
 }
 
-/** Name a work carries until a better one arrives: the start of the first request. */
+/**
+ * Name a work carries until a better one arrives: the start of the first
+ * request. It obeys the same limit as a rename, so saving the pre-filled name
+ * unchanged is accepted.
+ */
 export function fallbackTitle(text: string): string {
-  return text.trim().replace(/\s+/g, " ").slice(0, 64);
+  return cutToLimit(text.trim().replace(/\s+/g, " "));
 }

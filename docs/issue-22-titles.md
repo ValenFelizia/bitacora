@@ -32,6 +32,14 @@ nombre provisorio y el primer pedido que termine bien lo titula. Esa espera se
 guarda con el trabajo (`titlePending` en `works.json`), así que también vale si
 la app se cierra y se vuelve a abrir entre medio.
 
+Si la muestra no llegó a correr (la app se está cerrando, el hilo todavía está
+ocupado porque la usuaria ya mandó otro pedido, o el motor devolvió un error),
+el trabajo sigue esperando: lo titula el próximo pedido que termine bien, o el
+próximo arranque. Solo se deja de esperar cuando hay un título o cuando la
+muestra contestó sin texto usable. Al cerrar, la app le da a una muestra en
+curso hasta dos segundos para terminar antes de apagar el motor; si no llega,
+queda pendiente.
+
 ## Cuánto cuesta
 
 Una llamada más al modelo, con el contexto de la conversación que acaba de
@@ -52,10 +60,12 @@ sobre el automático (aunque la respuesta llegue después, y aunque sea el mismo
 nombre provisorio), se guarda en `works.json` y se manda al motor con
 `thread/name/set`. La elección queda marcada con el trabajo (`renamedByUser`),
 así que sobrevive a cerrar y abrir la app y ningún nombre que informe el motor
-después la reemplaza. Se aceptan hasta 60 letras; un nombre vacío o más largo se
-rechaza con un aviso en castellano. Mientras la app se está reconectando, el
-botón de guardar queda apagado y el formulario sigue abierto para no perder lo
-escrito.
+después la reemplaza. Se aceptan hasta 60 letras, y el nombre provisorio usa el
+mismo límite, así que guardarlo tal cual se acepta. El formulario no se cierra
+al tocar «Guardar»: espera a que el trabajo muestre el nombre guardado, y si el
+servidor lo rechaza queda abierto con el aviso. Mientras la app se está
+reconectando, el botón queda apagado y el formulario sigue abierto para no
+perder lo escrito.
 
 ## Límites y qué queda para la inferencia real
 
@@ -68,4 +78,5 @@ escrito.
   provisorio.
 - `thread/sample` exige que el hilo esté inactivo y que el turno indicado sea el
   último terminado. Si el hilo todavía se está cerrando, se reintenta una vez a
-  los 200 ms; si la usuaria ya mandó otro pedido, se deja el nombre provisorio.
+  los 200 ms; si la usuaria ya mandó otro pedido, la muestra no corre y el
+  trabajo queda pendiente para el pedido siguiente.

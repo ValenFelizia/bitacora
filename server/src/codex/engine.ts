@@ -1101,10 +1101,14 @@ export class CodexEngine implements Engine {
    * finished turn, so it sees the conversation and costs one extra call. The
    * answer is only the text: a tool call makes the sample empty and the work
    * keeps its fallback name.
+   *
+   * It rejects when the sample could not run at all, so the caller keeps the
+   * work pending instead of treating it as answered.
    */
   async suggestTitle(conversationId: string) {
     const expectedTurnId = this.lastTurn.get(conversationId);
-    if (!this.available || !expectedTurnId) return undefined;
+    if (!this.available) throw new Error("The engine is not available");
+    if (!expectedTurnId) throw new Error("No finished turn to sample");
     for (let attempt = 0; ; attempt++) {
       try {
         const sample = await this.rpc("thread/sample", {
@@ -1130,7 +1134,7 @@ export class CodexEngine implements Engine {
           await new Promise((resolve) => setTimeout(resolve, 200));
           continue;
         }
-        return undefined;
+        throw error;
       }
     }
   }
