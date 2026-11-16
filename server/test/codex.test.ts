@@ -5,6 +5,7 @@ import { resolve, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { CodexEngine, appServerArgs, PERMISSIONS_PROFILE } from "../src/codex/engine";
 import type { KillProcessTree } from "../src/codex/engine";
+import { fakeAppServerArgs } from "./fake-app-server";
 import type { EngineEvent } from "../src/engine";
 
 test("ready unelevated remains blocked", async () => {
@@ -171,10 +172,7 @@ async function openFixture(
     home: join(dir, "home"),
     workspace: join(dir, "workspace"),
     binary: process.execPath,
-    args: (backend) => [
-      resolve("server/test/stdio-server.mjs"),
-      ...appServerArgs(backend),
-    ],
+    args: fakeAppServerArgs,
     restartDelayMs: 30,
     stableAfterMs,
     probeProtection: async () => process.env.BITACORA_FAKE_MXC === "1",
