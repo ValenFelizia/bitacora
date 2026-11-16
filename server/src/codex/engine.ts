@@ -201,7 +201,12 @@ export class CodexEngine implements Engine {
       home: string;
       workspace: string;
       binary?: string;
-      args?: string[];
+      /**
+       * Arguments for the app-server. A function receives the backend the
+       * check decided, so a test app-server can be started with the arguments
+       * the real one would get; a fixed list is used as is.
+       */
+      args?: string[] | ((backend: SandboxBackend | undefined) => string[]);
       restartDelayMs?: number;
       stableAfterMs?: number;
       scheduleTimer?: ScheduleTimer;
@@ -286,12 +291,22 @@ export class CodexEngine implements Engine {
         }).trim();
     if (version !== codexVersion)
       throw new Error(`Expected ${codexVersion}, received ${version}`);
-    this.spawnedWithProfile = !this.options.args && this.backend !== "elevated";
-    this.child = spawn(
-      binary,
-      this.options.args || appServerArgs(this.backend),
-      { cwd: this.options.workspace, env, windowsHide: true, stdio: "pipe" },
+    const args =
+      typeof this.options.args === "function"
+        ? this.options.args(this.backend)
+        : this.options.args;
+    const spawnArgs = args ?? appServerArgs(this.backend);
+    // The mode is read back from the arguments the process really got: a
+    // process started for the other backend is never mistaken for a match.
+    this.spawnedWithProfile = spawnArgs.some((arg) =>
+      arg.startsWith("default_permissions="),
     );
+    this.child = spawn(binary, spawnArgs, {
+      cwd: this.options.workspace,
+      env,
+      windowsHide: true,
+      stdio: "pipe",
+    });
     const child = this.child;
     this.lastChild = child;
     let failed = false;
@@ -362,11 +377,12 @@ export class CodexEngine implements Engine {
   }
   /**
    * True when the running app-server was started for the backend the check
-   * decided. A test app-server is started with fixed arguments and has no
-   * profile to define, so the mode only changes what the engine sends.
+   * decided. Before anything is decided (`undefined`) it is true: that process
+   * carries the profile, the safe default, and no work is allowed until the
+   * check decides.
    */
   private modeMatches() {
-    if (this.options.args || !this.backend) return true;
+    if (!this.backend) return true;
     return this.spawnedWithProfile === (this.backend === "mxc");
   }
   private setupMode?: "mxc" | "elevated";
@@ -377,8 +393,28 @@ export class CodexEngine implements Engine {
   private setupInterrupted = false;
   private checking?: Promise<void>;
   private setProtection(safety: ExecutionSafety) {
+    // Work is only allowed for a process started in the decided mode. A check
+    // that allows work while the running process was started for the other
+    // backend would mix the two, so the decision is published as blocked and
+    // the process is replaced; the next check allows work on the new one.
+    if (safety.allowed && !this.modeMatches()) {
+      this.safety = { ...safety, allowed: false };
+      this.emit({ type: "protection", safety: this.safety });
+      this.replaceProcess();
+      return;
+    }
     this.safety = safety;
     this.emit({ type: "protection", safety });
+  }
+  /**
+   * Replaces the app-server when the check decided a backend the running
+   * process was not started for. During startup `runStart` owns that restart
+   * (it returns false and `startInDecidedMode` spawns again); here it is a
+   * process that is already serving, so the replacement is a reload.
+   */
+  private replaceProcess() {
+    if (!this.available || this.stopping) return;
+    void this.reloadProtection().catch(() => { /* fail() owns restart errors */ });
   }
   /**
    * Whether the native sandbox can run here, asked every time the check reads
@@ -515,6 +551,13 @@ export class CodexEngine implements Engine {
     // repeating an administrative setup whose outcome is not yet known.
     if (!this.setupMode) {
       await this.checkProtection();
+      // The check may have decided the other backend (the first check failed
+      // and this retry succeeded): the process is replaced in the decided mode
+      // before any work is allowed.
+      if (!this.modeMatches()) {
+        await this.reloadProtection();
+        return;
+      }
       if (this.safety.status === "needed" && !this.safety.needsPermission) await this.prepareProtection();
       return;
     }
@@ -683,7 +726,25 @@ export class CodexEngine implements Engine {
     timer.unref();
     this.pauseTimers.set(conversationId, timer);
   }
-  private async reloadProtection() {
+  private reloading?: Promise<void>;
+  /**
+   * Stops the app-server and starts a new one for the decided mode. Two checks
+   * can decide the same replacement at once: only one process is replaced, and
+   * every caller waits for the same one.
+   */
+  private reloadProtection() {
+    if (this.reloading) return this.reloading;
+    // The reload starts in a microtask, so the promise is stored before a
+    // listener of the events it emits can ask for another one.
+    const reload = Promise.resolve()
+      .then(() => this.runReload())
+      .finally(() => {
+        if (this.reloading === reload) this.reloading = undefined;
+      });
+    this.reloading = reload;
+    return reload;
+  }
+  private async runReload() {
     const child = this.child;
     this.child = undefined;
     this.available = false;

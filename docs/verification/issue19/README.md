@@ -83,6 +83,11 @@ con la protección de escritura anterior y avisa, en vez de negarse a trabajar.
   "elevated" rechaza ese perfil y, al ser el default, todo comando fallaría. Si
   el proceso se abrió con el perfil, el motor lo detiene y lo vuelve a abrir sin
   él antes de habilitar pedidos.
+- Lo mismo vale para cualquier camino que decida el modo, no solo el arranque:
+  el reintento después de una comprobación fallida, el setup de Windows que
+  termina tarde y la recarga de la protección. Ninguno deja `allowed: true`
+  sobre un proceso abierto con los argumentos del otro modo: primero se lo
+  reemplaza, y el proceso nuevo se comprueba de nuevo antes de trabajar.
 - Cada `thread/start` y `thread/resume` manda `sandbox: "workspace-write"` y cada
   `turn/start` manda `sandboxPolicy` workspaceWrite con `writableRoots` la
   carpeta, `networkAccess: false`, `excludeTmpdirEnvVar: true` y

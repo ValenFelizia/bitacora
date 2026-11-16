@@ -13,6 +13,13 @@ let interruptRejects = false;
 let crashScheduled = false;
 if (process.env.BITACORA_FAKE_PID)
   appendFileSync(process.env.BITACORA_FAKE_PID, `${process.pid}\n`);
+// The arguments this process was started with: the engine picks them from the
+// sandbox mode, so a test can tell which mode each process was spawned for.
+if (process.env.BITACORA_FAKE_SPAWN)
+  appendFileSync(
+    process.env.BITACORA_FAKE_SPAWN,
+    JSON.stringify({ pid: process.pid, args: process.argv.slice(2) }) + "\n",
+  );
 const turn = (status = "inProgress") => ({ id: "turn-1", status, error: null });
 // The profile a thread reports back. `BITACORA_FAKE_THREAD_PROFILE=none` is an
 // engine that ignored the request and would run with the default profile;
@@ -45,6 +52,13 @@ createInterface({ input: process.stdin })
         reply({ userAgent: "fake" });
         break;
       case "windowsSandbox/readiness":
+        // `BITACORA_FAKE_READ_FAIL_ONCE` fails only for the first process that
+        // asks, so a test can make the startup check fail and the retry work.
+        if (process.env.BITACORA_FAKE_READ_FAIL_ONCE && !existsSync(setupFile + ".read-failed")) {
+          writeFileSync(setupFile + ".read-failed", "1");
+          send({ id: m.id, error: { message: "read failed" } });
+          break;
+        }
         if (process.env.BITACORA_FAKE_READ_FAIL) { send({ id: m.id, error: { message: "read failed" } }); break; }
         reply({ status: configuredMode ? "ready" : process.env.BITACORA_FAKE_SAFETY || "ready" });
         break;

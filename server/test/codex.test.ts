@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { CodexEngine, appServerArgs } from "../src/codex/engine";
+import { CodexEngine, appServerArgs, PERMISSIONS_PROFILE } from "../src/codex/engine";
+import type { KillProcessTree } from "../src/codex/engine";
 import type { EngineEvent } from "../src/engine";
 
 test("ready unelevated remains blocked", async () => {
@@ -94,7 +95,9 @@ test("setupStart timeout unlocks retry as a read, not another UAC", async () => 
     assert.equal(f.engine.executionSafety().issue, "uncertain");
     await f.engine.prepareProtection();
     assert.equal((await f.records()).filter(m => m.method === "windowsSandbox/setupStart").length, 1);
-    assert.equal((await f.records()).filter(m => m.method === "windowsSandbox/readiness").length, 2);
+    // One check per process (the first one, the one replaced in the decided
+    // mode) plus the read that the retry does instead of another UAC.
+    assert.equal((await f.records()).filter(m => m.method === "windowsSandbox/readiness").length, 3);
   } finally {
     delete process.env.BITACORA_FAKE_SETUP_TIMEOUT;
     delete process.env.BITACORA_FAKE_SAFETY;
@@ -133,16 +136,45 @@ function mxc() {
   process.env.BITACORA_FAKE_MODE = "mxc";
   process.env.BITACORA_FAKE_MXC = "1";
 }
-async function fixture(stableAfterMs = 60_000, options: Partial<ConstructorParameters<typeof CodexEngine>[0]> = {}) {
+/** True when these spawn arguments define the read-restricting profile. */
+const definesProfile = (args: string[]) =>
+  args.some(
+    (arg) =>
+      arg.startsWith("default_permissions=") ||
+      arg.includes(`permissions.${PERMISSIONS_PROFILE}=`),
+  );
+/** True while the process is alive. */
+function alive(pid: number) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+/**
+ * The fake app-server is spawned with the arguments the real one would get for
+ * the decided backend, so the mode of every process can be asserted instead of
+ * assumed.
+ */
+async function openFixture(
+  stableAfterMs = 60_000,
+  options: Partial<ConstructorParameters<typeof CodexEngine>[0]> = {},
+) {
   await mkdir(".local", { recursive: true });
   const dir = await mkdtemp(resolve(".local/adapter-"));
   const log = join(dir, "protocol.jsonl");
+  const spawnLog = join(dir, "spawns.jsonl");
   process.env.BITACORA_FAKE_LOG = log;
+  process.env.BITACORA_FAKE_SPAWN = spawnLog;
   const engine = new CodexEngine({
     home: join(dir, "home"),
     workspace: join(dir, "workspace"),
     binary: process.execPath,
-    args: [resolve("server/test/stdio-server.mjs")],
+    args: (backend) => [
+      resolve("server/test/stdio-server.mjs"),
+      ...appServerArgs(backend),
+    ],
     restartDelayMs: 30,
     stableAfterMs,
     probeProtection: async () => process.env.BITACORA_FAKE_MXC === "1",
@@ -150,32 +182,34 @@ async function fixture(stableAfterMs = 60_000, options: Partial<ConstructorParam
   });
   const events: EngineEvent[] = [];
   engine.subscribe((e) => events.push(e));
-  try {
-    await engine.start();
-  } catch (error) {
-    // A failed start must not leave a process behind or poison the next test
-    // with this file's fake-app-server settings.
-    await engine.close().catch(() => {});
-    for (const key of Object.keys(process.env))
-      if (key.startsWith("BITACORA_FAKE_")) delete process.env[key];
-    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }).catch(() => {});
-    throw error;
-  }
   const records = async () =>
     (await readFile(log, "utf8"))
       .trim()
       .split("\n")
       .map((l) => JSON.parse(l));
+  const spawns = async () => {
+    try {
+      return (await readFile(spawnLog, "utf8"))
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as { pid: number; args: string[] });
+    } catch {
+      return [];
+    }
+  };
   return {
     engine,
     events,
     records,
+    spawns,
     dir,
     close: async () => {
       try {
         await engine.close();
       } finally {
         delete process.env.BITACORA_FAKE_LOG;
+        delete process.env.BITACORA_FAKE_SPAWN;
         // The sandbox mode is chosen per test, before the fixture exists.
         delete process.env.BITACORA_FAKE_MODE;
         delete process.env.BITACORA_FAKE_MXC;
@@ -183,6 +217,23 @@ async function fixture(stableAfterMs = 60_000, options: Partial<ConstructorParam
       }
     },
   };
+}
+async function fixture(
+  stableAfterMs = 60_000,
+  options: Partial<ConstructorParameters<typeof CodexEngine>[0]> = {},
+) {
+  const f = await openFixture(stableAfterMs, options);
+  try {
+    await f.engine.start();
+  } catch (error) {
+    // A failed start must not leave a process behind or poison the next test
+    // with this file's fake-app-server settings.
+    await f.close().catch(() => {});
+    for (const key of Object.keys(process.env))
+      if (key.startsWith("BITACORA_FAKE_")) delete process.env[key];
+    throw error;
+  }
+  return f;
 }
 async function until(predicate: () => boolean | Promise<boolean>) {
   for (let i = 0; i < 100; i++) {
@@ -341,9 +392,11 @@ test("child exit rejects the pending turn and restarts with a fresh handshake", 
     assert.ok(f.events.some((e) => e.type === "availability" && !e.available));
     await f.engine.resumeWork("thread-1");
     await f.engine.send("thread-1", "race");
+    // One handshake for the process that answered the first check, one for the
+    // process replaced in the decided mode, one for the restart after the crash.
     assert.equal(
       (await f.records()).filter((m) => m.method === "initialize").length,
-      2,
+      3,
     );
   } finally {
     await f.close();
@@ -407,9 +460,11 @@ test("restart backoff grows, exhausts explicitly and allows manual retry", async
     await assert.rejects(f.engine.send("thread-1", "crash"));
     await until(() => f.events.some(e => e.type === "availability" && e.exhausted));
     assert.equal(clock.pending(), 0);
-    assert.equal((await f.records()).filter(m => m.method === "initialize").length, 6);
-    await f.engine.retry();
+    // Two handshakes at startup (the first process, then the one replaced in
+    // the decided mode) and one per restart.
     assert.equal((await f.records()).filter(m => m.method === "initialize").length, 7);
+    await f.engine.retry();
+    assert.equal((await f.records()).filter(m => m.method === "initialize").length, 8);
   } finally { await f.close(); }
 });
 
@@ -423,9 +478,11 @@ test("closing during an automatic restart leaves no engine running", async () =>
     clock.runNext();
     await f.engine.close();
     await delay(300);
+    // The startup pair is the only handshake: the restart was stopped before
+    // spawning anything.
     assert.equal(
       (await f.records()).filter((m) => m.method === "initialize").length,
-      1,
+      2,
     );
   } finally {
     await f.close();
@@ -616,9 +673,125 @@ test("an inconclusive MXC probe keeps the protection that already works", async 
   let probes = 0;
   const f = await fixture(60_000, { probeProtection: async () => { probes++; throw new Error("probe timed out"); } });
   try {
-    assert.equal(probes, 1);
+    // One probe per process: the first process cannot serve the elevated
+    // backend, so it is replaced and the new one asks again.
+    assert.equal(probes, 2);
     assert.equal(f.engine.executionSafety().allowed, true);
     assert.equal(f.engine.executionSafety().readBlock, false);
+  } finally { await f.close(); }
+});
+
+test("a machine without MXC replaces the first process with one without the profile", async () => {
+  // The backend is only known after the first check, so that process carries
+  // the profile (the safe default) and cannot serve the elevated backend: it is
+  // stopped and replaced exactly once, before any work is allowed.
+  const f = await fixture();
+  try {
+    const spawns = await f.spawns();
+    assert.equal(spawns.length, 2);
+    assert.equal(definesProfile(spawns[0].args), true);
+    assert.equal(definesProfile(spawns[1].args), false);
+    assert.notEqual(spawns[0].pid, spawns[1].pid);
+    assert.equal(alive(spawns[0].pid), false);
+    assert.equal(f.engine.executionSafety().allowed, true);
+    assert.equal(f.engine.executionSafety().readBlock, false);
+    await f.engine.send("thread-1", "race");
+    const turn = (await f.records()).find((m) => m.method === "turn/start");
+    assert.equal(turn.params.permissions, undefined);
+    assert.equal(turn.params.sandboxPolicy.type, "workspaceWrite");
+  } finally { await f.close(); }
+});
+
+test("a failed first check ends with a process without the profile before work is allowed", async () => {
+  // The first process answered the check with an error, so the engine came up
+  // blocked with the profile still on its command line. The retry decides the
+  // elevated backend: that process cannot run it and must be replaced before
+  // any work is allowed.
+  process.env.BITACORA_FAKE_READ_FAIL_ONCE = "1";
+  const f = await fixture();
+  try {
+    assert.equal(f.engine.executionSafety().allowed, false);
+    assert.equal(f.engine.executionSafety().issue, "check");
+    await assert.rejects(f.engine.send("thread-1", "race"));
+    await f.engine.prepareProtection();
+    assert.equal(f.engine.executionSafety().allowed, true);
+    assert.equal(f.engine.executionSafety().readBlock, false);
+    const spawns = await f.spawns();
+    assert.equal(spawns.length, 2);
+    assert.equal(definesProfile(spawns[0].args), true);
+    assert.equal(definesProfile(spawns[1].args), false);
+    await f.engine.send("thread-1", "race");
+    const turn = (await f.records()).find((m) => m.method === "turn/start");
+    assert.equal(turn.params.permissions, undefined);
+    assert.equal(turn.params.sandboxPolicy.type, "workspaceWrite");
+  } finally {
+    delete process.env.BITACORA_FAKE_READ_FAIL_ONCE;
+    await f.close();
+  }
+});
+
+test("an MXC machine whose probe cannot answer does not work", async () => {
+  // A probe that times out is not a "no MXC" answer: on a machine whose saved
+  // or configured mode is the profile, the app must not fall back to the
+  // weaker mode.
+  for (const mode of ["mxc", undefined] as const) {
+    if (mode) process.env.BITACORA_FAKE_MODE = mode;
+    else process.env.BITACORA_FAKE_SAFETY = "notConfigured";
+    const f = await fixture(60_000, {
+      probeProtection: async () => { throw new Error("probe timed out"); },
+    });
+    try {
+      assert.equal(f.engine.executionSafety().allowed, false, String(mode));
+      assert.equal(f.engine.executionSafety().issue, "check");
+      await assert.rejects(f.engine.send("thread-1", "race"));
+      assert.equal((await f.records()).filter((m) => m.method === "turn/start").length, 0);
+    } finally {
+      delete process.env.BITACORA_FAKE_MODE;
+      delete process.env.BITACORA_FAKE_SAFETY;
+      await f.close();
+    }
+  }
+});
+
+test("closing while the process is being replaced leaves no engine running", async () => {
+  // The first process cannot serve the elevated backend. While it is being
+  // stopped for the replacement, close() must leave nothing running and must
+  // not spawn the new one.
+  let kills = 0;
+  const slowKill: KillProcessTree = async (pid) => {
+    kills++;
+    await delay(200);
+    try { process.kill(pid); } catch { /* it already exited */ }
+    return true;
+  };
+  const f = await openFixture(60_000, { killProcessTree: slowKill });
+  try {
+    const starting = f.engine.start();
+    await until(() => kills === 1);
+    await f.engine.close();
+    await starting.catch(() => {});
+    await delay(200);
+    const spawns = await f.spawns();
+    assert.equal(spawns.length, 1);
+    for (const spawn of spawns) assert.equal(alive(spawn.pid), false, `pid ${spawn.pid}`);
+  } finally { await f.close(); }
+});
+
+test("the automatic restart after a crash keeps the decided mode", async () => {
+  const f = await fixture();
+  try {
+    assert.equal(f.engine.executionSafety().readBlock, false);
+    await assert.rejects(f.engine.send("thread-1", "crash"));
+    // The restart reuses the backend the check already decided: it is not a
+    // fresh start that would spawn the profile again.
+    await until(async () => (await f.spawns()).length === 3);
+    await until(() => f.engine.executionSafety().allowed);
+    const spawns = await f.spawns();
+    assert.equal(definesProfile(spawns[2].args), false);
+    await f.engine.send("thread-1", "race");
+    const turn = (await f.records()).filter((m) => m.method === "turn/start").at(-1);
+    assert.equal(turn.params.permissions, undefined);
+    assert.equal(turn.params.sandboxPolicy.type, "workspaceWrite");
   } finally { await f.close(); }
 });
 
@@ -639,8 +812,6 @@ test("a machine without MXC does not refuse a thread for its profile", async () 
 });
 
 test("the profile is only defined for a process that can run it", () => {
-  const definesProfile = (args: string[]) =>
-    args.some((arg) => arg.startsWith("default_permissions=") || arg.includes("permissions.agencia="));
   // Before the check decides, the profile is the safe default.
   assert.equal(definesProfile(appServerArgs(undefined)), true);
   assert.equal(definesProfile(appServerArgs("mxc")), true);
