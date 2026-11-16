@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bitácora · De a bordo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Young+Serif&family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/lucide@0.460.0/dist/umd/lucide.min.js"></script>
+<style>
+  body { margin: 0; }
+  .lbl { font: 600 14px/1.3 var(--font-sans); margin: 28px 0 4px; }
+  .note { font: 400 13px/1.5 var(--font-sans); color: var(--muted-foreground); margin: 0 0 12px; max-width: 64ch; }
+  .frame { overflow-x: auto; }
+
+  .a { --paper: #f4efe4; --surface: #fffcf5; --ink: #1d2838; --muted: #6a6558; --line: #e1d8c6; --soft: #ece4d3;
+       --accent: #d4612a; --ok: #2f7d5b; --r: 6px;
+       --display: "Young Serif", Georgia, serif; --body: "Atkinson Hyperlegible", system-ui, sans-serif;
+       color: var(--ink); font-family: var(--body); }
+  .a svg.lucide { width: 18px; height: 18px; stroke-width: 1.75; flex: none; }
+
+  .mock { width: 1000px; zoom: .7; display: grid; grid-template-columns: 220px minmax(0,1fr) 300px; height: 620px;
+          background: var(--paper); font-size: 15px; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
+  .side { border-right: 1px solid var(--line); padding: 20px 12px 14px; display: flex; flex-direction: column; gap: 2px; }
+  .brand { font-family: var(--display); font-size: 24px; padding: 0 10px 16px; }
+  .brand em { font-style: normal; color: var(--accent); }
+  .new { display: flex; align-items: center; gap: 8px; padding: 9px 10px; border-radius: var(--r); border: 1px solid var(--line); background: var(--surface); font-weight: 700; margin-bottom: 14px; }
+  .work { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px; align-items: baseline; padding: 9px 10px; border-radius: var(--r); color: var(--muted); border-left: 2px solid transparent; }
+  .work span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .work small { font-size: 12px; font-variant-numeric: tabular-nums; }
+  .work.on { color: var(--ink); font-weight: 700; background: var(--surface); border-left-color: var(--accent); border-radius: 0 var(--r) var(--r) 0; }
+  .acct { margin-top: auto; border-top: 1px solid var(--line); padding: 12px 10px 0; display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+  .acct span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .main { display: flex; flex-direction: column; min-width: 0; }
+  .top { display: flex; align-items: center; justify-content: space-between; padding: 18px 28px; border-bottom: 1px solid var(--line); }
+  .top h3 { margin: 0; font-family: var(--display); font-weight: 400; font-size: 25px; }
+  .icons { display: flex; gap: 2px; color: var(--muted); }
+  .ib { width: 34px; height: 34px; display: grid; place-items: center; border-radius: var(--r); }
+  .chat { flex: 1; padding: 24px 32px; display: flex; flex-direction: column; gap: 18px; }
+  .me { align-self: flex-end; max-width: 72%; background: var(--surface); border: 1px solid var(--line); padding: 10px 14px; border-radius: var(--r); }
+  .log { display: grid; grid-template-columns: 48px 20px minmax(0,1fr); row-gap: 7px; align-items: center; font-size: 14px; color: var(--muted); }
+  .log time { font-variant-numeric: tabular-nums; font-size: 13px; }
+  .log .ok { color: var(--ok); }
+  .log .now { color: var(--accent); font-weight: 700; }
+  .agent { max-width: 80%; line-height: 1.55; }
+  .composer { margin: 0 28px 22px; display: flex; align-items: center; gap: 12px; padding: 10px 10px 10px 14px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); color: var(--muted); }
+  .composer .ph { flex: 1; }
+  .send { width: 36px; height: 36px; border-radius: var(--r); display: grid; place-items: center; background: var(--ink); color: var(--surface); }
+
+  .out { border-left: 1px solid var(--line); background: var(--surface); padding: 20px 18px; display: flex; flex-direction: column; gap: 16px; }
+  .out h4 { margin: 0; font-family: var(--display); font-weight: 400; font-size: 20px; }
+
+  /* deliverable */
+  .dv { position: relative; display: flex; flex-direction: column; gap: 10px; }
+  .placas { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 5px; }
+  .placa { aspect-ratio: 9/16; border-radius: 3px; display: flex; align-items: flex-end; padding: 5px; color: #fff; font: 700 9px/1.1 var(--body); }
+  .p1 { background: #2f6f8f; } .p2 { background: #c9a46a; } .p3 { background: #3d5a4c; } .p4 { background: #1f2a36; }
+  .dv .t { font-family: var(--display); font-size: 17px; }
+  .dv .m { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .acts { display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--line); padding-top: 10px; }
+  .get { display: inline-flex; align-items: center; gap: 7px; font-weight: 700; color: var(--ink); text-decoration: underline; text-decoration-color: var(--accent); text-decoration-thickness: 2px; text-underline-offset: 5px; }
+  .get svg { color: var(--accent); }
+  .acts .icons .ib { width: 30px; height: 30px; }
+  .older { display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: 10px; align-items: center; padding: 10px 0; border-top: 1px solid var(--line); font-size: 14px; }
+  .older svg { color: var(--muted); }
+
+  /* variants strip */
+  .strip { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 16px; }
+  @media (max-width: 560px) { .strip { grid-template-columns: minmax(0,1fr); } }
+  .tile { background: var(--surface); border: 1px solid var(--line); border-radius: var(--r); padding: 16px; }
+  .tile .cap { font: 700 12px/1.2 var(--body); color: var(--muted); margin-bottom: 12px; }
+  .ribbon .dv { padding-top: 6px; }
+  .tab { position: absolute; top: -17px; right: 8px; width: 34px; height: 46px; background: var(--ink); color: var(--surface); display: grid; place-items: start center; padding-top: 18px;
+         clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 80%, 0 100%); }
+  .tab svg { width: 16px !important; height: 16px !important; }
+  .connect { display: flex; flex-direction: column; gap: 8px; font-size: 13px; color: var(--muted); }
+  .connect .btn { display: inline-flex; align-self: flex-start; align-items: center; gap: 7px; padding: 8px 12px; border: 1px solid var(--ink); border-radius: var(--r); color: var(--ink); font-weight: 700; font-size: 14px; }
+  .mail { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="a">
+  <div class="frame">
+    <div class="mock">
+      <aside class="side">
+        <div class="brand">Bitácora<em>.</em></div>
+        <div class="new"><i data-lucide="plus"></i>Nuevo trabajo</div>
+        <div class="work on"><span>Porto de Galinhas, febrero</span><small>hoy</small></div>
+        <div class="work"><span>Margarita en familia</span><small>14 nov</small></div>
+        <div class="work"><span>Cotización Bariloche</span><small>9 nov</small></div>
+        <div class="acct"><i data-lucide="mail"></i><span>fernanda@agencia.com</span></div>
+      </aside>
+      <section class="main">
+        <div class="top">
+          <h3>Porto de Galinhas, febrero</h3>
+          <div class="icons"><span class="ib" title="Cambiar el nombre"><i data-lucide="pencil"></i></span><span class="ib" title="Abrir carpeta"><i data-lucide="folder-open"></i></span></div>
+        </div>
+        <div class="chat">
+          <div class="me">Armame una propuesta con este link para mandar por WhatsApp</div>
+          <div class="log">
+            <time>14:02</time><i data-lucide="check" class="ok"></i><span>Leí la página del hotel</span>
+            <time>14:03</time><i data-lucide="check" class="ok"></i><span>Elegí 6 fotos</span>
+            <time class="now">ahora</time><i data-lucide="pen-line" class="now"></i><span class="now">Armando las placas</span>
+          </div>
+          <div class="agent">Ya están las primeras placas a la derecha. Antes de mandar, mirá <b>precio</b> y <b>fechas</b>.</div>
+        </div>
+        <div class="composer"><i data-lucide="paperclip"></i><span class="ph">Escribí qué necesitás…</span><span class="send"><i data-lucide="arrow-up"></i></span></div>
+      </section>
+      <aside class="out">
+        <h4>Entregables</h4>
+        <div class="dv">
+          <div class="placas"><div class="placa p1">PORTO</div><div class="placa p2">HOTEL</div><div class="placa p3">VIAJE</div><div class="placa p4">USD 1.670</div></div>
+          <div><div class="t">Propuesta Porto de Galinhas</div><div class="m">4 placas · 14:05</div></div>
+          <div class="acts">
+            <span class="get"><i data-lucide="arrow-down-to-line"></i>Descargar</span>
+            <div class="icons"><span class="ib" title="Ver"><i data-lucide="eye"></i></span><span class="ib" title="Abrir carpeta"><i data-lucide="folder-open"></i></span><span class="ib" title="Más"><i data-lucide="ellipsis"></i></span></div>
+          </div>
+        </div>
+        <div class="older"><i data-lucide="file-text"></i><span>Cotización.pdf</span><i data-lucide="arrow-down-to-line"></i></div>
+      </aside>
+    </div>
+  </div>
+
+  <div class="lbl">Variante del entregable · cinta señaladora</div>
+  <p class="note">En vez del texto «Descargar», una cinta como la de un cuaderno, con el ícono de bajar. Más limpia, pero se descubre menos: dice «Descargar» al pasar el mouse.</p>
+  <div class="strip">
+    <div class="tile">
+      <div class="cap">Texto con ícono (la de arriba)</div>
+      <div class="dv">
+        <div class="placas"><div class="placa p1">PORTO</div><div class="placa p2">HOTEL</div><div class="placa p3">VIAJE</div><div class="placa p4">USD 1.670</div></div>
+        <div><div class="t">Propuesta Porto de Galinhas</div><div class="m">4 placas · 14:05</div></div>
+        <div class="acts"><span class="get"><i data-lucide="arrow-down-to-line"></i>Descargar</span><div class="icons"><span class="ib"><i data-lucide="eye"></i></span><span class="ib"><i data-lucide="ellipsis"></i></span></div></div>
+      </div>
+    </div>
+    <div class="tile ribbon">
+      <div class="cap">Cinta señaladora</div>
+      <div class="dv">
+        <span class="tab" title="Descargar"><i data-lucide="arrow-down-to-line"></i></span>
+        <div class="placas"><div class="placa p1">PORTO</div><div class="placa p2">HOTEL</div><div class="placa p3">VIAJE</div><div class="placa p4">USD 1.670</div></div>
+        <div><div class="t">Propuesta Porto de Galinhas</div><div class="m">4 placas · 14:05</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="lbl">La cuenta, abajo a la izquierda</div>
+  <p class="note">Conectada: el mail y nada más. Sin conectar: una invitación con una sola acción.</p>
+  <div class="strip">
+    <div class="tile"><div class="cap">Conectada</div><div class="mail"><i data-lucide="mail"></i>fernanda@agencia.com</div></div>
+    <div class="tile"><div class="cap">Sin conectar</div><div class="connect">Para trabajar, conectá tu cuenta de ChatGPT.<span class="btn"><i data-lucide="log-in"></i>Conectar cuenta</span></div></div>
+  </div>
+</div>
+<script>if (window.lucide) lucide.createIcons();</script>
+</body>
+</html>
