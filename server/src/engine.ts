@@ -100,7 +100,7 @@ export function problemText(
     temporary:
       "ChatGPT está recibiendo muchos pedidos. Probá de nuevo en un momento.",
     unresponsive:
-      "El motor no respondió y lo reinicié. Fijate si quedó algo a medias antes de volver a pedirlo.",
+      "Bitácora no respondió y se reinició. Fijate si quedó algo a medias antes de volver a pedirlo.",
     other:
       "No pude completar el pedido. Podés ver el detalle y volver a intentarlo.",
   }[kind];

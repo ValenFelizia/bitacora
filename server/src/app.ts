@@ -285,7 +285,7 @@ export class App {
           if (work.busy) {
             work.busy = false;
             work.progress =
-              "El motor se detuvo. Podés continuar cuando vuelva.";
+              "Bitácora se detuvo. Podés continuar cuando vuelva.";
           }
       }
       if (!event.available) for (const work of this.works) this.finishFiles(work);
@@ -305,7 +305,7 @@ export class App {
       if (event.type === "problem")
         this.publish({
           type: "problem",
-          text: !this.available ? "El motor se detuvo. Tus trabajos siguen guardados." : problemText(event.kind),
+          text: !this.available ? "Bitácora se detuvo. Tus trabajos siguen guardados." : problemText(event.kind),
           detail: event.detail,
         });
       return;
@@ -480,7 +480,7 @@ export class App {
       reply({
         type: "problem",
         text: !this.available
-          ? "El motor está detenido. Esperá a que vuelva para enviar el pedido."
+          ? "Bitácora está detenida. Esperá a que vuelva para enviar el pedido."
           : safety.issue === "readBlock"
             ? "No pude activar el bloqueo que impide leer archivos fuera de tu carpeta. Sin eso no puedo empezar tus pedidos. Tocá Reintentar para volver a intentarlo."
             : "No puedo enviar pedidos porque la protección de la carpeta no está preparada. Hace falta completar la preparación de Windows.",
