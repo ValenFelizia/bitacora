@@ -92,7 +92,6 @@ accepted direction from implementation alone.
   trabajo. `.csdd/` guarda solo la verdad durable (requisitos y decisiones).
 
 ## DEC-009 — Node como runtime incluido y dibujo con el Edge del sistema
-
 - Status: accepted (2026-11-13)
 - Context: investigación del issue #2, verificada contra la documentación
   oficial y con una prueba en Windows 11 con Edge 157.
@@ -109,3 +108,37 @@ accepted direction from implementation alone.
   comprobar que ninguna quedó en error, y fallar si alguna falló.
 - Rejected: Bun y Deno (sin ventaja que compense), Node SEA (no corre scripts
   sueltos), `msedge --headless` por línea de comandos.
+
+## DEC-010 — Cada pedido corre con un perfil de permisos que no deja leer afuera
+
+- Status: accepted (2026-11-15)
+- Context: el issue #4 probó en Windows 11, con MXC y Codex 0.168.0, que un
+  perfil de permisos con nombre impide leer un archivo testigo fuera de la
+  carpeta sin romper PowerShell ni la lectura adentro. R4 decía que el bloqueo
+  de lecturas se sumaba solo si esa prueba salía bien: salió bien. El issue #19
+  lo activa en la app.
+- Decision: el app-server arranca con un perfil propio, `agencia`, definido con
+  `-c` en la línea de comandos (no en el `config.toml` de la usuaria): extiende
+  `:workspace`, deja `:root` y `:tmpdir` en `deny`, `:minimal` en `read` y la red
+  apagada. Cada `thread/start`, `thread/resume` y `turn/start` manda
+  `permissions = "agencia"`. Antes de habilitar pedidos, la app pide
+  `permissionProfile/list` y exige que el perfil exista y esté permitido; si no,
+  no trabaja y lo dice en castellano simple.
+- Rationale: cierra la vía principal de fuga de datos: el agente ya no podía
+  escribir afuera, pero podía leer cualquier archivo de la usuaria. El perfil
+  reemplaza al `sandboxPolicy` del turno porque Codex no acepta los dos juntos.
+- Consequences: la app pasa a depender de la API experimental de Codex. Los
+  campos `permissions` (en thread y turn) y `permissionProfile` (en
+  `command/exec`) no son estables, y el cliente tiene que negociar
+  `experimentalApi: true` en `initialize`: sin eso el app-server rechaza el
+  perfil con -32600. Por eso los tipos del protocolo se generan con
+  `--experimental` desde la versión fijada, y actualizar Codex es un cambio
+  deliberado que exige volver a probar `permissionProfile/list`, el
+  `activePermissionProfile` que devuelve `thread/start`, que `-c` siga aceptando
+  el perfil como tabla TOML y la prueba de arena real de
+  `server/test/read-block.test.ts`. Dos límites verificados: Codex lee los
+  `AGENTS.md` desde la raíz del repositorio, así que una carpeta de agencia
+  dentro de un repo git necesita leer sus carpetas superiores y la app va a
+  informar que no puede aplicar el perfil; y apagar esa lectura con
+  `project_doc_max_bytes = 0` dejaría al agente sin las instrucciones del kit,
+  así que no se usa.
