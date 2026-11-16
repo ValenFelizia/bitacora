@@ -7,8 +7,20 @@ const c = (setting: string) => ["-c", setting];
 
 function tomlString(value: string): string {
   const trimmed = value.trim();
-  if (!trimmed) throw new Error("Curated environment identifier cannot be empty");
+  if (!trimmed) throw new Error("Curated environment value cannot be empty");
   return JSON.stringify(trimmed);
+}
+
+/**
+ * Codex `config/overrides.rs` splits `-c` key paths on `.` without unquoting,
+ * so quoted keys become literal quotes in the table key name. Emit bare key
+ * segments and reject characters that would misparse or split a key path.
+ */
+function codexKeySegment(id: string): string {
+  if (!id || id !== id.trim() || /[.=]/.test(id) || /\s/.test(id) || /["']/.test(id)) {
+    throw new Error(`Invalid curated environment identifier: ${JSON.stringify(id)}`);
+  }
+  return id;
 }
 
 /**
@@ -18,8 +30,8 @@ function tomlString(value: string): string {
  *
  * Allowlist mechanism in Codex 0.168.0:
  * - Per-item enablement exists (`plugins._default.enabled=false` plus
- *   `plugins."<id>".enabled=true`, and `apps._default.enabled=false` plus
- *   `apps."<id>".enabled=true`), so non-empty allowlists work directly when
+ *   `plugins.<id>.enabled=true`, and `apps._default.enabled=false` plus
+ *   `apps.<id>.enabled=true`), so non-empty allowlists work directly when
  *   issue #38 populates them.
  * - However, Codex 0.168.0 has no `-c` download allowlist for the curated
  *   plugin catalogue: whenever `features.plugins=true` and `remote_plugin=false`,
@@ -53,7 +65,7 @@ export function codexEnvironmentArgs(
     ...c("plugins._default.enabled=false"),
   );
   for (const id of environment.allowedPlugins) {
-    args.push(...c(`plugins.${tomlString(id)}.enabled=true`));
+    args.push(...c(`plugins.${codexKeySegment(id)}.enabled=true`));
   }
 
   const hasConnectors = environment.allowedConnectors.length > 0;
@@ -63,7 +75,7 @@ export function codexEnvironmentArgs(
     ...c("apps._default.enabled=false"),
   );
   for (const id of environment.allowedConnectors) {
-    args.push(...c(`apps.${tomlString(id)}.enabled=true`));
+    args.push(...c(`apps.${codexKeySegment(id)}.enabled=true`));
   }
 
   return args;

@@ -190,8 +190,8 @@ accepted direction from implementation alone.
     define `allowedPlugins` y `allowedConnectors` como listas vacías para que el
     issue #38 pueda sumar una lista corta elegida mirando cómo trabaja Fer (#8)
     sin rediseñar el contrato. Codex `0.168.0` tiene habilitación por ítem
-    (`plugins._default.enabled=false` / `plugins."<id>".enabled=true` y
-    `apps._default.enabled=false` / `apps."<id>".enabled=true`), pero **no**
+    (`plugins._default.enabled=false` / `plugins.<id>.enabled=true` y
+    `apps._default.enabled=false` / `apps.<id>.enabled=true`), pero **no**
     ofrece una lista blanca de descarga para `openai/plugins`: si
     `features.plugins=true` y `remote_plugin=false`, clona el catálogo entero al
     arrancar. Por eso, mientras las listas estén vacías, se apagan con los

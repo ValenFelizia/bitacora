@@ -2,8 +2,8 @@
 // and real Codex binary verification without inference or login.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync, spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { existsSync, readdirSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -18,6 +18,77 @@ import { codexEnvironmentArgs } from "../src/codex/environment";
 import { registerKit } from "../src/codex/kit";
 import { codexBinary } from "../../scripts/codex-runtime.mjs";
 import { fakeAppServerArgs } from "./fake-app-server";
+
+/**
+ * Exact set of features expected to remain enabled in `codex features list`
+ * under Bitácora's curated arguments on Codex 0.168.0. Any newly enabled
+ * default in a future Codex version fails the test and must be reviewed.
+ */
+const EXPECTED_ENABLED_FEATURES = [
+  "api_key_cyber_access_programs",
+  "api_key_model_discovery",
+  "auth_elicitation",
+  "bedrock_setup_wizard",
+  "browser_annotation_api",
+  "browser_use",
+  "browser_use_external",
+  "browser_use_full_cdp_access",
+  "cli_daybreak",
+  "code_mode_host",
+  "code_mode_interrupt",
+  "collaboration_modes",
+  "compaction_image_budget",
+  "computer_use",
+  "content_item_kinds",
+  "daemon_auto_start",
+  "deferred_tool_world_state",
+  "enable_request_compression",
+  "fast_mode",
+  "goals",
+  "guardian_approval",
+  "guardian_include_additional_context",
+  "guardian_reuse_parent_compaction",
+  "hooks",
+  "image_generation",
+  "in_app_browser",
+  "in_app_chat",
+  "in_app_dictation",
+  "in_app_local_automation",
+  "in_app_updates",
+  "in_app_voice",
+  "incremental_tools",
+  "instant_interrupt",
+  "item_ids",
+  "mcp_oauth_refresh_coordination",
+  "mentions_v2",
+  "prediction_preserve_parent_tools",
+  "realtime_conversation",
+  "reasoning_effort_override",
+  "resize_all_images",
+  "retain_client_tool_outputs",
+  "secret_auth_storage",
+  "shell_snapshot",
+  "shell_tool",
+  "skill_mcp_dependency_install",
+  "skill_search",
+  "sleep_tool",
+  "sqlite",
+  "steer",
+  "system_proxy_fallback",
+  "terminal_resize_reflow",
+  "tool_call_mcp_elicitation",
+  "tool_search_always_defer_mcp_tools",
+  "tui_app_server",
+  "ultrafast_mode",
+  "unbounded_connection_retries",
+  "unified_exec",
+  "unified_exec_tty",
+  "unified_image_budget",
+  "view_image",
+  "workspace_dependencies",
+  "worktrees",
+  "write_stdin_approval",
+];
 
 function isolatedCodexEnv(home: string): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
@@ -40,6 +111,80 @@ function containsSubsequence(haystack: string[], needle: string[]): boolean {
   return false;
 }
 
+function stopCodexTree(child: ChildProcessWithoutNullStreams) {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  if (process.platform === "win32" && child.pid) {
+    try {
+      execFileSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+        stdio: "ignore",
+        windowsHide: true,
+      });
+      return;
+    } catch {
+      // Fall through if the process already exited.
+    }
+  }
+  child.kill();
+}
+
+function startRealAppServer(args: string[], cwd: string, home: string) {
+  const child = spawn(codexBinary(), args, {
+    cwd,
+    env: isolatedCodexEnv(home),
+    windowsHide: true,
+    stdio: "pipe",
+  });
+  const pending = new Map<number, (message: { result?: unknown; error?: { message: string } }) => void>();
+  let nextId = 0;
+  let stderr = "";
+  child.stderr.on("data", (chunk) => {
+    stderr += String(chunk);
+  });
+  createInterface({ input: child.stdout }).on("line", (line) => {
+    const message = JSON.parse(line);
+    if (message.id !== undefined) {
+      const resolvePending = pending.get(message.id);
+      if (resolvePending) {
+        pending.delete(message.id);
+        resolvePending(message);
+      }
+    }
+  });
+  const rpc = async <T>(method: string, params: unknown): Promise<T> => {
+    const id = ++nextId;
+    const reply = await new Promise<{ result?: unknown; error?: { message: string } }>((resolveRpc, rejectRpc) => {
+      const timer = setTimeout(
+        () => rejectRpc(new Error(`RPC timeout: ${method}. ${stderr.slice(-2000)}`)),
+        30000,
+      );
+      pending.set(id, (message) => {
+        clearTimeout(timer);
+        resolveRpc(message);
+      });
+      child.stdin.write(JSON.stringify({ id, method, params }) + "\n");
+    });
+    if (reply.error) throw new Error(`${method}: ${reply.error.message}`);
+    return reply.result as T;
+  };
+  const close = async () => {
+    child.stdin.end();
+    if (child.exitCode === null && child.signalCode === null) {
+      await Promise.race([
+        new Promise<void>((resolveExit) => child.once("exit", () => resolveExit())),
+        delay(1000).then(() => stopCodexTree(child)),
+      ]);
+      if (child.exitCode === null && child.signalCode === null) {
+        stopCodexTree(child);
+        await new Promise<void>((resolveExit) => {
+          child.once("exit", () => resolveExit());
+          setTimeout(resolveExit, 2000).unref();
+        });
+      }
+    }
+  };
+  return { child, rpc, close };
+}
+
 test("agency environment policy and developer instructions match DEC-011", () => {
   assert.equal(AGENCY_ENVIRONMENT.aiImages, true);
   assert.equal(AGENCY_ENVIRONMENT.webSearch, "disabled");
@@ -55,7 +200,7 @@ test("agency environment policy and developer instructions match DEC-011", () =>
   assert.match(AGENCY_DEVELOPER_INSTRUCTIONS, /nunca presentes una imagen con IA.*foto real de un hotel o un destino/i);
 });
 
-test("codexEnvironmentArgs applies -c overrides cleanly and supports future allowlists", () => {
+test("codexEnvironmentArgs validates allowlist IDs and wires backends cleanly", () => {
   const defaults = codexEnvironmentArgs();
   for (const backend of [undefined, "mxc", "elevated"] as const) {
     assert.equal(containsSubsequence(appServerArgs(backend), defaults), true, String(backend));
@@ -65,25 +210,63 @@ test("codexEnvironmentArgs applies -c overrides cleanly and supports future allo
     false,
   );
 
-  const withAllowlists = codexEnvironmentArgs({
+  for (const invalid of ["", "  ", "foo.bar", "foo=bar", " foo", 'foo"bar']) {
+    assert.throws(
+      () => codexEnvironmentArgs({ ...AGENCY_ENVIRONMENT, allowedPlugins: [invalid] }),
+      /Invalid curated environment identifier/,
+      invalid,
+    );
+    assert.throws(
+      () => codexEnvironmentArgs({ ...AGENCY_ENVIRONMENT, allowedConnectors: [invalid] }),
+      /Invalid curated environment identifier/,
+      invalid,
+    );
+  }
+});
+
+test("real codex app-server resolves unquoted allowlist IDs in config/read", async () => {
+  const base = await mkdtemp(join(tmpdir(), "bitacora-allowlist-"));
+  const home = join(base, "home");
+  const workspace = join(base, "workspace");
+  await mkdir(home, { recursive: true });
+  await mkdir(workspace, { recursive: true });
+
+  const args = appServerArgs("mxc", {
     ...AGENCY_ENVIRONMENT,
     allowedPlugins: ["canva@openai-curated"],
     allowedConnectors: ["google_drive"],
   });
-  assert.equal(containsSubsequence(withAllowlists, ["-c", "features.plugins=true"]), true);
-  assert.equal(containsSubsequence(withAllowlists, ["-c", "plugins._default.enabled=false"]), true);
-  assert.equal(
-    containsSubsequence(withAllowlists, ["-c", 'plugins."canva@openai-curated".enabled=true']),
-    true,
-  );
-  assert.equal(containsSubsequence(withAllowlists, ["-c", "features.apps=true"]), true);
-  assert.equal(containsSubsequence(withAllowlists, ["-c", "include_apps_instructions=true"]), true);
-  assert.equal(containsSubsequence(withAllowlists, ["-c", "apps._default.enabled=false"]), true);
-  assert.equal(
-    containsSubsequence(withAllowlists, ["-c", 'apps."google_drive".enabled=true']),
-    true,
-  );
-  assert.equal(containsSubsequence(withAllowlists, ["-c", "features.tool_suggest=false"]), true);
+  const server = startRealAppServer(args, workspace, home);
+  try {
+    await server.rpc("initialize", {
+      clientInfo: { name: "bitacora_allowlist_test", version: "0.1.0" },
+      capabilities: { experimentalApi: true, requestAttestation: false },
+    });
+    server.child.stdin.write('{"method":"initialized"}\n');
+
+    const { config } = await server.rpc<{
+      config: {
+        features?: Record<string, boolean | null>;
+        include_apps_instructions?: boolean;
+        plugins?: Record<string, { enabled?: boolean }>;
+        apps?: Record<string, { enabled?: boolean }>;
+      };
+    }>("config/read", { includeLayers: false });
+
+    assert.equal(config.features?.plugins, true);
+    assert.equal(config.features?.apps, true);
+    assert.equal(config.include_apps_instructions, true);
+    assert.equal(config.features?.tool_suggest, false);
+    assert.equal(config.plugins?._default?.enabled, false);
+    assert.equal(config.plugins?.["canva@openai-curated"]?.enabled, true);
+    assert.equal(config.plugins?.['"canva@openai-curated"'], undefined);
+    assert.equal(config.apps?._default?.enabled, false);
+    assert.equal(config.apps?.["google_drive"]?.enabled, true);
+    assert.equal(config.apps?.['"google_drive"'], undefined);
+  } finally {
+    await server.close();
+    await rm(base, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+  }
 });
 
 test("CodexEngine passes curated -c overrides and updated developerInstructions", async () => {
@@ -132,7 +315,7 @@ test("CodexEngine passes curated -c overrides and updated developerInstructions"
   }
 });
 
-test("real codex features list enforces DEC-011 and catches newly enabled defaults", async () => {
+test("real codex features list matches the exact expected enabled feature set for DEC-011", async () => {
   const home = await mkdtemp(join(tmpdir(), "bitacora-features-"));
   try {
     const output = execFileSync(codexBinary(), [...codexEnvironmentArgs(), "features", "list"], {
@@ -157,144 +340,143 @@ test("real codex features list enforces DEC-011 and catches newly enabled defaul
       "plugin_discovery_prefetch",
       "plugin_sharing",
       "tool_suggest",
+      "recommended_plugins",
       "apps",
+      "enable_mcp_apps",
+      "apps_early_resource_discovery",
+      "codex_apps_mcp_2026_07_28",
+      "standalone_web_search",
       "multi_agent",
       "multi_agent_v2",
+      "runtime_agent_instances",
     ]) {
       assert.equal(features.get(off), false, `expected feature ${off} to be false`);
     }
 
-    // Drift guard: fail if a Codex upgrade adds a new enabled plugin, app,
-    // subagent, or web search feature flag by default.
-    for (const [name, enabled] of features) {
-      if (!enabled) continue;
-      assert.doesNotMatch(
-        name,
-        /^(plugins?|remote_plugin|plugin_.*|tool_suggest|apps|multi_agent.*|subagent.*|web_search.*)$/i,
-        `unexpected curated-off feature enabled: ${name}`,
-      );
-    }
+    const actualEnabled = [...features.entries()]
+      .filter(([, enabled]) => enabled)
+      .map(([name]) => name)
+      .sort();
+    assert.deepEqual(actualEnabled, [...EXPECTED_ENABLED_FEATURES].sort());
   } finally {
     await rm(home, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 
-test("real codex app-server enforces DEC-011 without inference, keeps bitacora MCP healthy, and skips catalogue clone", async () => {
-  const base = await mkdtemp(join(tmpdir(), "bitacora-appserver-env-"));
-  const home = join(base, "home");
-  const workspace = join(base, "workspace");
-  await mkdir(home, { recursive: true });
-  await mkdir(workspace, { recursive: true });
-  await registerKit(home, workspace);
+test(
+  "real codex app-server enforces DEC-011 without inference, keeps bitacora MCP healthy, and prevents catalogue clone",
+  { timeout: 90_000 },
+  async () => {
+    const base = await mkdtemp(join(tmpdir(), "bitacora-appserver-env-"));
+    const curatedHome = join(base, "curated-home");
+    const curatedWorkspace = join(base, "curated-workspace");
+    const controlHome = join(base, "control-home");
+    const controlWorkspace = join(base, "control-workspace");
+    await mkdir(curatedHome, { recursive: true });
+    await mkdir(curatedWorkspace, { recursive: true });
+    await mkdir(controlHome, { recursive: true });
+    await mkdir(controlWorkspace, { recursive: true });
+    await registerKit(curatedHome, curatedWorkspace);
 
-  const child = spawn(codexBinary(), appServerArgs("mxc"), {
-    cwd: workspace,
-    env: isolatedCodexEnv(home),
-    windowsHide: true,
-    stdio: "pipe",
-  });
-  const pending = new Map<number, (message: { result?: unknown; error?: { message: string } }) => void>();
-  let nextId = 0;
-  let exited = false;
-  let stderr = "";
-  child.on("exit", () => {
-    exited = true;
-  });
-  child.stderr.on("data", (chunk) => {
-    stderr += String(chunk);
-  });
-  createInterface({ input: child.stdout }).on("line", (line) => {
-    const message = JSON.parse(line);
-    if (message.id !== undefined) {
-      const resolve = pending.get(message.id);
-      if (resolve) {
-        pending.delete(message.id);
-        resolve(message);
-      }
-    }
-  });
-  const rpc = async <T>(method: string, params: unknown): Promise<T> => {
-    const id = ++nextId;
-    const reply = await new Promise<{ result?: unknown; error?: { message: string } }>((resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error(`RPC timeout: ${method}. ${stderr.slice(-2000)}`)),
-        30000,
-      );
-      pending.set(id, (message) => {
-        clearTimeout(timer);
-        resolve(message);
-      });
-      child.stdin.write(JSON.stringify({ id, method, params }) + "\n");
-    });
-    if (reply.error) throw new Error(`${method}: ${reply.error.message}`);
-    return reply.result as T;
-  };
+    const curated = startRealAppServer(appServerArgs("mxc"), curatedWorkspace, curatedHome);
+    const control = startRealAppServer(["app-server", "--listen", "stdio://"], controlWorkspace, controlHome);
 
-  try {
-    await rpc("initialize", {
-      clientInfo: { name: "bitacora_env_test", version: "0.1.0" },
-      capabilities: { experimentalApi: true, requestAttestation: false },
-    });
-    child.stdin.write('{"method":"initialized"}\n');
+    try {
+      await Promise.all([
+        curated.rpc("initialize", {
+          clientInfo: { name: "bitacora_env_test", version: "0.1.0" },
+          capabilities: { experimentalApi: true, requestAttestation: false },
+        }),
+        control.rpc("initialize", {
+          clientInfo: { name: "bitacora_control_test", version: "0.1.0" },
+          capabilities: { experimentalApi: true, requestAttestation: false },
+        }),
+      ]);
+      curated.child.stdin.write('{"method":"initialized"}\n');
+      control.child.stdin.write('{"method":"initialized"}\n');
 
-    const { config } = await rpc<{
-      config: {
-        web_search: string | null;
-        include_apps_instructions?: boolean;
-        features?: Record<string, boolean | null>;
-        plugins?: Record<string, { enabled?: boolean }>;
-        apps?: Record<string, { enabled?: boolean }>;
-        agents?: { enabled?: boolean };
-        skills?: { bundled?: { enabled?: boolean } };
+      const { config } = await curated.rpc<{
+        config: {
+          web_search: string | null;
+          include_apps_instructions?: boolean;
+          features?: Record<string, boolean | null>;
+          plugins?: Record<string, { enabled?: boolean }>;
+          apps?: Record<string, { enabled?: boolean }>;
+          agents?: { enabled?: boolean };
+          skills?: { bundled?: { enabled?: boolean } };
+        };
+      }>("config/read", { includeLayers: false });
+
+      assert.equal(config.web_search, "disabled");
+      assert.equal(config.include_apps_instructions, false);
+      assert.equal(config.features?.image_generation, true);
+      assert.equal(config.features?.plugins, false);
+      assert.equal(config.features?.remote_plugin, false);
+      assert.equal(config.features?.plugin_discovery_prefetch, false);
+      assert.equal(config.features?.plugin_sharing, false);
+      assert.equal(config.features?.tool_suggest, false);
+      assert.equal(config.features?.apps, false);
+      assert.equal(config.features?.multi_agent, false);
+      assert.equal(config.features?.multi_agent_v2, false);
+      assert.equal(config.plugins?._default?.enabled, false);
+      assert.equal(config.apps?._default?.enabled, false);
+      assert.equal(config.agents?.enabled, false);
+      assert.equal(config.skills?.bundled?.enabled, false);
+
+      const skills = await curated.rpc<{
+        data: Array<{ skills: Array<{ name: string; scope: string; enabled: boolean }> }>;
+      }>("skills/list", { cwds: [curatedWorkspace], forceReload: true });
+      const systemSkills = skills.data.flatMap((entry) => entry.skills).filter((skill) => skill.scope === "system");
+      assert.deepEqual(systemSkills, []);
+
+      const mcp = await curated.rpc<{
+        data: Array<{ name: string; toolsError: unknown; tools: Record<string, unknown> }>;
+      }>("mcpServerStatus/list", {});
+      const bitacora = mcp.data.find((server) => server.name === "bitacora");
+      assert.ok(bitacora, "bitacora MCP server missing");
+      assert.equal(bitacora.toolsError, null);
+      assert.deepEqual(Object.keys(bitacora.tools).sort(), ["controlar", "dibujar", "traer"]);
+
+      // Non-vacuous check: prove the uncurated control creates `.tmp/plugins` (or
+      // at least begins the `.tmp/plugins-clone-*/.git` checkout on slow networks)
+      // and `skills/.system` in the same startup window, while curated creates neither.
+      const hasControlClone = () => {
+        if (existsSync(join(controlHome, ".tmp", "plugins"))) return true;
+        const tmpDir = join(controlHome, ".tmp");
+        if (!existsSync(tmpDir)) return false;
+        return readdirSync(tmpDir).some(
+          (entry) => entry.startsWith("plugins-clone-") && existsSync(join(tmpDir, entry, ".git")),
+        );
       };
-    }>("config/read", { includeLayers: false });
+      const deadline = Date.now() + 30_000;
+      while (
+        Date.now() < deadline &&
+        (!existsSync(join(controlHome, ".tmp", "plugins")) ||
+          !existsSync(join(controlHome, "skills", ".system")))
+      ) {
+        await delay(200);
+      }
+      assert.equal(
+        hasControlClone(),
+        true,
+        "control app-server did not start or materialize .tmp/plugins within the startup window",
+      );
+      assert.equal(
+        existsSync(join(controlHome, "skills", ".system")),
+        true,
+        "control app-server did not extract skills/.system within the startup window",
+      );
+      await delay(1000);
+      assert.equal(existsSync(join(curatedHome, ".tmp")), false);
+      assert.equal(existsSync(join(curatedHome, ".tmp", "plugins")), false);
+      assert.equal(existsSync(join(curatedHome, "skills", ".system")), false);
 
-    assert.equal(config.web_search, "disabled");
-    assert.equal(config.include_apps_instructions, false);
-    assert.equal(config.features?.image_generation, true);
-    assert.equal(config.features?.plugins, false);
-    assert.equal(config.features?.remote_plugin, false);
-    assert.equal(config.features?.plugin_discovery_prefetch, false);
-    assert.equal(config.features?.plugin_sharing, false);
-    assert.equal(config.features?.tool_suggest, false);
-    assert.equal(config.features?.apps, false);
-    assert.equal(config.features?.multi_agent, false);
-    assert.equal(config.features?.multi_agent_v2, false);
-    assert.equal(config.plugins?._default?.enabled, false);
-    assert.equal(config.apps?._default?.enabled, false);
-    assert.equal(config.agents?.enabled, false);
-    assert.equal(config.skills?.bundled?.enabled, false);
-
-    const skills = await rpc<{
-      data: Array<{ skills: Array<{ name: string; scope: string; enabled: boolean }> }>;
-    }>("skills/list", { cwds: [workspace], forceReload: true });
-    const systemSkills = skills.data.flatMap((entry) => entry.skills).filter((skill) => skill.scope === "system");
-    assert.deepEqual(systemSkills, []);
-
-    const mcp = await rpc<{
-      data: Array<{ name: string; toolsError: unknown; tools: Record<string, unknown> }>;
-    }>("mcpServerStatus/list", {});
-    const bitacora = mcp.data.find((server) => server.name === "bitacora");
-    assert.ok(bitacora, "bitacora MCP server missing");
-    assert.equal(bitacora.toolsError, null);
-    assert.deepEqual(Object.keys(bitacora.tools).sort(), ["controlar", "dibujar", "traer"]);
-
-    // Give any would-be background startup sync a moment before checking disk.
-    await delay(500);
-    assert.equal(existsSync(join(home, ".tmp", "plugins")), false);
-    assert.equal(existsSync(join(home, "skills", ".system")), false);
-
-    // Overrides live on the command line only, never written to config.toml.
-    const configToml = await readFile(join(home, "config.toml"), "utf8");
-    assert.doesNotMatch(configToml, /web_search|image_generation|multi_agent|tool_suggest|bundled/i);
-  } finally {
-    child.stdin.end();
-    if (!exited) {
-      await new Promise<void>((resolveExit) => {
-        child.once("exit", () => resolveExit());
-        setTimeout(() => child.kill(), 3000).unref();
-      });
+      // Overrides live on the command line only, never written to config.toml.
+      const configToml = await readFile(join(curatedHome, "config.toml"), "utf8");
+      assert.doesNotMatch(configToml, /web_search|image_generation|multi_agent|tool_suggest|bundled/i);
+    } finally {
+      await Promise.all([curated.close(), control.close()]);
+      await rm(base, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
     }
-    await rm(base, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
-  }
-});
+  },
+);
