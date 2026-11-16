@@ -10,6 +10,8 @@ import { codexBinary, codexVersion } from "../../../scripts/codex-runtime.mjs";
 import { createInterface } from "node:readline";
 import { mkdir } from "node:fs/promises";
 import { registerKit } from './kit';
+import { AGENCY_ENVIRONMENT, type AgencyEnvironment } from "../agency-environment";
+import { codexEnvironmentArgs } from "./environment";
 import type { Engine, EngineEvent, Account, ExecutionSafety } from "../engine";
 import { EngineFailure } from "../engine";
 import type { ClientRequest } from "./generated/ClientRequest";
@@ -57,13 +59,17 @@ export type SandboxBackend = "mxc" | "elevated";
  * (`undefined`) the profile is the safe default, because nothing runs until
  * the check passes.
  */
-export function appServerArgs(backend: SandboxBackend | undefined): string[] {
+export function appServerArgs(
+  backend: SandboxBackend | undefined,
+  environment: AgencyEnvironment = AGENCY_ENVIRONMENT,
+): string[] {
   const args = [
     "app-server",
     "--listen",
     "stdio://",
     "-c",
     'cli_auth_credentials_store="file"',
+    ...codexEnvironmentArgs(environment),
   ];
   return backend === "elevated" ? args : [...args, ...PROFILE_ARGS];
 }
@@ -1052,8 +1058,7 @@ export class CodexEngine implements Engine {
       ...(this.backend === "elevated"
         ? { sandbox: "workspace-write" as const }
         : { permissions: PERMISSIONS_PROFILE }),
-      developerInstructions:
-        "Respondé en castellano rioplatense, simple y sin términos técnicos. Trabajá en la carpeta actual. No generes imágenes con IA.",
+      developerInstructions: AGENCY_ENVIRONMENT.developerInstructions,
     };
   }
   /**
