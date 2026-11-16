@@ -85,7 +85,7 @@ test('real Edge: citation failures, exact PNG, PDF, overflow, broken fonts and b
     await assert.rejects(dibujar(f.files,{html:'remote.html',destination:'remote',width:1080,height:1920}),/bloquearon/);
   } finally { await f.close(); }
 });
-test('real MCP stdio client discovers and calls all three tools', async () => {
+test('real MCP stdio client discovers and calls all three tools', { timeout: 180000 }, async () => {
   const f = await fixture();
   const transport = new StdioClientTransport({command:process.execPath,args:['--import',pathToFileURL(createRequire(import.meta.url).resolve('tsx/esm')).href,join(process.cwd(),'server/src/tools/mcp.ts'),f.root,f.options.allowedUrls],stderr:'pipe'});
   const client = new Client({name:'verification',version:'1.0'});

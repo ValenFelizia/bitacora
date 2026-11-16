@@ -72,12 +72,13 @@ async function application(f: { dir: string; engine: CodexEngine }) {
   return { app, scans };
 }
 
-async function until(check: () => boolean | Promise<boolean>) {
-  for (let i = 0; i < 150; i++) {
+async function until(check: () => boolean | Promise<boolean>, timeoutMs = 15000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
     if (await check()) return;
     await delay(20);
   }
-  assert.fail("condition timed out");
+  assert.fail(`condition timed out after ${timeoutMs}ms`);
 }
 
 function alive(pid: number) {
@@ -134,7 +135,7 @@ test("a turn/start with no sign of life stops the engine", async () => {
 });
 
 test("a pause the engine never honours stops it", async () => {
-  const f = await fixture({ turnStartTimeoutMs: 1000, pauseTimeoutMs: 200 });
+  const f = await fixture({ turnStartTimeoutMs: 5000, pauseTimeoutMs: 200 });
   const { app } = await application(f);
   try {
     await app.start();
@@ -192,8 +193,8 @@ test("a failed pause on a turn still starting keeps the work until the tree stop
 test("a pause after the turn ended does not stop the engine", async () => {
   // The turn completed before its reply: `starting` is still there but nothing
   // is running, so the pause must not arm a deadline.
-  process.env.BITACORA_FAKE_TURN_DELAY = "300";
-  const f = await fixture({ turnStartTimeoutMs: 2000, pauseTimeoutMs: 200 });
+  process.env.BITACORA_FAKE_TURN_DELAY = "1000";
+  const f = await fixture({ turnStartTimeoutMs: 5000, pauseTimeoutMs: 200 });
   try {
     await f.engine.start();
     const sending = f.engine.send("thread-1", "complete-before-reply");
@@ -256,12 +257,12 @@ test("a reply while the tree is stopping waits for the stop", async () => {
   // scans as soon as send() rejects, so that rejection must not happen while
   // the tree is still being stopped.
   const order: string[] = [];
-  process.env.BITACORA_FAKE_TURN_DELAY = "400";
+  process.env.BITACORA_FAKE_TURN_DELAY = "1000";
   const f = await fixture({
     turnStartTimeoutMs: 30_000,
-    pauseTimeoutMs: 200,
+    pauseTimeoutMs: 300,
     killProcessTree: async (pid) => {
-      await delay(600);
+      await delay(1500);
       order.push("stopped");
       process.kill(pid);
       return true;

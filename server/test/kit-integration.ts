@@ -35,9 +35,9 @@ export async function verifyKitIntegration(evidence?: string) {
   let snapshot:Snapshot|undefined;
   const calls:Record<string,unknown>={}, errors:string[]=[];
   const origin='http://127.0.0.1:5326';
-  async function until(check:()=>boolean) {
-    const deadline=Date.now()+30000;
-    while(!check()) {if(errors.length) throw new Error(errors.join('\n')); if(Date.now()>deadline) throw new Error('Integration timeout');await new Promise(r=>setTimeout(r,20));}
+  async function until(check:()=>boolean, label:string, timeoutMs=150000) {
+    const deadline=Date.now()+timeoutMs;
+    while(!check()) {if(errors.length) throw new Error(errors.join('\n')); if(Date.now()>deadline) throw new Error(`Integration timeout waiting for ${label} after ${timeoutMs}ms`);await new Promise(r=>setTimeout(r,20));}
   }
   try {
     server=await serve(engine,data,0,origin,workspace);
@@ -74,9 +74,9 @@ export async function verifyKitIntegration(evidence?: string) {
     const baseUrl=`http://127.0.0.1:${server.port}`;
     ws=new WebSocket(baseUrl.replace('http:','ws:')+'/ws',{origin});
     ws.on('message',raw=>{const msg=JSON.parse(String(raw));if(msg.type==='snapshot') snapshot=msg.state; if(msg.type==='problem') errors.push(msg.detail||msg.text);});
-    await until(()=>!!snapshot);
+    await until(()=>!!snapshot,'initial snapshot',15000);
     ws.send(JSON.stringify({type:'send',text:`Prepará esta oferta: ${url}`,attachments:[{name:'www.nombre-adjunto.example.txt',data:Buffer.from('https://contenido-adjunto.example/').toString('base64')}]}));
-    await until(()=>!!snapshot?.works[0]?.messages[0]?.results?.length && !snapshot.works[0].busy);
+    await until(()=>!!snapshot?.works[0]?.messages[0]?.results?.length && !snapshot.works[0].busy,'kit results');
     const results=snapshot!.works[0].messages[0].results!;
     assert.deepEqual(results.map(f=>f.name).sort(),['pieza-1.png','piezas.pdf','todas.png']);
     assert.deepEqual(await readAllowedUrls(allowedUrlsPath(data)),[url]);

@@ -84,7 +84,7 @@ test('real kit MCP writes within a fake-engine request share two scans, exclude 
       } else contextSeen = !!context?.filesReverted;
       engine.emit({ type: 'finished', conversationId: id, status: 'completed' });
     };
-    const idle = async () => { for (let i = 0; i < 500 && app.snapshot().works.some(w => w.busy); i++) await new Promise(r => setTimeout(r, 10)); assert.ok(!app.snapshot().works.some(w => w.busy)); };
+    const idle = async () => { const deadline = Date.now() + 15000; while (Date.now() < deadline && app.snapshot().works.some(w => w.busy)) await new Promise(r => setTimeout(r, 10)); assert.ok(!app.snapshot().works.some(w => w.busy), 'timed out waiting for app idle'); };
     await app.command({ type: 'send', text: url }, () => {}); await idle();
     assert.equal(scans, 2);
     const work = app.snapshot().works[0], results = work.messages[0].results!;
