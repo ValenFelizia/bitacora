@@ -216,7 +216,7 @@ test("a name the engine refuses is saved in the detail", async () => {
     await until(() => f.app.snapshot().works[0].title === "Porto de Galinhas, febrero");
     await delay(100);
     const saved = JSON.parse(await readFile(join(f.dir, "works.json"), "utf8"));
-    assert.match(saved.works[0].details, /No pude guardar el título en el motor/);
+    assert.match(saved.works[0].details, /No pude guardar el título en la sesión/);
   } finally {
     await f.app.close();
     await rm(f.dir, { recursive: true });

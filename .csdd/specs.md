@@ -35,8 +35,10 @@ sin ayuda de Valentín.
   carpeta no es requisito del MVP: depende de una función beta de Codex y se suma
   solo si la prueba del issue #4 en Windows 11 sale bien.
 - **R5. Archivos y resultados a la vista.** La usuaria adjunta logo, fotos y
-  links. Las imágenes y PDFs que produce el agente aparecen en la conversación,
-  con copiar y guardar, y en una galería con todo lo producido.
+  links. Las imágenes y PDFs que produce el agente aparecen en el panel de
+  entregables a la derecha (con descargar, ver y copiar) —y en pantallas
+  angostas con un enlace «Ver» desde la conversación— y en una galería con todo
+  lo producido (DEC-012).
 - **R6. Kit base de turismo.** El espacio de trabajo parte de una base probada:
   traer el texto y las fotos de la página de un operador, controlar cada número
   contra la fuente citando la línea de donde sale, y dibujar a PNG y PDF.

@@ -701,7 +701,7 @@ export class CodexEngine implements Engine {
       this.emit({
         type: "detail",
         conversationId,
-        text: "No pude detener todos los procesos del motor: puede quedar algo escribiendo archivos.",
+        text: "No pude detener todos los procesos de Bitácora: puede quedar algo escribiendo archivos.",
       });
     if (!exited) {
       // The app-server is still alive and may still be writing. It must not
