@@ -145,3 +145,32 @@ export function groupDeliverables(
     older: otherFiles,
   };
 }
+
+export function undoSummary(
+  undo: { workId: string; messageId?: string },
+  works: Work[],
+): string {
+  const work = works.find((w) => w.id === undo.workId);
+  const message = undo.messageId
+    ? work?.messages.find((m) => m.id === undo.messageId)
+    : undefined;
+  if (message?.results?.length) {
+    const grouped = groupDeliverables(work, message.id);
+    const plateCount = grouped.featured?.plates.length ?? 0;
+    if (plateCount > 0) {
+      if (grouped.featured?.meta.includes("imágenes")) {
+        return plateCount === 1
+          ? "Se cambió 1 imagen"
+          : `Se cambiaron ${plateCount} imágenes`;
+      }
+      return plateCount === 1
+        ? "Se cambió 1 placa"
+        : `Se cambiaron ${plateCount} placas`;
+    }
+    return message.results.length === 1
+      ? "Se cambió 1 archivo"
+      : `Se cambiaron ${message.results.length} archivos`;
+  }
+  return "Hubo cambios en los archivos";
+}
+
