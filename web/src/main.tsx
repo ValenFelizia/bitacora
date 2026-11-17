@@ -294,11 +294,16 @@ function App() {
   }, [selected, work?.messages.length, work?.messages.at(-1)?.text]);
 
   useEffect(() => {
-    const el = composerInput.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 192)}px`;
-  }, [text]);
+    const resize = () => {
+      const el = composerInput.current;
+      if (!el) return;
+      el.style.height = "auto";
+      el.style.height = `${Math.min(el.scrollHeight, 192)}px`;
+    };
+    resize();
+    window.addEventListener("resize", resize);
+    return () => window.removeEventListener("resize", resize);
+  }, [text, gallery]);
 
   useEffect(() => {
     // The form closes only when the server's snapshot shows the saved name.
@@ -442,9 +447,11 @@ function App() {
       )
     : -1;
 
+  const showEngineStoppedBanner = online && !state.engine.available;
+  const showProblemBanner =
+    !showEngineStoppedBanner && (!!problem || !!work?.problem);
   const hasErrorBanner =
-    !gallery &&
-    ((online && !state.engine.available) || !!problem || !!work?.problem);
+    !gallery && (showEngineStoppedBanner || showProblemBanner);
 
   const isPausedProgress = work?.progress === "Trabajo pausado.";
   const isDoneProgress = work?.progress === "Listo.";
@@ -473,7 +480,9 @@ function App() {
     !work.busy &&
     work.progress &&
     !isDoneProgress &&
-    !hasErrorBanner && (
+    (isPausedProgress
+      ? !(showEngineStoppedBanner || !!work.problem)
+      : !hasErrorBanner) && (
       <div
         className="grid grid-cols-[48px_20px_minmax(0,1fr)] gap-y-[7px] items-center text-[14px] text-muted"
         role="status"
@@ -808,7 +817,7 @@ function App() {
                   </button>
                 ) : !state.engine.available && gallery ? (
                   <span
-                    className="w-[40px] h-[40px] inline-grid place-items-center text-danger min-[960px]:hidden"
+                    className="w-[36px] h-[36px] max-[959px]:w-[40px] max-[959px]:h-[40px] inline-grid place-items-center text-danger"
                     role="img"
                     title="Bitácora se detuvo"
                     aria-label="Bitácora se detuvo"
@@ -867,108 +876,102 @@ function App() {
           )}
         </header>
 
-        <div className="relative flex-1 min-h-0 flex flex-col">
-          {((state.undo && !busy) || state.notice) && (
-            <section
-              aria-label="Deshacer el último pedido"
-              className="absolute top-0 inset-x-0 z-10 px-5 min-[960px]:px-7 py-2 border-b border-line bg-surface text-[13px] flex flex-col gap-2"
-            >
-              {state.undo && !busy && (
-                <div className="flex items-center justify-between gap-3 min-w-0">
-                  <p className="flex flex-1 items-center gap-2 text-ink min-w-0">
-                    <RotateCcw
-                      size={16}
-                      strokeWidth={1.75}
-                      className="text-muted shrink-0"
-                      aria-hidden="true"
-                    />
-                    <span
-                      className="truncate"
-                      title={`Último pedido con cambios: ${state.undo.title} · «${state.undo.request}»`}
-                    >
-                      {undoSummary(state.undo, state.works)}
-                    </span>
-                  </p>
-                  {confirmUndo !== state.undo.id && (
-                    <div className="flex items-center gap-2 shrink-0">
-                      {state.undo.retry && (
-                        <button
-                          type="button"
-                          className={`inline-flex items-center justify-center gap-2 px-3 py-1.5 rounded-[6px] border border-line bg-surface text-ink text-[13px] hover:bg-soft cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors duration-150 ${focusRing}`}
-                          disabled={!online}
-                          onClick={() => {
-                            if (
-                              window.confirm(
-                                "Voy a dejar la carpeta como está ahora y descartar el Deshacer pendiente. Después podés seguir trabajando.",
-                              )
-                            )
-                              send({ type: "discardUndo", id: state.undo!.id });
-                          }}
-                        >
-                          Dejar la carpeta como está
-                        </button>
-                      )}
+        {((state.undo && !busy) || state.notice) && (
+          <section
+            aria-label="Deshacer el último pedido"
+            className="shrink-0 px-5 min-[960px]:px-7 py-2 border-b border-line bg-surface text-[13px] flex flex-col gap-2"
+          >
+            {state.undo && !busy && (
+              <div className="flex flex-wrap items-center justify-between gap-2 min-w-0">
+                <p className="flex flex-1 items-center gap-2 text-ink min-w-[140px] max-w-full">
+                  <RotateCcw
+                    size={16}
+                    strokeWidth={1.75}
+                    className="text-muted shrink-0"
+                    aria-hidden="true"
+                  />
+                  <span
+                    className="truncate"
+                    title={`Último pedido con cambios: ${state.undo.title} · «${state.undo.request}»`}
+                  >
+                    {undoSummary(state.undo, state.works) ||
+                      `${state.undo.title} · «${state.undo.request}»`}
+                  </span>
+                </p>
+                {confirmUndo !== state.undo.id && (
+                  <div className="flex flex-wrap items-center gap-2 max-w-full ml-auto">
+                    {state.undo.retry && (
                       <button
                         type="button"
                         className={`inline-flex items-center justify-center gap-2 px-3 py-1.5 rounded-[6px] border border-line bg-surface text-ink text-[13px] hover:bg-soft cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors duration-150 ${focusRing}`}
                         disabled={!online}
-                        onClick={() => setConfirmUndo(state.undo!.id)}
+                        onClick={() => {
+                          if (
+                            window.confirm(
+                              "Voy a dejar la carpeta como está ahora y descartar el Deshacer pendiente. Después podés seguir trabajando.",
+                            )
+                          )
+                            send({ type: "discardUndo", id: state.undo!.id });
+                        }}
                       >
-                        {state.undo.retry ? "Reintentar deshacer" : "Deshacer"}
+                        Dejar la carpeta como está
                       </button>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {state.undo && !busy && confirmUndo === state.undo.id && (
-                <div
-                  role="group"
-                  aria-label="Confirmar Deshacer"
-                  className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-line"
-                >
-                  <p className="text-muted">
-                    Voy a deshacer los cambios de este pedido, aunque estés en otro
-                    trabajo. Lo que agregaste o cambiaste a mano después no se toca.
-                  </p>
-                  <div className="flex items-center gap-2 shrink-0">
+                    )}
                     <button
                       type="button"
-                      className={buttonBordered}
+                      className={`inline-flex items-center justify-center gap-2 px-3 py-1.5 rounded-[6px] border border-line bg-surface text-ink text-[13px] hover:bg-soft cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors duration-150 ${focusRing}`}
                       disabled={!online}
-                      onClick={() => {
-                        send({ type: "undo", id: state.undo!.id });
-                        setConfirmUndo(undefined);
-                      }}
+                      onClick={() => setConfirmUndo(state.undo!.id)}
                     >
-                      Sí, deshacer
-                    </button>
-                    <button
-                      type="button"
-                      className={buttonQuiet}
-                      onClick={() => setConfirmUndo(undefined)}
-                    >
-                      Cancelar
+                      {state.undo.retry ? "Reintentar deshacer" : "Deshacer"}
                     </button>
                   </div>
-                </div>
-              )}
+                )}
+              </div>
+            )}
 
-              {state.notice && (
-                <p role="status" className="text-ink">
-                  {state.notice}
+            {state.undo && !busy && confirmUndo === state.undo.id && (
+              <div
+                role="group"
+                aria-label="Confirmar Deshacer"
+                className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-line"
+              >
+                <p className="text-muted">
+                  Voy a deshacer los cambios de este pedido, aunque estés en otro
+                  trabajo. Lo que agregaste o cambiaste a mano después no se toca.
                 </p>
-              )}
-            </section>
-          )}
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    className={buttonBordered}
+                    disabled={!online}
+                    onClick={() => {
+                      send({ type: "undo", id: state.undo!.id });
+                      setConfirmUndo(undefined);
+                    }}
+                  >
+                    Sí, deshacer
+                  </button>
+                  <button
+                    type="button"
+                    className={buttonQuiet}
+                    onClick={() => setConfirmUndo(undefined)}
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            )}
 
-          <div
-            className={`flex-1 min-h-0 overflow-y-auto px-5 min-[960px]:px-7 pb-6 ${
-              !gallery && (!!work || (state.undo && !busy) || !!state.notice)
-                ? "pt-[68px]"
-                : "pt-6"
-            }`}
-          >
+            {state.notice && (
+              <p role="status" className="text-ink">
+                {state.notice}
+              </p>
+            )}
+          </section>
+        )}
+
+        <div className="flex-1 min-h-0 overflow-y-auto px-5 min-[960px]:px-7 py-6">
             <div
               className={`mx-auto w-full flex flex-col gap-[18px] ${
                 gallery ? "max-w-[880px]" : "max-w-[720px]"
@@ -1131,7 +1134,9 @@ function App() {
                           key={route}
                           type="button"
                           onClick={() => {
-                            setText(route);
+                            setText((current) =>
+                              current.trim() ? current : route,
+                            );
                             composerInput.current?.focus();
                           }}
                           className={`w-full py-2.5 flex items-center justify-between gap-3 text-left text-[15px] text-ink hover:text-accent-ink cursor-pointer transition-colors duration-150 ${focusRing}`}
@@ -1246,32 +1251,27 @@ function App() {
 
               {!gallery && work && lastUserIndex === -1 && (inProgressBlock || pausedProgressBlock)}
 
-              {/* Details toggle inside conversation log when no active error banner */}
-              {!gallery &&
-                state.engine.available &&
-                !(problem || work?.problem) &&
-                work?.details && (
-                  <DetailsToggle text={work.details} className="pl-4 -mt-2" />
-                )}
+              {/* Details toggle inside conversation log when not shown in an active error banner */}
+              {!gallery && !showProblemBanner && work?.details && (
+                <DetailsToggle text={work.details} className="pl-4 -mt-2" />
+              )}
 
               {!gallery && closingBlock}
 
               <div ref={bottom} />
             </div>
           </div>
-        </div>
 
         {/* Status & error banners pinned above composer */}
         {!gallery &&
           ((!online && !!work) ||
-            (online && !state.engine.available) ||
+            showEngineStoppedBanner ||
             (online && state.engine.available && !state.engine.safety.allowed) ||
             (online &&
               state.engine.available &&
               state.engine.safety.allowed &&
               !!protectionWarning(state.engine.safety)) ||
-            !!problem ||
-            !!work?.problem) && (
+            showProblemBanner) && (
             <div className="shrink-0 max-h-[40dvh] overflow-y-auto px-5 min-[960px]:px-7 pt-2 pb-3">
               <div className="mx-auto w-full max-w-[720px] flex flex-col gap-2.5">
                 {!online && work && (
@@ -1301,7 +1301,7 @@ function App() {
                 )}
 
                 {/* Engine stopped / error state */}
-                {online && !state.engine.available && (
+                {showEngineStoppedBanner && (
                   <section className="rounded-[6px] border border-danger bg-surface px-4 py-3">
                     <DetailsToggle
                       text={state.engine.safety.detail}
@@ -1429,7 +1429,7 @@ function App() {
                   )}
 
                 {/* Error state on active work / request / attachments */}
-                {(problem || work?.problem) && (
+                {showProblemBanner && (
                   <div
                     role="alert"
                     className="rounded-[6px] border border-danger bg-surface px-4 py-3 text-[14px] text-ink"
