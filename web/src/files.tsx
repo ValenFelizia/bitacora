@@ -101,7 +101,7 @@ const iconBtn =
   "w-[36px] h-[36px] max-[959px]:w-[40px] max-[959px]:h-[40px] shrink-0 inline-grid place-items-center rounded-[6px] text-muted hover:text-ink hover:bg-soft cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2";
 
 const downloadLink =
-  "inline-flex items-center gap-[6px] whitespace-nowrap shrink-0 font-bold text-[13px] text-ink underline decoration-accent decoration-2 underline-offset-[5px] cursor-pointer hover:opacity-80 disabled:opacity-40 disabled:cursor-default transition-opacity duration-150 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-3";
+  "inline-flex items-center gap-[6px] min-w-0 text-left font-bold text-[13px] text-ink underline decoration-accent decoration-2 underline-offset-[5px] cursor-pointer hover:opacity-80 disabled:opacity-40 disabled:cursor-default transition-opacity duration-150 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-3";
 
 export function FileCard({
   file,
@@ -291,22 +291,28 @@ function PlateThumbnail({
   token,
   fileRevision,
   compact,
+  moreCount,
   onClick,
 }: {
   file: FileRef;
   token?: string;
   fileRevision?: number;
   compact: boolean;
+  moreCount?: number;
   onClick: () => void;
 }) {
   const fetched = useFetchedFile(file, token, fileRevision);
+  const label =
+    moreCount && moreCount > 0
+      ? `Ver ${moreCount} más`
+      : `Ver ${file.name}`;
   return (
     <button
       type="button"
       onClick={onClick}
-      title={`Ver ${file.name}`}
-      aria-label={`Ver ${file.name}`}
-      className={`group block w-full overflow-hidden rounded-[3px] border border-line bg-paper cursor-pointer focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 ${
+      title={label}
+      aria-label={label}
+      className={`relative group block w-full overflow-hidden rounded-[3px] border border-line bg-paper cursor-pointer focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 ${
         compact ? "aspect-[9/16]" : "max-h-[240px]"
       }`}
     >
@@ -323,6 +329,11 @@ function PlateThumbnail({
           ) : (
             <ImageIcon size={18} strokeWidth={1.75} aria-hidden="true" />
           )}
+        </span>
+      )}
+      {moreCount && moreCount > 0 && (
+        <span className="absolute inset-0 bg-ink/70 text-surface font-bold text-[15px] tabular-nums grid place-items-center">
+          +{moreCount}
         </span>
       )}
     </button>
@@ -473,8 +484,10 @@ function FeaturedDeliverable({
       : group.allFiles;
   const showTitle = group.title && group.title !== workTitle;
   const downloadText = isMulti
-    ? `Descargar ${group.plates.length} ${group.meta.includes("imágenes") ? "imágenes" : "placas"}`
+    ? `Descargar ${group.plates.length} ${group.kind === "images" ? "imágenes" : "placas"}`
     : "Descargar";
+  const visiblePlates = group.plates.slice(0, 6);
+  const overflowCount = group.plates.length - visiblePlates.length;
 
   async function downloadAll() {
     if (!token) return;
@@ -515,7 +528,7 @@ function FeaturedDeliverable({
 
   return (
     <div className="rounded-[6px] border border-line bg-surface p-2.5 flex flex-col gap-[10px]">
-      {group.plates.length > 0 ? (
+      {visiblePlates.length > 0 ? (
         <div
           className={
             group.plates.length >= 5
@@ -525,16 +538,26 @@ function FeaturedDeliverable({
                 : "w-full"
           }
         >
-          {group.plates.map((plate) => (
-            <PlateThumbnail
-              key={`${plate.id}-${fileRevision ?? 0}`}
-              file={plate}
-              token={token}
-              fileRevision={fileRevision}
-              compact={isMulti}
-              onClick={() => onPreview(plate, group.plates)}
-            />
-          ))}
+          {visiblePlates.map((plate, index) => {
+            const hasMoreTile =
+              overflowCount > 0 && index === visiblePlates.length - 1;
+            return (
+              <PlateThumbnail
+                key={`${plate.id}-${fileRevision ?? 0}`}
+                file={plate}
+                token={token}
+                fileRevision={fileRevision}
+                compact={isMulti}
+                moreCount={hasMoreTile ? overflowCount : undefined}
+                onClick={() =>
+                  onPreview(
+                    hasMoreTile ? group.plates[6] : plate,
+                    group.plates,
+                  )
+                }
+              />
+            );
+          })}
         </div>
       ) : (
         <a
@@ -570,7 +593,7 @@ function FeaturedDeliverable({
         </p>
       )}
       {(!primaryFetched.missing || group.allFiles.length > 1) && (
-        <div className="flex items-center justify-between border-t border-line pt-[10px]">
+        <div className="flex flex-wrap items-center justify-between gap-y-1 border-t border-line pt-[10px]">
           <button
             type="button"
             disabled={primaryFetched.missing ? !isMulti : (!primaryFetched.url && !isMulti)}
@@ -580,7 +603,7 @@ function FeaturedDeliverable({
             <ArrowDownToLine size={18} strokeWidth={1.75} className="text-accent shrink-0" aria-hidden="true" />
             <span>{downloadText}</span>
           </button>
-          <div className="flex items-center">
+          <div className="flex items-center ml-auto shrink-0">
             {!primaryFetched.missing && (
               isImage ? (
                 <button
