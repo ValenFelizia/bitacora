@@ -29,6 +29,7 @@ export function formatTime(iso: string): string {
 
 export type DeliverableGroup = {
   id: string;
+  kind: "plates" | "images" | "file";
   title: string;
   meta: string;
   plates: FileRef[];
@@ -100,6 +101,7 @@ export function groupDeliverables(
     return {
       featured: {
         id: target.id,
+        kind: "plates",
         title: work.title,
         meta: `${countLabel}${timeText ? ` · ${timeText}` : ""}`,
         plates,
@@ -115,6 +117,7 @@ export function groupDeliverables(
     return {
       featured: {
         id: target.id,
+        kind: "images",
         title: work.title,
         meta: `${images.length} imágenes${timeText ? ` · ${timeText}` : ""}`,
         plates: images,
@@ -132,10 +135,12 @@ export function groupDeliverables(
     return b.createdAt.localeCompare(a.createdAt);
   });
   const primary = sortedTarget[0];
+  const singleImage = sortedTarget.length === 1 && primary.mime.startsWith("image/");
 
   return {
     featured: {
       id: target.id,
+      kind: singleImage ? "images" : "file",
       title: primary.name,
       meta: timeText || "",
       plates: primary.mime.startsWith("image/") ? [primary] : [],
@@ -154,23 +159,28 @@ export function undoSummary(
   const message = undo.messageId
     ? work?.messages.find((m) => m.id === undo.messageId)
     : undefined;
-  if (message?.results?.length) {
+  if (message) {
+    if (!message.results?.length) return "";
     const grouped = groupDeliverables(work, message.id);
-    const plateCount = grouped.featured?.plates.length ?? 0;
-    if (plateCount > 0) {
-      if (grouped.featured?.meta.includes("imágenes")) {
-        return plateCount === 1
-          ? "Se cambió 1 imagen"
-          : `Se cambiaron ${plateCount} imágenes`;
-      }
-      return plateCount === 1
+    const featured = grouped.featured;
+    if (featured?.kind === "plates") {
+      const count = featured.plates.length;
+      return count === 1
         ? "Se cambió 1 placa"
-        : `Se cambiaron ${plateCount} placas`;
+        : `Se cambiaron ${count} placas`;
     }
-    return message.results.length === 1
+    if (featured?.kind === "images") {
+      const count = featured.plates.length;
+      return count === 1
+        ? "Se cambió 1 imagen"
+        : `Se cambiaron ${count} imágenes`;
+    }
+    const count = message.results.length;
+    return count === 1
       ? "Se cambió 1 archivo"
-      : `Se cambiaron ${message.results.length} archivos`;
+      : `Se cambiaron ${count} archivos`;
   }
   return "Hubo cambios en los archivos";
 }
+
 
