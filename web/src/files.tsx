@@ -1,55 +1,827 @@
-import React, { useEffect, useState } from 'react';
-import type { FileRef } from '../../server/src/contracts';
+import React, { useEffect, useState } from "react";
+import {
+  ArrowDownToLine,
+  ChevronLeft,
+  ChevronRight,
+  Copy,
+  Ellipsis,
+  Eye,
+  FileText,
+  FileX,
+  Image as ImageIcon,
+  Package,
+  X,
+} from "lucide-react";
+import type { FileRef, Work } from "../../server/src/contracts";
+import { formatTime, groupDeliverables, type DeliverableGroup } from "./format";
+
 export function fileUrl(file: FileRef, token?: string) {
-  return `/files?id=${encodeURIComponent(file.id)}&token=${encodeURIComponent(token || '')}`;
+  return `/files?id=${encodeURIComponent(file.id)}&token=${encodeURIComponent(token || "")}`;
 }
-export function FileCard({ file, token, result = false }: { file: FileRef; token?: string; result?: boolean }) {
-  const [missing, setMissing] = useState(false);
-  const [content, setContent] = useState<{ blob: Blob; url: string }>();
-  const [notice, setNotice] = useState('');
+
+type FetchedFile = {
+  blob?: Blob;
+  url?: string;
+  missing: boolean;
+  loading: boolean;
+};
+
+function useFetchedFile(file: FileRef | undefined, token?: string, fileRevision?: number): FetchedFile {
+  const [state, setState] = useState<FetchedFile>({
+    missing: false,
+    loading: !!file && !!token && !file.reverted,
+  });
+
   useEffect(() => {
-    setMissing(false); setContent(undefined);
+    if (!file) {
+      setState({ missing: false, loading: false });
+      return;
+    }
+    if (file.reverted) {
+      setState({ missing: true, loading: false });
+      return;
+    }
+    if (!token) {
+      setState({ missing: false, loading: false });
+      return;
+    }
+    setState({ missing: false, loading: true });
     const controller = new AbortController();
     let objectUrl: string | undefined;
-    if (token) void fetch(fileUrl(file, token), { signal: controller.signal }).then(async response => {
-      if (!response.ok) throw new Error('unavailable');
-      const blob = await response.blob();
-      if (controller.signal.aborted) return;
-      objectUrl = URL.createObjectURL(blob);
-      setContent({ blob, url: objectUrl });
-    }).catch(() => { if (!controller.signal.aborted) setMissing(true); });
-    return () => { controller.abort(); if (objectUrl) URL.revokeObjectURL(objectUrl); };
-  }, [file.id, token]);
-  const image = file.mime.startsWith('image/');
-  async function copy() {
-    if (!content) return;
-    try {
-      const png = (async () => {
-        const bitmap = await createImageBitmap(content.blob);
-        try {
-          const canvas = document.createElement('canvas');
-          canvas.width = bitmap.width; canvas.height = bitmap.height;
-          canvas.getContext('2d')!.drawImage(bitmap, 0, 0);
-          return await new Promise<Blob>((resolve, reject) => canvas.toBlob(b => b ? resolve(b) : reject(), 'image/png'));
-        } finally { bitmap.close(); }
-      })();
-      await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
-      setNotice('Imagen copiada.');
-    } catch { setNotice('No pude copiar. Probá guardar la imagen.'); }
+    void fetch(fileUrl(file, token), { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("unavailable");
+        const blob = await response.blob();
+        if (controller.signal.aborted) return;
+        objectUrl = URL.createObjectURL(blob);
+        setState({ blob, url: objectUrl, missing: false, loading: false });
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setState({ missing: true, loading: false });
+      });
+    return () => {
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [file?.id, file?.reverted, token, fileRevision]);
+
+  return state;
+}
+
+async function copyImageBlob(blob: Blob): Promise<boolean> {
+  try {
+    const png = (async () => {
+      const bitmap = await createImageBitmap(blob);
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+        canvas.getContext("2d")!.drawImage(bitmap, 0, 0);
+        return await new Promise<Blob>((resolve, reject) =>
+          canvas.toBlob((b) => (b ? resolve(b) : reject()), "image/png"),
+        );
+      } finally {
+        bitmap.close();
+      }
+    })();
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]);
+    return true;
+  } catch {
+    return false;
   }
-  const action = 'inline-block rounded-lg border border-[#c6d0c9] px-3 py-2 text-sm hover:bg-[#e4ebe5] disabled:opacity-50 focus-visible:outline-3 focus-visible:outline-[#94733c] focus-visible:outline-offset-3';
-  return <figure className="my-3 min-w-0 rounded-xl border border-[#d9ddd2] bg-[#fffefa] p-3">
-    {image && !missing && content && <img className="max-h-64 w-full rounded-lg object-contain" src={content.url} alt={file.name} onError={() => setMissing(true)} />}
-    <figcaption className="my-2 break-words text-sm">{file.name}</figcaption>
-    {missing ? <p role="status" className="text-sm">Este archivo ya no está disponible.</p> : <div className="flex flex-wrap gap-2">
-      {result && image && <button type="button" disabled={!content} className={action} onClick={() => void copy()}>Copiar</button>}
-      {!image && content && <a className={action} href={content.url} target="_blank" rel="noreferrer">Abrir</a>}
-      <button type="button" disabled={!content} className={action} onClick={() => {
-        if (!content) return;
-        const a = document.createElement('a'); a.href = content.url; a.download = file.name; a.click();
-        setNotice('Archivo guardado.');
-      }}>Guardar</button>
-    </div>}
-    <p role="status" className="mt-1 text-xs">{notice || (!missing && !content ? 'Cargando archivo…' : '')}</p>
-  </figure>;
+}
+
+function triggerDownload(url: string, name: string) {
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+}
+
+const iconBtn =
+  "w-[30px] h-[30px] inline-grid place-items-center rounded-[6px] text-muted hover:text-ink hover:bg-soft cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2";
+
+const downloadLink =
+  "inline-flex items-center gap-[7px] font-bold text-[15px] text-ink underline decoration-accent decoration-2 underline-offset-[5px] cursor-pointer hover:opacity-80 disabled:opacity-40 disabled:cursor-default transition-opacity duration-150 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-3";
+
+export function FileCard({
+  file,
+  token,
+  result = false,
+  fileRevision,
+  onPreview,
+}: {
+  file: FileRef;
+  token?: string;
+  result?: boolean;
+  fileRevision?: number;
+  onPreview?: (file: FileRef) => void;
+}) {
+  const fetched = useFetchedFile(file, token, fileRevision);
+  const [notice, setNotice] = useState("");
+  const image = file.mime.startsWith("image/");
+
+  async function copy() {
+    if (!fetched.blob) return;
+    const ok = await copyImageBlob(fetched.blob);
+    setNotice(ok ? "Imagen copiada." : "No pude copiar. Probá descargar la imagen.");
+  }
+
+  if (!result) {
+    return (
+      <figure className="min-w-0 rounded-[6px] border border-line bg-surface p-2.5 flex items-center gap-3">
+        {image && !fetched.missing && fetched.url ? (
+          <img
+            className="w-12 h-12 shrink-0 rounded-[3px] object-cover border border-line bg-paper"
+            src={fetched.url}
+            alt={file.name}
+          />
+        ) : (
+          <span className="w-12 h-12 shrink-0 rounded-[3px] border border-line bg-paper grid place-items-center text-muted">
+            {fetched.missing ? <FileX size={18} strokeWidth={1.75} /> : <FileText size={18} strokeWidth={1.75} />}
+          </span>
+        )}
+        <div className="min-w-0 flex-1">
+          <figcaption className="truncate text-[13px] font-bold text-ink">{file.name}</figcaption>
+          <p role="status" className="text-[12px] text-muted">
+            {fetched.missing
+              ? "Este archivo ya no está disponible."
+              : notice || (fetched.loading ? "Cargando archivo…" : "Adjunto")}
+          </p>
+        </div>
+        {!fetched.missing && fetched.url && (
+          <div className="flex items-center gap-0.5 shrink-0">
+            {!image && (
+              <a
+                className={iconBtn}
+                href={fetched.url}
+                target="_blank"
+                rel="noreferrer"
+                title={`Abrir ${file.name}`}
+                aria-label={`Abrir ${file.name}`}
+              >
+                <Eye size={18} strokeWidth={1.75} aria-hidden="true" />
+              </a>
+            )}
+            <button
+              type="button"
+              className={iconBtn}
+              title={`Descargar ${file.name}`}
+              aria-label={`Descargar ${file.name}`}
+              onClick={() => {
+                if (!fetched.url) return;
+                triggerDownload(fetched.url, file.name);
+                setNotice("Archivo guardado.");
+              }}
+            >
+              <ArrowDownToLine size={18} strokeWidth={1.75} aria-hidden="true" />
+            </button>
+          </div>
+        )}
+      </figure>
+    );
+  }
+
+  return (
+    <figure className="min-w-0 rounded-[6px] border border-line bg-surface p-3.5 flex flex-col gap-2.5">
+      {image && !fetched.missing && fetched.url && (
+        <button
+          type="button"
+          className="block w-full rounded-[3px] overflow-hidden border border-line bg-paper cursor-pointer focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+          onClick={() => onPreview?.(file)}
+          title={`Ver ${file.name}`}
+          aria-label={`Ver ${file.name}`}
+        >
+          <img
+            className="max-h-56 w-full object-contain"
+            src={fetched.url}
+            alt={file.name}
+          />
+        </button>
+      )}
+      {!image && !fetched.missing && fetched.url && (
+        <a
+          href={fetched.url}
+          target="_blank"
+          rel="noreferrer"
+          className="flex items-center justify-center gap-2 py-8 rounded-[3px] border border-line bg-paper text-muted hover:text-ink transition-colors duration-150"
+        >
+          <FileText size={18} strokeWidth={1.75} aria-hidden="true" />
+          <span className="text-[13px] font-bold">PDF</span>
+        </a>
+      )}
+      <div>
+        <figcaption className="font-display text-[17px] leading-snug text-ink break-words">
+          {file.name}
+        </figcaption>
+        <p className="text-[13px] text-muted tabular-nums mt-0.5">
+          {formatTime(file.createdAt)}
+        </p>
+      </div>
+      {fetched.missing ? (
+        <p role="status" className="text-[13px] text-muted flex items-center gap-2">
+          <FileX size={18} strokeWidth={1.75} aria-hidden="true" />
+          Este archivo ya no está disponible.
+        </p>
+      ) : (
+        <div className="flex items-center justify-between border-t border-line pt-2.5">
+          <button
+            type="button"
+            disabled={!fetched.url}
+            className={downloadLink}
+            onClick={() => {
+              if (!fetched.url) return;
+              triggerDownload(fetched.url, file.name);
+              setNotice("Archivo guardado.");
+            }}
+          >
+            <ArrowDownToLine size={18} strokeWidth={1.75} className="text-accent" aria-hidden="true" />
+            Descargar
+          </button>
+          <div className="flex items-center gap-0.5">
+            {image && (
+              <>
+                <button
+                  type="button"
+                  disabled={!fetched.blob}
+                  className={iconBtn}
+                  title="Ver"
+                  aria-label={`Ver ${file.name}`}
+                  onClick={() => onPreview?.(file)}
+                >
+                  <Eye size={18} strokeWidth={1.75} aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  disabled={!fetched.blob}
+                  className={iconBtn}
+                  title="Copiar"
+                  aria-label={`Copiar ${file.name}`}
+                  onClick={() => void copy()}
+                >
+                  <Copy size={18} strokeWidth={1.75} aria-hidden="true" />
+                </button>
+              </>
+            )}
+            {!image && fetched.url && (
+              <a
+                className={iconBtn}
+                href={fetched.url}
+                target="_blank"
+                rel="noreferrer"
+                title="Abrir"
+                aria-label={`Abrir ${file.name}`}
+              >
+                <Eye size={18} strokeWidth={1.75} aria-hidden="true" />
+              </a>
+            )}
+          </div>
+        </div>
+      )}
+      {(notice || (!fetched.missing && fetched.loading)) && (
+        <p role="status" className="text-[12px] text-muted">
+          {notice || "Cargando archivo…"}
+        </p>
+      )}
+    </figure>
+  );
+}
+
+function PlateThumbnail({
+  file,
+  token,
+  fileRevision,
+  compact,
+  onClick,
+}: {
+  file: FileRef;
+  token?: string;
+  fileRevision?: number;
+  compact: boolean;
+  onClick: () => void;
+}) {
+  const fetched = useFetchedFile(file, token, fileRevision);
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={`Ver ${file.name}`}
+      aria-label={`Ver ${file.name}`}
+      className={`group block w-full overflow-hidden rounded-[3px] border border-line bg-paper cursor-pointer focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 ${
+        compact ? "aspect-[9/16]" : "max-h-[240px]"
+      }`}
+    >
+      {fetched.url && !fetched.missing ? (
+        <img
+          src={fetched.url}
+          alt={file.name}
+          className={compact ? "w-full h-full object-cover" : "w-full max-h-[240px] object-contain"}
+        />
+      ) : (
+        <span className="w-full h-full min-h-[72px] grid place-items-center text-muted">
+          {fetched.missing ? (
+            <FileX size={18} strokeWidth={1.75} aria-hidden="true" />
+          ) : (
+            <ImageIcon size={18} strokeWidth={1.75} aria-hidden="true" />
+          )}
+        </span>
+      )}
+    </button>
+  );
+}
+
+function OlderDeliverableRow({
+  file,
+  token,
+  fileRevision,
+  onPreview,
+}: {
+  file: FileRef;
+  token?: string;
+  fileRevision?: number;
+  onPreview: (file: FileRef) => void;
+}) {
+  const fetched = useFetchedFile(file, token, fileRevision);
+  const isImage = file.mime.startsWith("image/");
+
+  return (
+    <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] gap-[10px] items-center py-[10px] border-t border-line text-[14px]">
+      <span className="text-muted">
+        {fetched.missing ? (
+          <FileX size={18} strokeWidth={1.75} aria-hidden="true" />
+        ) : isImage ? (
+          <ImageIcon size={18} strokeWidth={1.75} aria-hidden="true" />
+        ) : (
+          <FileText size={18} strokeWidth={1.75} aria-hidden="true" />
+        )}
+      </span>
+      {fetched.missing ? (
+        <span className="truncate text-muted" title="Este archivo ya no está disponible.">
+          {file.name}
+        </span>
+      ) : isImage ? (
+        <button
+          type="button"
+          onClick={() => onPreview(file)}
+          className="truncate text-left text-ink hover:underline cursor-pointer focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+          title={file.name}
+        >
+          {file.name}
+        </button>
+      ) : (
+        <a
+          href={fetched.url}
+          target="_blank"
+          rel="noreferrer"
+          className="truncate text-ink hover:underline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+          title={file.name}
+        >
+          {file.name}
+        </a>
+      )}
+      <button
+        type="button"
+        disabled={!fetched.url || fetched.missing}
+        title={`Descargar ${file.name}`}
+        aria-label={`Descargar ${file.name}`}
+        className={iconBtn}
+        onClick={() => {
+          if (fetched.url) triggerDownload(fetched.url, file.name);
+        }}
+      >
+        <ArrowDownToLine size={18} strokeWidth={1.75} aria-hidden="true" />
+      </button>
+    </div>
+  );
+}
+
+function FeaturedDeliverable({
+  group,
+  token,
+  fileRevision,
+  onPreview,
+}: {
+  group: DeliverableGroup;
+  token?: string;
+  fileRevision?: number;
+  onPreview: (file: FileRef, list: FileRef[]) => void;
+}) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [notice, setNotice] = useState("");
+  const primaryFetched = useFetchedFile(group.primary, token, fileRevision);
+  const isImage = group.primary.mime.startsWith("image/");
+  const isMulti = group.plates.length >= 2;
+  const visiblePlates = group.plates.slice(0, 4);
+
+  async function downloadAll() {
+    if (!token) return;
+    const filesToGet = isMulti ? group.plates : [group.primary];
+    if (filesToGet.length === 1 && primaryFetched.url) {
+      triggerDownload(primaryFetched.url, group.primary.name);
+      setNotice("Archivo guardado.");
+      return;
+    }
+    let count = 0;
+    for (const file of filesToGet) {
+      try {
+        const res = await fetch(fileUrl(file, token));
+        if (!res.ok) continue;
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        triggerDownload(url, file.name);
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        count++;
+      } catch {
+        // Ignore individual failure
+      }
+    }
+    setNotice(
+      count === filesToGet.length
+        ? "Archivos guardados."
+        : count > 0
+          ? `Guardé ${count} de ${filesToGet.length} archivos.`
+          : "No pude descargar los archivos.",
+    );
+  }
+
+  async function copyPrimary() {
+    if (!primaryFetched.blob) return;
+    const ok = await copyImageBlob(primaryFetched.blob);
+    setNotice(ok ? "Imagen copiada." : "No pude copiar.");
+  }
+
+  return (
+    <div className="flex flex-col gap-[10px]">
+      {group.plates.length > 0 ? (
+        <div
+          className={
+            isMulti
+              ? "grid grid-cols-4 gap-[5px]"
+              : "w-full"
+          }
+        >
+          {visiblePlates.map((plate) => (
+            <PlateThumbnail
+              key={`${plate.id}-${fileRevision ?? 0}`}
+              file={plate}
+              token={token}
+              fileRevision={fileRevision}
+              compact={isMulti}
+              onClick={() => onPreview(plate, group.plates)}
+            />
+          ))}
+        </div>
+      ) : (
+        <a
+          href={primaryFetched.url}
+          target="_blank"
+          rel="noreferrer"
+          className="flex flex-col items-center justify-center gap-2 py-8 rounded-[3px] border border-line bg-paper text-muted hover:text-ink transition-colors duration-150"
+        >
+          <FileText size={18} strokeWidth={1.75} aria-hidden="true" />
+          <span className="text-[13px] font-bold">PDF</span>
+        </a>
+      )}
+
+      <div>
+        <div className="font-display text-[17px] leading-snug text-ink break-words">
+          {group.title}
+        </div>
+        {group.meta && (
+          <div className="text-[13px] text-muted tabular-nums mt-0.5">{group.meta}</div>
+        )}
+      </div>
+
+      {primaryFetched.missing && (
+        <p role="status" className="text-[13px] text-muted flex items-center gap-2 border-t border-line pt-[10px]">
+          <FileX size={18} strokeWidth={1.75} aria-hidden="true" />
+          Este archivo ya no está disponible.
+        </p>
+      )}
+      {(!primaryFetched.missing || group.allFiles.length > 1) && (
+        <div className="flex items-center justify-between border-t border-line pt-[10px]">
+          <button
+            type="button"
+            disabled={primaryFetched.missing ? !isMulti : (!primaryFetched.url && !isMulti)}
+            className={downloadLink}
+            onClick={() => void downloadAll()}
+          >
+            <ArrowDownToLine size={18} strokeWidth={1.75} className="text-accent" aria-hidden="true" />
+            Descargar
+          </button>
+          <div className="flex items-center gap-0.5">
+            {!primaryFetched.missing && (
+              isImage ? (
+                <button
+                  type="button"
+                  className={iconBtn}
+                  title="Ver"
+                  aria-label="Ver entregable"
+                  onClick={() => onPreview(group.primary, group.plates)}
+                >
+                  <Eye size={18} strokeWidth={1.75} aria-hidden="true" />
+                </button>
+              ) : (
+                primaryFetched.url && (
+                  <a
+                    className={iconBtn}
+                    href={primaryFetched.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    title="Abrir"
+                    aria-label="Abrir PDF"
+                  >
+                    <Eye size={18} strokeWidth={1.75} aria-hidden="true" />
+                  </a>
+                )
+              )
+            )}
+            {!primaryFetched.missing && isImage && (
+              <button
+                type="button"
+                disabled={!primaryFetched.blob}
+                className={iconBtn}
+                title="Copiar"
+                aria-label="Copiar imagen"
+                onClick={() => void copyPrimary()}
+              >
+                <Copy size={18} strokeWidth={1.75} aria-hidden="true" />
+              </button>
+            )}
+            {group.allFiles.length > 1 && (
+              <button
+                type="button"
+                className={iconBtn}
+                title="Más"
+                aria-label="Más archivos de este entregable"
+                aria-expanded={menuOpen}
+                onClick={() => setMenuOpen((v) => !v)}
+              >
+                <Ellipsis size={18} strokeWidth={1.75} aria-hidden="true" />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {menuOpen && (
+        <div className="rounded-[6px] border border-line bg-paper p-2 flex flex-col gap-1">
+          {group.allFiles.map((f) => (
+            <OlderDeliverableRow
+              key={`${f.id}-${fileRevision ?? 0}`}
+              file={f}
+              token={token}
+              fileRevision={fileRevision}
+              onPreview={(target) =>
+                onPreview(target, group.allFiles.filter((x) => x.mime.startsWith("image/")))
+              }
+            />
+          ))}
+        </div>
+      )}
+
+      {notice && (
+        <p role="status" className="text-[12px] text-muted">
+          {notice}
+        </p>
+      )}
+    </div>
+  );
+}
+
+export function DeliverablesPanel({
+  work,
+  focusedMessageId,
+  token,
+  fileRevision,
+  hasGalleryResults,
+  onOpenGallery,
+  onPreview,
+  onCloseMobile,
+  closeMobileRef,
+}: {
+  work?: Work;
+  focusedMessageId?: string;
+  token?: string;
+  fileRevision?: number;
+  hasGalleryResults: boolean;
+  onOpenGallery: () => void;
+  onPreview: (file: FileRef, list: FileRef[]) => void;
+  onCloseMobile?: () => void;
+  closeMobileRef?: React.RefObject<HTMLButtonElement | null>;
+}) {
+  const grouped = groupDeliverables(work, focusedMessageId);
+
+  return (
+    <div className="flex flex-col gap-4 h-full overflow-y-auto">
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="font-display text-[20px] font-normal text-ink">Entregables</h2>
+        {onCloseMobile && (
+          <button
+            ref={closeMobileRef}
+            type="button"
+            onClick={onCloseMobile}
+            className={`${iconBtn} min-[960px]:hidden`}
+            title="Cerrar entregables"
+            aria-label="Cerrar entregables"
+          >
+            <X size={18} strokeWidth={1.75} aria-hidden="true" />
+          </button>
+        )}
+      </div>
+
+      {!grouped.featured ? (
+        <div className="flex flex-col items-start gap-3 py-6 text-muted">
+          <span className="w-9 h-9 rounded-[6px] border border-line bg-paper grid place-items-center text-muted">
+            <Package size={18} strokeWidth={1.75} aria-hidden="true" />
+          </span>
+          <p className="text-[14px] leading-relaxed">
+            {work
+              ? "Cuando Bitácora prepare placas o PDFs en este trabajo, los vas a ver acá."
+              : "Elegí un trabajo o pedí algo nuevo para ver sus entregables acá."}
+          </p>
+          {hasGalleryResults && (
+            <button
+              type="button"
+              onClick={onOpenGallery}
+              className="inline-flex items-center gap-2 px-3 py-1.5 border border-ink rounded-[6px] text-ink font-bold text-[13px] hover:bg-soft cursor-pointer transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+            >
+              Ver galería
+            </button>
+          )}
+        </div>
+      ) : (
+        <>
+          <FeaturedDeliverable
+            key={grouped.featured.id}
+            group={grouped.featured}
+            token={token}
+            fileRevision={fileRevision}
+            onPreview={onPreview}
+          />
+          {grouped.older.length > 0 && (
+            <div className="flex flex-col">
+              {grouped.older.map((file) => (
+                <OlderDeliverableRow
+                  key={`${file.id}-${fileRevision ?? 0}`}
+                  file={file}
+                  token={token}
+                  fileRevision={fileRevision}
+                  onPreview={(target) =>
+                    onPreview(
+                      target,
+                      grouped.older.filter((x) => x.mime.startsWith("image/")),
+                    )
+                  }
+                />
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+export function ImagePreviewModal({
+  file,
+  list,
+  token,
+  fileRevision,
+  onSelect,
+  onClose,
+}: {
+  file: FileRef;
+  list: FileRef[];
+  token?: string;
+  fileRevision?: number;
+  onSelect: (file: FileRef) => void;
+  onClose: () => void;
+}) {
+  const fetched = useFetchedFile(file, token, fileRevision);
+  const [notice, setNotice] = useState("");
+  const index = list.findIndex((f) => f.id === file.id);
+
+  useEffect(() => {
+    setNotice("");
+  }, [file.id]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        // Close only the preview, not the drawer underneath it.
+        e.stopPropagation();
+        onClose();
+      }
+      if (e.key === "ArrowLeft" && index > 0) onSelect(list[index - 1]);
+      if (e.key === "ArrowRight" && index >= 0 && index < list.length - 1) onSelect(list[index + 1]);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [index, list, onClose, onSelect]);
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={file.name}
+      className="fixed inset-0 z-50 bg-ink/70 flex items-center justify-center p-4"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div className="bg-surface border border-line rounded-[6px] max-w-[780px] w-full max-h-[90dvh] flex flex-col overflow-hidden">
+        <header className="flex items-center justify-between gap-4 px-5 py-3.5 border-b border-line">
+          <div className="min-w-0">
+            <h3 className="font-display text-[17px] text-ink truncate">{file.name}</h3>
+            {list.length > 1 && index >= 0 && (
+              <p className="text-[12px] text-muted tabular-nums">
+                {index + 1} de {list.length}
+              </p>
+            )}
+          </div>
+          <div className="flex items-center gap-1">
+            {list.length > 1 && (
+              <>
+                <button
+                  type="button"
+                  disabled={index <= 0}
+                  onClick={() => onSelect(list[index - 1])}
+                  className={iconBtn}
+                  title="Anterior"
+                  aria-label="Anterior"
+                >
+                  <ChevronLeft size={18} strokeWidth={1.75} aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  disabled={index < 0 || index >= list.length - 1}
+                  onClick={() => onSelect(list[index + 1])}
+                  className={iconBtn}
+                  title="Siguiente"
+                  aria-label="Siguiente"
+                >
+                  <ChevronRight size={18} strokeWidth={1.75} aria-hidden="true" />
+                </button>
+              </>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className={iconBtn}
+              title="Cerrar"
+              aria-label="Cerrar vista previa"
+            >
+              <X size={18} strokeWidth={1.75} aria-hidden="true" />
+            </button>
+          </div>
+        </header>
+        <div className="flex-1 min-h-0 overflow-auto p-5 bg-paper flex items-center justify-center">
+          {fetched.url && !fetched.missing ? (
+            <img
+              src={fetched.url}
+              alt={file.name}
+              className="max-h-[65dvh] max-w-full rounded-[3px] object-contain"
+            />
+          ) : (
+            <p className="text-[14px] text-muted">
+              {fetched.missing ? "Este archivo ya no está disponible." : "Cargando archivo…"}
+            </p>
+          )}
+        </div>
+        <footer className="flex items-center justify-between gap-4 px-5 py-3 border-t border-line bg-surface">
+          <div className="flex items-center gap-4">
+            <button
+              type="button"
+              disabled={!fetched.url || fetched.missing}
+              className={downloadLink}
+              onClick={() => {
+                if (fetched.url) {
+                  triggerDownload(fetched.url, file.name);
+                  setNotice("Archivo guardado.");
+                }
+              }}
+            >
+              <ArrowDownToLine size={18} strokeWidth={1.75} className="text-accent" aria-hidden="true" />
+              Descargar
+            </button>
+            <button
+              type="button"
+              disabled={!fetched.blob || fetched.missing}
+              className="inline-flex items-center gap-1.5 text-[14px] text-ink hover:underline cursor-pointer disabled:opacity-40"
+              onClick={async () => {
+                if (!fetched.blob) return;
+                const ok = await copyImageBlob(fetched.blob);
+                setNotice(ok ? "Imagen copiada." : "No pude copiar.");
+              }}
+            >
+              <Copy size={18} strokeWidth={1.75} className="text-muted" aria-hidden="true" />
+              Copiar
+            </button>
+          </div>
+          {notice && <span role="status" className="text-[13px] text-muted">{notice}</span>}
+        </footer>
+      </div>
+    </div>
+  );
 }

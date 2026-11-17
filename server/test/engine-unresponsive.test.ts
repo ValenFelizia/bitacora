@@ -114,7 +114,7 @@ test("a turn/start with no sign of life stops the engine", async () => {
     const work = app.snapshot().works[0];
     // The work is released and the user is told what happened.
     assert.equal(work.busy, false);
-    assert.match(work.problem!, /El motor no respondió y lo reinicié/);
+    assert.match(work.problem!, /Bitácora no respondió y se reinició/);
     // The process tree is gone before the app scans: the first app-server died.
     assert.ok(first > 0);
     assert.equal(alive(first), false);
@@ -145,7 +145,7 @@ test("a pause the engine never honours stops it", async () => {
     await app.command({ type: "interrupt", workId: work.id }, () => {});
     // The pause is accepted but the turn never ends: the engine is stopped.
     await until(() => !app.snapshot().works[0].busy);
-    assert.match(app.snapshot().works[0].problem!, /El motor no respondió y lo reinicié/);
+    assert.match(app.snapshot().works[0].problem!, /Bitácora no respondió y se reinició/);
     await until(() => app.snapshot().engine.available);
   } finally {
     try { await app.close(); } finally { await f.close(); }
@@ -165,7 +165,7 @@ test("a pause requested before the turn starts still has a deadline", async () =
     await assert.rejects(sending, /stopped answering turn\/start/);
     const work = app.snapshot().works[0];
     assert.equal(work.busy, false);
-    assert.match(work.problem!, /El motor no respondió y lo reinicié/);
+    assert.match(work.problem!, /Bitácora no respondió y se reinició/);
   } finally {
     try { await app.close(); } finally { await f.close(); }
   }
@@ -184,7 +184,7 @@ test("a failed pause on a turn still starting keeps the work until the tree stop
     await sending;
     assert.equal(app.snapshot().works[0].busy, true);
     await until(() => !app.snapshot().works[0].busy);
-    assert.match(app.snapshot().works[0].problem!, /El motor no respondió y lo reinicié/);
+    assert.match(app.snapshot().works[0].problem!, /Bitácora no respondió y se reinició/);
   } finally {
     try { await app.close(); } finally { await f.close(); }
   }

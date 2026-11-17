@@ -1,17 +1,39 @@
 import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import type {
-  Snapshot,
-  ClientCommand,
-  ServerMessage,
-} from "../../server/src/contracts";
-import "./style.css";
-import { FileCard } from "./files";
-import type { Work } from "../../server/src/contracts";
-import { MAX_TITLE } from "../../server/src/titles";
-const latestResult = (work: Work) => work.messages.flatMap(m => m.results || []).reduce((latest, f) => f.createdAt > latest ? f.createdAt : latest, "");
-import type { Upload } from "../../server/src/contracts";
 import ReactMarkdown from "react-markdown";
+import {
+  AlertCircle,
+  ArrowUp,
+  Check,
+  Compass,
+  LayoutGrid,
+  LogIn,
+  Mail,
+  Menu,
+  Package,
+  Paperclip,
+  Pencil,
+  PenLine,
+  Plus,
+  RotateCcw,
+  Shield,
+  ShieldAlert,
+  Square,
+  WifiOff,
+  X,
+} from "lucide-react";
+import type {
+  ClientCommand,
+  FileRef,
+  ServerMessage,
+  Snapshot,
+  Upload,
+  Work,
+} from "../../server/src/contracts";
+import { MAX_TITLE } from "../../server/src/titles";
+import "./style.css";
+import { DeliverablesPanel, FileCard, ImagePreviewModal } from "./files";
+import { formatTime, formatWorkDate } from "./format";
 import { protectionText, protectionWarning } from "./protection-text";
 import {
   appendReadFiles,
@@ -24,9 +46,17 @@ import {
 
 // Matches the server limit for a request (server/src/app.ts).
 const MAX_REQUEST_TEXT = 20000;
-const buttonBase = "touch-manipulation cursor-pointer rounded-lg border px-[15px] py-[10px] text-center disabled:opacity-50 disabled:cursor-default focus-visible:outline-3 focus-visible:outline-[#94733c] focus-visible:outline-offset-3 max-[460px]:text-xs max-[460px]:p-[9px]";
-const buttonSecondary = `${buttonBase} border-[#c6d0c9] hover:bg-[#e4ebe5]`;
-const buttonPrimary = `${buttonBase} text-white bg-[#31594d] border-[#31594d] hover:bg-[#22483e]`;
+
+const latestResult = (work: Work) =>
+  work.messages
+    .flatMap((m) => m.results || [])
+    .reduce((latest, f) => (f.createdAt > latest ? f.createdAt : latest), "");
+
+const focusRing =
+  "focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2";
+const buttonBordered = `inline-flex items-center justify-center gap-2 px-3 py-2 rounded-[6px] border border-ink bg-surface text-ink font-bold text-[14px] hover:bg-soft cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors duration-150 ${focusRing}`;
+const buttonQuiet = `inline-flex items-center justify-center gap-2 px-3 py-2 rounded-[6px] border border-line bg-surface text-ink text-[14px] hover:bg-soft cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors duration-150 ${focusRing}`;
+const iconButton = `w-[34px] h-[34px] inline-grid place-items-center rounded-[6px] text-muted hover:text-ink hover:bg-soft cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors duration-150 ${focusRing}`;
 
 function App() {
   const [state, setState] = useState<Snapshot>({
@@ -36,12 +66,22 @@ function App() {
   });
   const [confirmUndo, setConfirmUndo] = useState<string>();
   const [gallery, setGallery] = useState(false);
+  const [navOpen, setNavOpen] = useState(false);
+  const [deliverablesOpen, setDeliverablesOpen] = useState(false);
+  const [focusedMessageId, setFocusedMessageId] = useState<string>();
+  const [preview, setPreview] = useState<{ file: FileRef; list: FileRef[] }>();
   const [attachments, setAttachments] = useState<Upload[]>([]);
   const [readingFiles, setReadingFiles] = useState(false);
   const sentDraft = useRef<SentDraft | undefined>(undefined);
   // Incremented when the draft is discarded, so unfinished reads are ignored.
   const draftGeneration = useRef(0);
   const fileInput = useRef<HTMLInputElement>(null);
+  const composerInput = useRef<HTMLTextAreaElement>(null);
+  const navToggleRef = useRef<HTMLButtonElement>(null);
+  const navCloseRef = useRef<HTMLButtonElement>(null);
+  const deliverablesToggleRef = useRef<HTMLButtonElement>(null);
+  const deliverablesCloseRef = useRef<HTMLButtonElement>(null);
+  const reconnectRef = useRef<() => void>(() => {});
   const [selected, setSelected] = useState<string>();
   const [renaming, setRenaming] = useState(false);
   const [name, setName] = useState("");
@@ -58,6 +98,12 @@ function App() {
   const bottom = useRef<HTMLDivElement>(null);
   const work = state.works.find((w) => w.id === selected);
   const busy = state.works.some((w) => w.busy);
+  const hasGalleryResults = state.works.some((w) =>
+    w.messages.some((m) => m.results?.length),
+  );
+  const workResultCount =
+    work?.messages.reduce((sum, m) => sum + (m.results?.length || 0), 0) || 0;
+
   useEffect(() => {
     let disposed = false;
     let timer: ReturnType<typeof setTimeout>;
@@ -105,8 +151,12 @@ function App() {
             // A discarded draft must not reopen the work the user left.
             const keep = isCurrentDraft(sent, draftGeneration.current);
             setText((current) => (keep ? clearSentText(current, sent) : current));
-            setAttachments((current) => (keep ? clearSentAttachments(current, sent) : current));
-            setSelected((current) => (keep ? keepSelectedWork(current, sent, message.workId) : current));
+            setAttachments((current) =>
+              keep ? clearSentAttachments(current, sent) : current,
+            );
+            setSelected((current) =>
+              keep ? keepSelectedWork(current, sent, message.workId) : current,
+            );
           } else setSelected(message.workId);
           setPending(false);
         }
@@ -131,6 +181,19 @@ function App() {
         if (!disposed) timer = setTimeout(connect, 1500);
       };
     }
+    reconnectRef.current = () => {
+      clearTimeout(timer);
+      const prev = socket.current;
+      if (prev && prev.readyState !== WebSocket.OPEN) {
+        prev.onclose = null;
+        try {
+          prev.close();
+        } catch {
+          // Ignore close error
+        }
+      }
+      if (!disposed && socket.current?.readyState !== WebSocket.OPEN) connect();
+    };
     connect();
     return () => {
       disposed = true;
@@ -138,9 +201,49 @@ function App() {
       socket.current?.close();
     };
   }, []);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 960px)");
+    const onChange = (e: MediaQueryListEvent) => {
+      if (e.matches) {
+        setNavOpen(false);
+        setDeliverablesOpen(false);
+        setFocusedMessageId(undefined);
+      }
+    };
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+
+  useEffect(() => {
+    if (navOpen) navCloseRef.current?.focus();
+  }, [navOpen]);
+
+  useEffect(() => {
+    if (deliverablesOpen) deliverablesCloseRef.current?.focus();
+  }, [deliverablesOpen]);
+
+  useEffect(() => {
+    if (!navOpen && !deliverablesOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (navOpen) {
+        setNavOpen(false);
+        navToggleRef.current?.focus();
+      } else if (deliverablesOpen) {
+        setDeliverablesOpen(false);
+        setFocusedMessageId(undefined);
+        deliverablesToggleRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [navOpen, deliverablesOpen]);
+
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: "end" });
   }, [selected, work?.messages.length, work?.messages.at(-1)?.text]);
+
   useEffect(() => {
     // The form closes only when the server's snapshot shows the saved name.
     // The input is locked while saving, so the submitted name is the one shown.
@@ -149,11 +252,19 @@ function App() {
       setSavingName(undefined);
     }
   }, [savingName, work?.title]);
+
   function send(command: ClientCommand) {
     if (socket.current?.readyState !== WebSocket.OPEN) return;
     setProblem(undefined);
     socket.current.send(JSON.stringify(command));
   }
+
+  function startConnect() {
+    loginWindow.current = window.open("about:blank", "_blank");
+    if (loginWindow.current) loginWindow.current.opener = null;
+    send({ type: "connect" });
+  }
+
   // One send path: the draft and the attachments always travel together.
   function submitRequest(opening?: string) {
     const typed = text.trim();
@@ -168,41 +279,79 @@ function App() {
       !state.account.connected
     )
       return;
-    const combined = [opening, typed].filter(Boolean).join("\n\n") || "Revisá los archivos adjuntos.";
+    const combined =
+      [opening, typed].filter(Boolean).join("\n\n") ||
+      "Revisá los archivos adjuntos.";
     // The server rejects longer requests; keep the draft so nothing is lost.
     if (combined.length > MAX_REQUEST_TEXT) {
-      setProblem({ text: "El texto es demasiado largo para mandarlo junto con este pedido. Acortalo un poco y volvé a intentar." });
+      setProblem({
+        text: "El texto es demasiado largo para mandarlo junto con este pedido. Acortalo un poco y volvé a intentar.",
+      });
       return;
     }
     setPending(true);
-    sentDraft.current = { workId: selected, text, attachments, generation: draftGeneration.current };
+    sentDraft.current = {
+      workId: selected,
+      text,
+      attachments,
+      generation: draftGeneration.current,
+    };
     send({ type: "send", workId: selected, text: combined, attachments });
   }
+
   async function addFiles(files: File[]) {
     if (readingFiles || pending) return;
     const generation = draftGeneration.current;
     setReadingFiles(true);
     try {
-      if (attachments.length + files.length > 10) throw new Error("Podés adjuntar hasta 10 archivos.");
-      const total = attachments.reduce((n, f) => n + f.data.length * 3 / 4, 0) + files.reduce((n, f) => n + f.size, 0);
-      if (total > 40 * 1024 * 1024) throw new Error("Los adjuntos pueden pesar hasta 40 MB en total.");
+      if (attachments.length + files.length > 10)
+        throw new Error("Podés adjuntar hasta 10 archivos.");
+      const total =
+        attachments.reduce((n, f) => n + (f.data.length * 3) / 4, 0) +
+        files.reduce((n, f) => n + f.size, 0);
+      if (total > 40 * 1024 * 1024)
+        throw new Error("Los adjuntos pueden pesar hasta 40 MB en total.");
       for (const f of files) {
-        if (!/\.(png|jpe?g|webp|pdf|txt|md|csv|json)$/i.test(f.name)) throw new Error("Elegí una imagen, un PDF o texto (txt, md, csv o json).");
-        if (!f.size || f.size > 20 * 1024 * 1024) throw new Error("Cada archivo debe tener contenido y pesar hasta 20 MB.");
+        if (!/\.(png|jpe?g|webp|pdf|txt|md|csv|json)$/i.test(f.name))
+          throw new Error(
+            "Elegí una imagen, un PDF o texto (txt, md, csv o json).",
+          );
+        if (!f.size || f.size > 20 * 1024 * 1024)
+          throw new Error(
+            "Cada archivo debe tener contenido y pesar hasta 20 MB.",
+          );
       }
-      const added = await Promise.all(files.map(f => new Promise<Upload>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve({ name: f.name, data: String(reader.result).split(",")[1] });
-        reader.onerror = () => reject(new Error("No pude leer el archivo. Elegilo de nuevo."));
-        reader.readAsDataURL(f);
-      })));
-      setAttachments(previous => appendReadFiles(previous, added, generation, draftGeneration.current));
+      const added = await Promise.all(
+        files.map(
+          (f) =>
+            new Promise<Upload>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () =>
+                resolve({
+                  name: f.name,
+                  data: String(reader.result).split(",")[1],
+                });
+              reader.onerror = () =>
+                reject(new Error("No pude leer el archivo. Elegilo de nuevo."));
+              reader.readAsDataURL(f);
+            }),
+        ),
+      );
+      setAttachments((previous) =>
+        appendReadFiles(previous, added, generation, draftGeneration.current),
+      );
       if (generation === draftGeneration.current) setProblem(undefined);
-    } catch (error) { setProblem({ text: String((error as Error).message) }); }
-    finally { setReadingFiles(false); }
+    } catch (error) {
+      setProblem({ text: String((error as Error).message) });
+    } finally {
+      setReadingFiles(false);
+    }
   }
+
   useEffect(() => {
-    const dragover = (event: DragEvent) => { event.preventDefault(); };
+    const dragover = (event: DragEvent) => {
+      event.preventDefault();
+    };
     const drop = (event: DragEvent) => {
       event.preventDefault();
       if (event.dataTransfer?.files.length) {
@@ -210,30 +359,168 @@ function App() {
         void addFiles(Array.from(event.dataTransfer.files));
       }
     };
-    window.addEventListener('dragover', dragover);
-    window.addEventListener('drop', drop);
-    return () => { window.removeEventListener('dragover', dragover); window.removeEventListener('drop', drop); };
+    window.addEventListener("dragover", dragover);
+    window.addEventListener("drop", drop);
+    return () => {
+      window.removeEventListener("dragover", dragover);
+      window.removeEventListener("drop", drop);
+    };
   });
+
   useEffect(() => {
     document.title = gallery ? "Galería · Bitácora" : "Bitácora";
     document.querySelector<HTMLElement>("main")?.focus();
   }, [gallery]);
+
+  const lastUserIndex = work
+    ? work.messages.reduce(
+        (idx, m, i) => (m.role === "user" ? i : idx),
+        -1,
+      )
+    : -1;
+
+  const isPausedProgress = work?.progress === "Trabajo pausado.";
+  const isDoneProgress = work?.progress === "Listo.";
+
+  const progressBlock = work && (work.busy || work.progress) && (
+    <div
+      className="grid grid-cols-[48px_20px_minmax(0,1fr)] gap-y-[7px] items-center text-[14px] text-muted"
+      role="status"
+    >
+      {work.busy ? (
+        <>
+          <time className="text-[13px] tabular-nums text-accent-ink font-bold">
+            ahora
+          </time>
+          <PenLine
+            size={18}
+            strokeWidth={1.75}
+            className="text-accent-ink"
+            aria-hidden="true"
+          />
+          <span className="text-accent-ink font-bold">
+            {work.progress || "Preparando la respuesta…"}
+          </span>
+        </>
+      ) : (
+        <>
+          <time className="text-[13px] tabular-nums">
+            {formatTime(work.updatedAt)}
+          </time>
+          {isDoneProgress ? (
+            <Check
+              size={18}
+              strokeWidth={1.75}
+              className="text-ok"
+              aria-hidden="true"
+            />
+          ) : isPausedProgress ? (
+            <AlertCircle
+              size={18}
+              strokeWidth={1.75}
+              className="text-muted"
+              aria-hidden="true"
+            />
+          ) : (
+            <AlertCircle
+              size={18}
+              strokeWidth={1.75}
+              className="text-danger"
+              aria-hidden="true"
+            />
+          )}
+          <span className={!isDoneProgress && !isPausedProgress ? "text-danger" : undefined}>
+            {work.progress}
+          </span>
+        </>
+      )}
+    </div>
+  );
+
+  const canSend =
+    online &&
+    state.engine.available &&
+    state.engine.safety.allowed &&
+    state.account.connected;
+
+  const showCenterNotConnected =
+    !gallery &&
+    !work &&
+    online &&
+    state.engine.available &&
+    state.engine.safety.allowed &&
+    !state.account.connected;
+
+  const showSidebarNotConnected =
+    online &&
+    state.engine.available &&
+    !state.account.connected &&
+    !showCenterNotConnected;
+
+  function closeNavDrawer(restoreFocus = false) {
+    setNavOpen(false);
+    if (restoreFocus) navToggleRef.current?.focus();
+  }
+
+  function closeDeliverablesDrawer(restoreFocus = false) {
+    setDeliverablesOpen(false);
+    setFocusedMessageId(undefined);
+    if (restoreFocus) deliverablesToggleRef.current?.focus();
+  }
+
   return (
-    <div className="grid grid-cols-[280px_1fr] h-dvh max-[720px]:grid-cols-[190px_1fr] max-[460px]:grid-cols-[135px_1fr] font-sans text-[#283c3a] bg-[#faf9f5] [font-synthesis:none]">
-      <aside className="bg-[#edf0e9] border-r border-[#dbe0d6] pt-[30px] px-[22px] pb-[22px] flex flex-col gap-7 overflow-y-auto max-[720px]:px-3 max-[720px]:py-5 max-[720px]:gap-5">
-        <header>
-          <p className="text-[10px] tracking-[1.7px] font-[650] text-[#5e7067] max-[460px]:text-[8px]">
-            TU AGENCIA, EN MARCHA
-          </p>
-          <h1 className="font-[Georgia,serif] text-[38px] mt-[6px] tracking-[-1.5px] [&>span]:text-[#96754b] max-[720px]:text-[30px] max-[460px]:text-[25px]">
-            Bitácora<span aria-hidden="true">.</span>
-          </h1>
-        </header>
+    <div
+      className={`grid h-dvh grid-cols-1 bg-paper text-ink overflow-hidden ${
+        gallery
+          ? "min-[960px]:grid-cols-[220px_minmax(0,1fr)]"
+          : "min-[960px]:grid-cols-[220px_minmax(0,1fr)_300px]"
+      }`}
+    >
+      {(navOpen || deliverablesOpen) && (
+        <div
+          className="fixed inset-0 z-30 bg-ink/40 min-[960px]:hidden"
+          onClick={() => {
+            if (navOpen) closeNavDrawer(true);
+            if (deliverablesOpen) closeDeliverablesDrawer(true);
+          }}
+        />
+      )}
+
+      {/* Left sidebar: brand, new work, works list, account */}
+      <aside
+        className={`${
+          navOpen
+            ? "fixed inset-y-0 left-0 z-40 w-[240px] flex"
+            : "hidden min-[960px]:flex"
+        } flex-col gap-0.5 bg-paper border-r border-line pt-5 px-3 pb-[14px] min-h-0`}
+      >
+        <div className="flex items-center justify-between px-[10px] pb-4">
+          <div className="font-display text-[25px] leading-none text-ink">
+            Bitácora
+            <em className="not-italic text-accent" aria-hidden="true">
+              .
+            </em>
+          </div>
+          <button
+            ref={navCloseRef}
+            type="button"
+            onClick={() => closeNavDrawer(true)}
+            className={`${iconButton} min-[960px]:hidden`}
+            aria-label="Cerrar menú"
+            title="Cerrar"
+          >
+            <X size={18} strokeWidth={1.75} aria-hidden="true" />
+          </button>
+        </div>
+
         <button
-          className={`${buttonPrimary} w-full`}
+          type="button"
+          className={`flex items-center gap-2 px-[10px] py-[9px] rounded-[6px] border border-line bg-surface font-bold text-[15px] text-ink hover:bg-soft cursor-pointer mb-1.5 transition-colors duration-150 ${focusRing}`}
           onClick={() => {
             setGallery(false);
             setRenaming(false);
+            setNavOpen(false);
+            setFocusedMessageId(undefined);
             draftGeneration.current++;
             setAttachments([]);
             setSelected(undefined);
@@ -241,100 +528,137 @@ function App() {
             setProblem(undefined);
           }}
         >
-          + Nuevo trabajo
+          <Plus size={18} strokeWidth={1.75} aria-hidden="true" />
+          Nuevo trabajo
         </button>
-        <button className={buttonSecondary} onClick={() => { setGallery(true); setRenaming(false); }} aria-pressed={gallery}>Galería</button>
+
+        <button
+          type="button"
+          aria-pressed={gallery}
+          className={`flex items-center gap-2 px-[10px] py-[8px] text-[14px] cursor-pointer mb-3 border-l-2 transition-colors duration-150 ${focusRing} ${
+            gallery
+              ? "bg-surface text-ink font-bold border-accent rounded-r-[6px] rounded-l-none"
+              : "border-transparent rounded-[6px] text-muted hover:bg-soft hover:text-ink"
+          }`}
+          onClick={() => {
+            setGallery(true);
+            setRenaming(false);
+            setNavOpen(false);
+            setFocusedMessageId(undefined);
+          }}
+        >
+          <LayoutGrid size={18} strokeWidth={1.75} aria-hidden="true" />
+          Galería
+        </button>
+
         <nav
-          className="flex-1 [&>h2]:uppercase [&>h2]:tracking-[1.5px] [&>h2]:text-[11px] [&>h2]:mb-4 [&>h2]:text-[#58675e]"
+          className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-[2px]"
           aria-label="Trabajos anteriores"
         >
-          <h2>Tus trabajos</h2>
-          <ul>
-            {state.works.map((w) => (
-              <li key={w.id}>
-                <button
-                  className={`${buttonBase} hover:bg-[#e4ebe5] block w-full text-left mb-2 p-3 [&>span]:block [&>span]:[overflow-wrap:anywhere] [&>span]:text-sm [&>span]:font-[550] ${selected === w.id ? "bg-[#fffefa] border-[#d9ddd2]" : "border-transparent"}`}
-                  aria-current={selected === w.id ? "page" : undefined}
-                  onClick={() => {
-                    setGallery(false);
-                    setRenaming(false);
-                    setSelected(w.id);
-                    setProblem(undefined);
-                  }}
-                >
-                  <span>{w.title}</span>
-                  <small className="block text-[#59665d] text-xs mt-[5px]">
-                    {w.busy
-                      ? "En curso"
-                      : new Date(w.updatedAt).toLocaleDateString("es-AR", {
-                          day: "numeric",
-                          month: "short",
-                        })}
-                  </small>
-                </button>
-              </li>
-            ))}
+          <h2 className="sr-only">Tus trabajos</h2>
+          <ul className="flex flex-col gap-[2px]">
+            {state.works.map((w) => {
+              const active = !gallery && selected === w.id;
+              return (
+                <li key={w.id}>
+                  <button
+                    type="button"
+                    className={`grid grid-cols-[minmax(0,1fr)_auto] gap-2 items-baseline px-[10px] py-[9px] text-left w-full border-l-2 cursor-pointer transition-colors duration-150 ${focusRing} ${
+                      active
+                        ? "bg-surface text-ink font-bold border-accent rounded-r-[6px] rounded-l-none"
+                        : "border-transparent rounded-[6px] text-muted hover:bg-soft hover:text-ink"
+                    }`}
+                    aria-current={active ? "page" : undefined}
+                    onClick={() => {
+                      setGallery(false);
+                      setRenaming(false);
+                      setNavOpen(false);
+                      setFocusedMessageId(undefined);
+                      setSelected(w.id);
+                      setProblem(undefined);
+                    }}
+                  >
+                    <span className="truncate text-[15px]">{w.title}</span>
+                    <small
+                      className={`text-[12px] tabular-nums shrink-0 ${
+                        w.busy ? "text-accent-ink font-bold" : ""
+                      }`}
+                    >
+                      {w.busy ? "ahora" : formatWorkDate(w.updatedAt)}
+                    </small>
+                  </button>
+                </li>
+              );
+            })}
           </ul>
           {!state.works.length && (
-            <p className="text-[#616e65] text-[13px] leading-[1.7]">
-              Acá vas a encontrar lo que hagamos juntas.
+            <p className="px-[10px] py-2 text-[13px] text-muted leading-relaxed">
+              Acá van a aparecer tus trabajos.
             </p>
           )}
         </nav>
-        <section
-          className="border-t border-[#d3dbcf] pt-[18px] text-[13px] [&>p]:mb-2 [&>button]:w-full [&>button]:mt-3 [&_small]:[overflow-wrap:anywhere]"
-          aria-label="Cuenta de ChatGPT"
-        >
-          <p>
-            <span
-              className={`inline-block size-[7px] bg-[#8a9087] rounded-full mr-2 ${state.account.connected ? "bg-[#36775a]" : ""}`}
-              aria-hidden="true"
-            />
-            {online && state.engine.available && state.account.connected
-              ? "ChatGPT conectado"
-              : !online
-                ? "Reconectando…"
-                : !state.engine.available
-                  ? "El motor está detenido"
-                  : "ChatGPT sin conectar"}
-          </p>
-          {state.account.email && (
-            <small className="block text-[#59665d] text-xs mt-[5px]">
-              {state.account.email}
-            </small>
-          )}
-          {!state.account.connected && (
-            <button
-              className={buttonSecondary}
-              disabled={!online || !state.engine.available}
-              onClick={() => {
-                loginWindow.current = window.open("about:blank", "_blank");
-                if (loginWindow.current) loginWindow.current.opener = null;
-                send({ type: "connect" });
-              }}
-            >
-              Conectar ChatGPT
-            </button>
-          )}
-          {login && (
-            <p>
-              <a
-                className="touch-manipulation text-[#245a4d] underline focus-visible:outline-3 focus-visible:outline-[#94733c] focus-visible:outline-offset-3"
-                href={login}
-                target="_blank"
-                rel="noreferrer"
+
+        {(!online || !state.engine.available || state.account.connected || showSidebarNotConnected) && (
+          <section
+            className="mt-auto border-t border-line pt-3 px-[10px] flex flex-col gap-2 text-[13px] text-muted"
+            aria-label="Cuenta de ChatGPT"
+          >
+            {!online ? (
+              <div className="flex items-center gap-2">
+                <WifiOff size={18} strokeWidth={1.75} className="shrink-0" aria-hidden="true" />
+                <span>Reconectando…</span>
+              </div>
+            ) : !state.engine.available ? (
+              <div className="flex items-center gap-2 text-danger">
+                <AlertCircle size={18} strokeWidth={1.75} className="shrink-0" aria-hidden="true" />
+                <span>Bitácora se detuvo</span>
+              </div>
+            ) : state.account.connected ? (
+              <div
+                className="flex items-center gap-2 min-w-0"
+                title={state.account.email || "Cuenta conectada"}
               >
-                Continuar en el navegador
-              </a>
-              <small className="block text-[#59665d] text-xs mt-[5px]">
-                Cuando termines, volvé a esta ventana.
-              </small>
-            </p>
-          )}
-        </section>
+                <Mail size={18} strokeWidth={1.75} className="shrink-0" aria-hidden="true" />
+                <span className="truncate">
+                  {state.account.email || "Cuenta conectada"}
+                </span>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2">
+                <p>Para trabajar, conectá tu cuenta de ChatGPT.</p>
+                <button
+                  type="button"
+                  className={`${buttonBordered} self-start`}
+                  onClick={startConnect}
+                >
+                  <LogIn size={18} strokeWidth={1.75} aria-hidden="true" />
+                  Conectar cuenta
+                </button>
+              </div>
+            )}
+
+            {login && showSidebarNotConnected && (
+              <p className="text-[12px]">
+                <a
+                  className={`text-ink font-bold underline decoration-accent decoration-2 underline-offset-4 ${focusRing}`}
+                  href={login}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Continuar en el navegador
+                </a>
+                <span className="block mt-1">
+                  Cuando termines, volvé a esta ventana.
+                </span>
+              </p>
+            )}
+          </section>
+        )}
       </aside>
-      <main tabIndex={-1} className="flex flex-col min-w-0 min-h-0">
-        <header className="py-5 px-9 border-b border-[#e6e7de] flex items-center justify-between gap-5 max-[720px]:p-4">
+
+      {/* Center column: header, notices, conversation/gallery, composer */}
+      <main tabIndex={-1} className="flex flex-col min-w-0 min-h-0 bg-paper outline-none">
+        <header className="px-5 min-[960px]:px-7 py-[18px] border-b border-line flex items-center justify-between gap-4">
           {renaming && work ? (
             <form
               className="flex flex-1 min-w-0 items-center gap-2"
@@ -344,7 +668,8 @@ function App() {
                 const title = name.trim().replace(/\s+/g, " ");
                 // While reconnecting nothing is sent: the form stays open so
                 // the typed name is not lost.
-                if (!title || title.length > MAX_TITLE || !online || savingName) return;
+                if (!title || title.length > MAX_TITLE || !online || savingName)
+                  return;
                 send({ type: "rename", workId: work.id, title });
                 // Saving the name as it is keeps it from being replaced by the
                 // automatic title. The snapshot cannot show that change, so the
@@ -353,7 +678,9 @@ function App() {
                 else setSavingName(title);
               }}
             >
-              <label className="sr-only" htmlFor="work-name">Nombre del trabajo</label>
+              <label className="sr-only" htmlFor="work-name">
+                Nombre del trabajo
+              </label>
               <input
                 id="work-name"
                 autoFocus
@@ -361,214 +688,858 @@ function App() {
                 readOnly={!!savingName}
                 maxLength={MAX_TITLE}
                 onChange={(e) => setName(e.target.value)}
-                onKeyDown={(e) => { if (e.key === "Escape") setRenaming(false); }}
-                className="min-w-0 flex-1 rounded-lg border border-[#c6d0c9] bg-[#fffefa] px-3 py-2 text-sm focus-visible:outline-3 focus-visible:outline-[#94733c] focus-visible:outline-offset-3"
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") setRenaming(false);
+                }}
+                className={`min-w-0 flex-1 rounded-[6px] border border-line bg-surface px-3 py-2 text-[15px] text-ink ${focusRing}`}
               />
-              <button className={buttonPrimary} type="submit" disabled={!name.trim() || name.trim().replace(/\s+/g, " ").length > MAX_TITLE || !online || !!savingName}>{savingName ? "Guardando…" : "Guardar"}</button>
-              <button className={buttonSecondary} type="button" onClick={() => setRenaming(false)}>Cancelar</button>
+              <button
+                className={buttonBordered}
+                type="submit"
+                disabled={
+                  !name.trim() ||
+                  name.trim().replace(/\s+/g, " ").length > MAX_TITLE ||
+                  !online ||
+                  !!savingName
+                }
+              >
+                {savingName ? "Guardando…" : "Guardar"}
+              </button>
+              <button
+                className={buttonQuiet}
+                type="button"
+                onClick={() => setRenaming(false)}
+              >
+                Cancelar
+              </button>
             </form>
           ) : (
-            <div className="flex min-w-0 items-center gap-3">
-              <p className="m-0 truncate text-sm font-semibold">{gallery ? "Galería" : work?.title || "Un lugar para tus próximos pasos"}</p>
-              {!gallery && work && (
+            <>
+              <div className="flex min-w-0 items-center gap-2.5">
                 <button
-                  className="shrink-0 cursor-pointer rounded-md border border-[#c6d0c9] px-2 py-1 text-xs text-[#4b6556] hover:bg-[#e4ebe5] focus-visible:outline-3 focus-visible:outline-[#94733c] focus-visible:outline-offset-3"
-                  onClick={() => { setName(work.title); setSavingName(undefined); setRenaming(true); }}
+                  ref={navToggleRef}
+                  type="button"
+                  aria-expanded={navOpen}
+                  onClick={() => setNavOpen(true)}
+                  className={`${iconButton} min-[960px]:hidden shrink-0`}
+                  title="Trabajos"
+                  aria-label="Abrir trabajos"
                 >
-                  Cambiar el nombre
+                  <Menu size={18} strokeWidth={1.75} aria-hidden="true" />
                 </button>
-              )}
+                <h1 className="m-0 font-display font-normal text-[25px] leading-tight text-ink truncate max-[720px]:text-[20px]">
+                  {gallery ? "Galería" : work?.title || "Nuevo trabajo"}
+                </h1>
+              </div>
+
+              <div className="flex items-center gap-1 shrink-0">
+                {!online ? (
+                  <button
+                    type="button"
+                    onClick={() => reconnectRef.current()}
+                    className={`${iconButton} min-[960px]:hidden`}
+                    title="Sin conexión. Reintentar conexión"
+                    aria-label="Sin conexión. Reintentar conexión"
+                  >
+                    <WifiOff size={18} strokeWidth={1.75} aria-hidden="true" />
+                  </button>
+                ) : !state.engine.available ? (
+                  <span
+                    className="w-[34px] h-[34px] inline-grid place-items-center text-danger min-[960px]:hidden"
+                    role="img"
+                    title="Bitácora se detuvo"
+                    aria-label="Bitácora se detuvo"
+                  >
+                    <AlertCircle size={18} strokeWidth={1.75} aria-hidden="true" />
+                  </span>
+                ) : !state.account.connected && !showCenterNotConnected ? (
+                  <button
+                    type="button"
+                    onClick={startConnect}
+                    className={`${iconButton} min-[960px]:hidden text-accent-ink`}
+                    title="Conectar cuenta"
+                    aria-label="Conectar cuenta"
+                  >
+                    <LogIn size={18} strokeWidth={1.75} aria-hidden="true" />
+                  </button>
+                ) : null}
+                {!gallery && work && (
+                  <button
+                    type="button"
+                    className={iconButton}
+                    title="Cambiar el nombre"
+                    aria-label="Cambiar el nombre"
+                    onClick={() => {
+                      setName(work.title);
+                      setSavingName(undefined);
+                      setRenaming(true);
+                    }}
+                  >
+                    <Pencil size={18} strokeWidth={1.75} aria-hidden="true" />
+                  </button>
+                )}
+                {!gallery && (
+                  <button
+                    ref={deliverablesToggleRef}
+                    type="button"
+                    aria-expanded={deliverablesOpen}
+                    onClick={() => {
+                      setFocusedMessageId(undefined);
+                      setDeliverablesOpen(true);
+                    }}
+                    className={`min-[960px]:hidden inline-flex items-center gap-1.5 px-2.5 h-[34px] rounded-[6px] border border-line bg-surface text-ink text-[13px] font-bold hover:bg-soft cursor-pointer ${focusRing}`}
+                    title="Entregables"
+                    aria-label="Abrir entregables"
+                  >
+                    <Package size={18} strokeWidth={1.75} aria-hidden="true" />
+                    {workResultCount > 0 && (
+                      <span className="tabular-nums text-accent-ink">
+                        {workResultCount}
+                      </span>
+                    )}
+                  </button>
+                )}
+              </div>
+            </>
+          )}
+        </header>
+
+        {((state.undo && !busy) || state.notice) && (
+          <section
+            aria-label="Deshacer el último pedido"
+            className="px-5 min-[960px]:px-7 py-2.5 border-b border-line bg-surface text-[13px] flex flex-col gap-2"
+          >
+            {state.undo && !busy && (
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="flex flex-1 items-start gap-2 text-ink min-w-0">
+                  <RotateCcw
+                    size={18}
+                    strokeWidth={1.75}
+                    className="text-muted shrink-0 mt-0.5"
+                    aria-hidden="true"
+                  />
+                  <span
+                    className="line-clamp-2 [overflow-wrap:anywhere]"
+                    title={`Último pedido con cambios: ${state.undo.title} · «${state.undo.request}»`}
+                  >
+                    Último pedido con cambios: {state.undo.title} · «
+                    {state.undo.request}»
+                  </span>
+                </p>
+                {confirmUndo !== state.undo.id && (
+                  <div className="flex items-center gap-2 shrink-0">
+                    {state.undo.retry && (
+                      <button
+                        type="button"
+                        className={buttonQuiet}
+                        disabled={!online}
+                        onClick={() => {
+                          if (
+                            window.confirm(
+                              "Voy a dejar la carpeta como está ahora y descartar el Deshacer pendiente. Después podés seguir trabajando.",
+                            )
+                          )
+                            send({ type: "discardUndo", id: state.undo!.id });
+                        }}
+                      >
+                        Dejar la carpeta como está
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className={buttonQuiet}
+                      disabled={!online}
+                      onClick={() => setConfirmUndo(state.undo!.id)}
+                    >
+                      {state.undo.retry ? "Reintentar deshacer" : "Deshacer"}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {state.undo && !busy && confirmUndo === state.undo.id && (
+              <div
+                role="group"
+                aria-label="Confirmar Deshacer"
+                className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-line"
+              >
+                <p className="text-muted">
+                  Voy a deshacer los cambios de este pedido, aunque estés en otro
+                  trabajo. Lo que agregaste o cambiaste a mano después no se toca.
+                </p>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    className={buttonBordered}
+                    disabled={!online}
+                    onClick={() => {
+                      send({ type: "undo", id: state.undo!.id });
+                      setConfirmUndo(undefined);
+                    }}
+                  >
+                    Sí, deshacer
+                  </button>
+                  <button
+                    type="button"
+                    className={buttonQuiet}
+                    onClick={() => setConfirmUndo(undefined)}
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {state.notice && (
+              <p role="status" className="text-ink">
+                {state.notice}
+              </p>
+            )}
+          </section>
+        )}
+
+        <div className="flex-1 min-h-0 overflow-y-auto px-5 min-[960px]:px-8 py-6">
+          <div
+            className={`mx-auto w-full flex flex-col gap-[18px] ${
+              gallery ? "max-w-[880px]" : "max-w-[720px]"
+            }`}
+          >
+            {gallery && (
+              <section aria-label="Resultados por trabajo" className="flex flex-col gap-6">
+                <h2 className="font-display text-[25px] font-normal text-ink">
+                  Todo lo que creamos
+                </h2>
+                {!hasGalleryResults && (
+                  <div className="rounded-[6px] border border-line bg-surface p-6 flex flex-col items-start gap-3">
+                    <span className="w-9 h-9 rounded-[6px] border border-line bg-paper grid place-items-center text-muted">
+                      <LayoutGrid size={18} strokeWidth={1.75} aria-hidden="true" />
+                    </span>
+                    <p className="text-[15px] text-muted">
+                      Cuando preparemos imágenes o PDFs, los vas a encontrar acá.
+                    </p>
+                    <button
+                      type="button"
+                      className={buttonBordered}
+                      onClick={() => setGallery(false)}
+                    >
+                      Volver al trabajo
+                    </button>
+                  </div>
+                )}
+                {[...state.works]
+                  .sort((a, b) => latestResult(b).localeCompare(latestResult(a)))
+                  .map((w) => {
+                    const results = w.messages
+                      .flatMap((m) => m.results || [])
+                      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+                    return results.length ? (
+                      <section key={w.id} className="flex flex-col gap-3">
+                        <div className="flex items-center justify-between gap-3 border-b border-line pb-2">
+                          <h3 className="font-display text-[20px] font-normal text-ink truncate">
+                            {w.title}
+                          </h3>
+                          <button
+                            type="button"
+                            className={buttonQuiet}
+                            onClick={() => {
+                              setSelected(w.id);
+                              setGallery(false);
+                              setRenaming(false);
+                            }}
+                          >
+                            Ir al trabajo
+                          </button>
+                        </div>
+                        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                          {results.map((f) => (
+                            <FileCard
+                              key={`${f.id}-${state.fileRevision}`}
+                              file={f}
+                              token={state.fileToken}
+                              fileRevision={state.fileRevision}
+                              result
+                              onPreview={(file) =>
+                                setPreview({
+                                  file,
+                                  list: results.filter((x) =>
+                                    x.mime.startsWith("image/"),
+                                  ),
+                                })
+                              }
+                            />
+                          ))}
+                        </div>
+                      </section>
+                    ) : null;
+                  })}
+              </section>
+            )}
+
+            {/* Offline state */}
+            {!gallery && !online && !work && (
+              <section className="my-12 mx-auto max-w-[420px] w-full rounded-[6px] border border-line bg-surface p-6 flex flex-col items-start gap-3">
+                <span className="w-9 h-9 rounded-[6px] border border-line bg-paper grid place-items-center text-muted">
+                  <WifiOff size={18} strokeWidth={1.75} aria-hidden="true" />
+                </span>
+                <p className="text-[15px] text-ink">
+                  Se perdió la conexión con Bitácora. Estoy intentando reconectar.
+                </p>
+                <button
+                  type="button"
+                  className={buttonBordered}
+                  onClick={() => reconnectRef.current()}
+                >
+                  Reintentar
+                </button>
+              </section>
+            )}
+
+            {/* Not connected empty state */}
+            {showCenterNotConnected && (
+              <section className="my-12 mx-auto max-w-[460px] w-full flex flex-col items-start gap-3">
+                <span className="w-9 h-9 rounded-[6px] border border-line bg-surface grid place-items-center text-ink">
+                  <Mail size={18} strokeWidth={1.75} aria-hidden="true" />
+                </span>
+                <p className="text-[17px] leading-relaxed text-ink">
+                  Para trabajar, conectá tu cuenta de ChatGPT.
+                </p>
+                <button
+                  type="button"
+                  className={buttonBordered}
+                  onClick={startConnect}
+                >
+                  <LogIn size={18} strokeWidth={1.75} aria-hidden="true" />
+                  Conectar cuenta
+                </button>
+                {login && (
+                  <p className="text-[13px] text-muted">
+                    <a
+                      className={`text-ink font-bold underline decoration-accent decoration-2 underline-offset-4 ${focusRing}`}
+                      href={login}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Continuar en el navegador
+                    </a>{" "}
+                    Cuando termines, volvé a esta ventana.
+                  </p>
+                )}
+              </section>
+            )}
+
+            {/* Ready empty state */}
+            {!gallery && !work && canSend && (
+              <section className="my-12 mx-auto max-w-[460px] w-full flex flex-col items-start gap-3">
+                <span className="w-9 h-9 rounded-[6px] border border-line bg-surface grid place-items-center text-accent">
+                  <Compass size={18} strokeWidth={1.75} aria-hidden="true" />
+                </span>
+                <h2 className="font-display text-[25px] font-normal leading-tight text-ink">
+                  ¿En qué trabajamos hoy?
+                </h2>
+                <p className="text-[15px] text-muted">
+                  Contame qué necesitás para tu agencia o pegá un link para
+                  empezar.
+                </p>
+                {state.works.length === 0 && state.hasBrand === false ? (
+                  <button
+                    type="button"
+                    className={buttonBordered}
+                    disabled={!canSend || pending || readingFiles || busy}
+                    onClick={() =>
+                      submitRequest(
+                        "Ayudame a armar mi marca y mis plantillas para empezar.",
+                      )
+                    }
+                  >
+                    <PenLine size={18} strokeWidth={1.75} aria-hidden="true" />
+                    Armar mi agencia
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className={buttonBordered}
+                    onClick={() => composerInput.current?.focus()}
+                  >
+                    <PenLine size={18} strokeWidth={1.75} aria-hidden="true" />
+                    Escribir un pedido
+                  </button>
+                )}
+              </section>
+            )}
+
+            {/* Conversation messages + timed progress log */}
+            {!gallery &&
+              work?.messages.map((m, i) => (
+                <React.Fragment key={m.id}>
+                  <article
+                    className={
+                      m.role === "user"
+                        ? "self-end max-w-[76%] bg-surface border border-line rounded-[6px] px-3.5 py-2.5 text-[15px] leading-[1.55] flex flex-col gap-2"
+                        : "max-w-[88%] text-[15px] leading-[1.6] text-ink"
+                    }
+                  >
+                    <h2 className="sr-only">
+                      {m.role === "user" ? "Vos" : "Bitácora"}
+                    </h2>
+                    {m.role === "user" ? (
+                      <div className="whitespace-pre-wrap [overflow-wrap:anywhere]">
+                        {m.text.split(/(https?:\/\/[^\s]+)/g).map((part, idx) =>
+                          /^https?:\/\//.test(part) ? (
+                            <a
+                              key={idx}
+                              className="underline decoration-accent decoration-2 underline-offset-4 text-ink"
+                              href={part}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              {part}
+                            </a>
+                          ) : (
+                            part
+                          ),
+                        )}
+                      </div>
+                    ) : (
+                      <div className="markdown [overflow-wrap:anywhere]">
+                        <ReactMarkdown
+                          skipHtml
+                          components={{
+                            a: ({ node: _, ...props }) =>
+                              /^https?:\/\//i.test(props.href || "") ? (
+                                <a
+                                  {...props}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                />
+                              ) : (
+                                <span>{props.children}</span>
+                              ),
+                          }}
+                        >
+                          {m.text}
+                        </ReactMarkdown>
+                      </div>
+                    )}
+                    {!!m.attachments?.length && (
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {m.attachments.map((f) => (
+                          <FileCard
+                            key={`${f.id}-${state.fileRevision}`}
+                            file={f}
+                            token={state.fileToken}
+                            fileRevision={state.fileRevision}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </article>
+                  {!!m.results?.length && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFocusedMessageId(m.id);
+                        setDeliverablesOpen(true);
+                      }}
+                      className={`min-[960px]:hidden inline-flex items-center gap-1.5 text-[13px] font-bold text-ink underline decoration-accent decoration-2 underline-offset-4 cursor-pointer ${focusRing} ${
+                        m.role === "user" ? "self-end -mt-2" : "self-start -mt-2"
+                      }`}
+                    >
+                      <Package size={18} strokeWidth={1.75} className="text-accent" aria-hidden="true" />
+                      Ver {m.results.length}{" "}
+                      {m.results.length === 1 ? "entregable" : "entregables"}
+                    </button>
+                  )}
+                  {i === lastUserIndex && progressBlock}
+                </React.Fragment>
+              ))}
+
+            {!gallery && work && lastUserIndex === -1 && progressBlock}
+
+            {/* Details toggle inside conversation log when no active error banner */}
+            {!gallery && !(problem || work?.problem) && work?.details && (
+              <details className="text-[12px] text-muted">
+                <summary className={`cursor-pointer ${focusRing}`}>
+                  Ver detalle
+                </summary>
+                <pre className="mt-2 whitespace-pre-wrap [overflow-wrap:anywhere] max-h-[220px] overflow-auto p-3 bg-soft border border-line rounded-[6px] text-ink">
+                  {work.details}
+                </pre>
+              </details>
+            )}
+
+            <div ref={bottom} />
+          </div>
+        </div>
+
+        {/* Status & error banners pinned above composer */}
+        {!gallery &&
+          ((!online && !!work) ||
+            (online && !state.engine.available) ||
+            (online && state.engine.available && !state.engine.safety.allowed) ||
+            (online &&
+              state.engine.available &&
+              state.engine.safety.allowed &&
+              !!protectionWarning(state.engine.safety)) ||
+            !!problem ||
+            !!work?.problem) && (
+            <div className="shrink-0 max-h-[40dvh] overflow-y-auto px-5 min-[960px]:px-7 pt-2 pb-3">
+              <div className="mx-auto w-full max-w-[720px] flex flex-col gap-2.5">
+                {!online && work && (
+                  <section
+                    role="status"
+                    className="rounded-[6px] border border-line bg-surface px-4 py-3 text-[14px] text-ink flex flex-wrap items-center justify-between gap-2.5"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <WifiOff
+                        size={18}
+                        strokeWidth={1.75}
+                        className="text-muted shrink-0"
+                        aria-hidden="true"
+                      />
+                      <span>
+                        Se perdió la conexión con Bitácora. Estoy intentando reconectar.
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className={buttonQuiet}
+                      onClick={() => reconnectRef.current()}
+                    >
+                      Reintentar
+                    </button>
+                  </section>
+                )}
+
+                {/* Engine stopped / error state */}
+                {online && !state.engine.available && (
+                  <section className="rounded-[6px] border border-danger bg-surface p-4 flex flex-col items-start gap-2.5">
+                    <div className="flex items-center gap-2.5">
+                      <AlertCircle
+                        size={18}
+                        strokeWidth={1.75}
+                        className="text-danger shrink-0"
+                        aria-hidden="true"
+                      />
+                      <p role="status" className="text-[14px] text-ink">
+                        {state.engine.exhausted
+                          ? "Bitácora se detuvo y no pudo volver a iniciarse."
+                          : "Bitácora se detuvo. Estoy intentando volver a iniciarla."}
+                      </p>
+                    </div>
+                    {state.engine.exhausted && (
+                      <button
+                        type="button"
+                        className={buttonBordered}
+                        onClick={() => send({ type: "retry" })}
+                      >
+                        Reintentar
+                      </button>
+                    )}
+                    {state.engine.safety.detail && (
+                      <details className="w-full text-[12px] text-muted">
+                        <summary className={`cursor-pointer ${focusRing}`}>
+                          Ver detalle
+                        </summary>
+                        <pre className="mt-2 whitespace-pre-wrap [overflow-wrap:anywhere] max-h-[220px] overflow-auto p-3 bg-soft border border-line rounded-[6px] text-ink">
+                          {state.engine.safety.detail}
+                        </pre>
+                      </details>
+                    )}
+                  </section>
+                )}
+
+                {/* Protection setup / failed state */}
+                {online &&
+                  state.engine.available &&
+                  !state.engine.safety.allowed && (
+                    state.engine.safety.status !== "failed" &&
+                    !state.engine.safety.needsPermission ? (
+                      <div
+                        role="status"
+                        className="rounded-[6px] border border-line bg-surface px-4 py-3 flex items-center gap-3 text-[14px] text-ink"
+                      >
+                        <Shield
+                          size={18}
+                          strokeWidth={1.75}
+                          className="text-muted shrink-0"
+                          aria-hidden="true"
+                        />
+                        <span>Preparando la protección de tu carpeta…</span>
+                      </div>
+                    ) : (
+                      <section
+                        aria-labelledby="protection-title"
+                        className="rounded-[6px] border border-line bg-surface p-4 flex flex-col items-start gap-2.5"
+                      >
+                        <div className="flex items-center gap-2.5">
+                          <ShieldAlert
+                            size={18}
+                            strokeWidth={1.75}
+                            className="text-accent-ink shrink-0"
+                            aria-hidden="true"
+                          />
+                          <h2
+                            id="protection-title"
+                            className="font-display text-[18px] font-normal text-ink"
+                          >
+                            {state.engine.safety.status === "failed"
+                              ? "No pude dejar todo listo"
+                              : "Antes de empezar"}
+                          </h2>
+                        </div>
+                        {state.engine.safety.needsPermission && (
+                          <p className="text-[14px] text-muted">
+                            Para trabajar en tu carpeta sin cambiar tus otros
+                            archivos, Bitácora necesita preparar la protección de tu
+                            compu. Windows va a mostrar un cartel para permitir
+                            cambios. Tocá «Sí» si querés continuar.
+                          </p>
+                        )}
+                        <p role="status" className="text-[14px] text-ink">
+                          {protectionText(state.engine.safety)}
+                        </p>
+                        <button
+                          type="button"
+                          className={buttonBordered}
+                          disabled={state.engine.safety.status === "preparing"}
+                          onClick={() => send({ type: "prepareProtection" })}
+                        >
+                          {state.engine.safety.status === "preparing"
+                            ? "Preparando…"
+                            : state.engine.safety.status === "failed"
+                              ? "Reintentar"
+                              : "Preparar la protección"}
+                        </button>
+                        {state.engine.safety.detail && (
+                          <details className="w-full text-[12px] text-muted">
+                            <summary className={`cursor-pointer ${focusRing}`}>
+                              Ver detalle
+                            </summary>
+                            <pre className="mt-2 whitespace-pre-wrap [overflow-wrap:anywhere] max-h-[220px] overflow-auto p-3 bg-soft border border-line rounded-[6px] text-ink">
+                              {state.engine.safety.detail}
+                            </pre>
+                          </details>
+                        )}
+                      </section>
+                    )
+                  )}
+
+                {/* Elevated-mode read-block warning */}
+                {online &&
+                  state.engine.available &&
+                  state.engine.safety.allowed &&
+                  protectionWarning(state.engine.safety) && (
+                    <p
+                      role="status"
+                      className="rounded-[6px] border border-line bg-surface px-4 py-3 text-[13px] text-muted flex items-start gap-2.5"
+                    >
+                      <ShieldAlert
+                        size={18}
+                        strokeWidth={1.75}
+                        className="text-accent-ink shrink-0 mt-0.5"
+                        aria-hidden="true"
+                      />
+                      <span>{protectionWarning(state.engine.safety)}</span>
+                    </p>
+                  )}
+
+                {/* Error state on active work / request / attachments */}
+                {(problem || work?.problem) && (
+                  <div
+                    role="alert"
+                    className="rounded-[6px] border border-danger bg-surface px-4 py-3 text-[14px] text-ink flex flex-col gap-2"
+                  >
+                    <div className="flex items-start gap-2.5">
+                      <AlertCircle
+                        size={18}
+                        strokeWidth={1.75}
+                        className="text-danger shrink-0 mt-0.5"
+                        aria-hidden="true"
+                      />
+                      <span className="flex-1">{problem?.text || work?.problem}</span>
+                      {state.engine.exhausted && (
+                        <button
+                          type="button"
+                          className={buttonQuiet}
+                          onClick={() => send({ type: "retry" })}
+                        >
+                          Reintentar
+                        </button>
+                      )}
+                    </div>
+                    {(work?.details || problem?.detail) && (
+                      <details className="text-[12px] text-muted">
+                        <summary className={`cursor-pointer ${focusRing}`}>
+                          Ver detalle
+                        </summary>
+                        <pre className="mt-2 whitespace-pre-wrap [overflow-wrap:anywhere] max-h-[220px] overflow-auto p-3 bg-soft border border-line rounded-[6px] text-ink">
+                          {problem?.detail}
+                          {work?.details}
+                        </pre>
+                      </details>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           )}
-          <span className="shrink-0 text-xs text-[#69756d] max-[720px]:hidden">{online ? "Tu espacio de trabajo" : "Reconectando…"}</span>
-        </header>
-        <section aria-label="Deshacer el último pedido" className="px-5 py-3 border-b border-[#e6e7de]">
-          {state.undo && !busy && <>
-            {state.undo.retry && <button className={buttonSecondary} disabled={!online} onClick={() => {
-              if (window.confirm('Voy a dejar la carpeta como está ahora y descartar el Deshacer pendiente. Después podés seguir trabajando.')) send({ type: 'discardUndo', id: state.undo!.id });
-            }}>Dejar la carpeta como está</button>}
-            <p className="text-sm">Último pedido con cambios en tu carpeta: {state.undo.title} · «{state.undo.request}»</p>
-            {confirmUndo === state.undo.id ? <div role="group" aria-label="Confirmar Deshacer">
-              <p className="my-2">Voy a deshacer los cambios de este pedido, aunque estés en otro trabajo. Lo que agregaste o cambiaste a mano después no se toca.</p>
-              <button className={buttonPrimary} disabled={!online} onClick={() => { send({ type: "undo", id: state.undo!.id }); setConfirmUndo(undefined); }}>Sí, deshacer</button>
-              <button className={buttonSecondary} onClick={() => setConfirmUndo(undefined)}>Cancelar</button>
-            </div> : <button className={buttonSecondary} disabled={!online} onClick={() => setConfirmUndo(state.undo!.id)}>{state.undo.retry ? 'Reintentar deshacer' : 'Deshacer'}</button>}
-          </>}
-          {state.notice && <p role="status" className="text-sm my-2">{state.notice}</p>}
-        </section>
-        <div className="overflow-y-auto flex-1 py-8 px-[max(30px,calc((100%_-_760px)/2))] max-[720px]:p-5">
-          {gallery && <section aria-label="Resultados por trabajo">
-            <h2 className="font-[Georgia,serif] text-3xl mb-6">Todo lo que creamos</h2>
-            {!state.works.some(w => w.messages.some(m => m.results?.length)) && <p>Cuando preparemos imágenes o PDFs, los vas a encontrar acá.</p>}
-            {[...state.works].sort((a, b) => latestResult(b).localeCompare(latestResult(a))).map(w => {
-              const results = w.messages.flatMap(m => m.results || []).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-              return results.length ? <section key={w.id} className="mb-8">
-                <h3 className="font-semibold">{w.title}</h3>
-                <button className={buttonSecondary} onClick={() => { setSelected(w.id); setGallery(false); setRenaming(false); }}>Ir al trabajo</button>
-                <div className="grid gap-4 sm:grid-cols-2">{results.map(f => <FileCard key={`${f.id}-${state.fileRevision}`} file={f} token={state.fileToken} result />)}</div>
-              </section> : null;
-            })}
-          </section>}
-          {!gallery && !work && (
-            <section className="mt-[10vh] mx-auto mb-[30px] [&>h2]:font-[Georgia,serif] [&>h2]:text-4xl [&>h2]:leading-[1.2] [&>h2]:tracking-[-0.7px] [&>h2]:my-[18px] [&>p:last-child]:text-[#657168] [&>p:last-child]:leading-[1.8] [&>p:last-child]:text-base max-[720px]:[&>h2]:text-[28px] max-[460px]:[&>h2]:text-2xl">
-              <p className="text-[10px] tracking-[1.7px] font-[650] text-[#5e7067] max-[460px]:text-[8px]">
-                EMPECEMOS POR UNA IDEA
-              </p>
-              <h2>¿En qué trabajamos hoy?</h2>
-              <p>
-                Contame qué necesitás para tu agencia.
-                <br />
-                Podés volver a cada trabajo cuando quieras.
-              </p>
-            </section>
-          )}
-          {!gallery && work?.messages.map((m) => (
-            <article
-              key={m.id}
-              className={`mb-[26px] text-[15px] leading-[1.75] [&>h2]:text-[11px] [&>h2]:uppercase [&>h2]:tracking-[1px] [&>h2]:text-[#67746b] [&>h2]:mb-[7px] [&>div]:[overflow-wrap:anywhere] ${m.role === "user" ? "bg-[#eef0e8] py-[18px] px-[22px] rounded-xl" : ""}`}
-            >
-              <h2>{m.role === "user" ? "Vos" : "Bitácora"}</h2>
-              {m.role === "user" ? <div className="whitespace-pre-wrap">{m.text.split(/(https?:\/\/[^\s]+)/g).map((part, i) => /^https?:\/\//.test(part) ? <a key={i} className="underline text-[#245a4d]" href={part} target="_blank" rel="noreferrer">{part}</a> : part)}</div> : <div className="markdown"><ReactMarkdown skipHtml components={{ a: ({node, ...props}) => /^https?:\/\//i.test(props.href || '') ? <a {...props} target="_blank" rel="noopener noreferrer" /> : <span>{props.children}</span> }}>{m.text}</ReactMarkdown></div>}
-              <div className="grid gap-3 sm:grid-cols-2">{m.attachments?.map(f => <FileCard key={`${f.id}-${state.fileRevision}`} file={f} token={state.fileToken} />)}</div>
-              {!!m.results?.length && <section aria-label="Resultados del pedido"><h3 className="mt-5 font-semibold">Resultados</h3><div className="grid gap-3 sm:grid-cols-2">{m.results.map(f => <FileCard key={`${f.id}-${state.fileRevision}`} file={f} token={state.fileToken} result />)}</div></section>}
-            </article>
-          ))}
-          <div ref={bottom} />
-        </div>
-        {!gallery && <div className="w-full max-w-[820px] mx-auto pt-[10px] px-[30px] pb-[26px] max-[720px]:px-4 max-[720px]:pb-[18px]">
-          {online && !state.engine.available && (
-            <p role="status" className="text-sm text-[#913d2c]">
-              {state.engine.exhausted ? "No pude volver a conectar el motor. Tocá Reintentar para volver a arrancarlo." : "El motor se detuvo. Estoy intentando volver a conectarlo."}
-              {state.engine.exhausted && <button className={buttonSecondary} onClick={() => send({ type: "retry" })}>Reintentar</button>}
-            </p>
-          )}
-          {online && state.engine.available && !state.engine.safety.allowed && (
-            state.engine.safety.status !== "failed" && !state.engine.safety.needsPermission ?
-              <p role="status" className="mb-3 text-sm">Preparando todo…</p> :
-            <section aria-labelledby="protection-title" className="mb-4 rounded-xl border border-[#cdd4c8] bg-[#fffefa] p-5">
-              <h2 id="protection-title" className="font-semibold">{state.engine.safety.status === "failed" ? "No pude dejar todo listo" : "Antes de empezar"}</h2>
-              {state.engine.safety.needsPermission && <p className="my-2 text-sm">Para trabajar en tu carpeta sin cambiar tus otros archivos, Bitácora necesita preparar la protección de tu compu. Windows va a mostrar un cartel para permitir cambios. Tocá «Sí» si querés continuar.</p>}
-              <p role="status" className="my-2 text-sm">{protectionText(state.engine.safety)}</p>
-              <button className={buttonPrimary} disabled={state.engine.safety.status === "preparing"}
-                onClick={() => send({ type: "prepareProtection" })}>
-                {state.engine.safety.status === "preparing" ? "Preparando…" : state.engine.safety.status === "failed" ? "Reintentar" : "Preparar la protección"}
-              </button>
-            </section>
-          )}
-          {online && state.engine.available && state.engine.safety.allowed && protectionWarning(state.engine.safety) && (
-            <p role="status" className="mb-3 rounded-xl border border-[#e0d3b4] bg-[#fdf8ee] px-4 py-3 text-sm text-[#7a6236]">
-              {protectionWarning(state.engine.safety)}
-            </p>
-          )}
-          {online && (!state.engine.available || (!state.engine.safety.allowed && (state.engine.safety.needsPermission || state.engine.safety.status === "failed"))) && <details className="mb-3 text-xs text-[#596b5e]">
-            <summary className="cursor-pointer focus-visible:outline-3 focus-visible:outline-[#94733c] focus-visible:outline-offset-3">
-              Detalle del motor
-            </summary>
-            <pre className="whitespace-pre-wrap [overflow-wrap:anywhere] max-h-[220px] overflow-auto p-3 bg-[#efefe7]">
-              {state.engine.safety.detail}
-            </pre>
-          </details>}
-          <p
-            className="text-[13px] min-h-5 text-[#4b6556] mb-[10px]"
-            role="status"
-          >
-            {work?.busy
-              ? work.progress
-              : work?.progress ||
-                (!state.engine.safety.allowed
-                  ? ""
-                  : state.account.connected
-                  ? "Todo listo para empezar."
-                  : "Conectá tu cuenta de ChatGPT para empezar.")}
-          </p>
-          {(problem || work?.problem) && (
-            <p className="text-sm text-[#913d2c]" role="alert">
-              {problem?.text || work?.problem}
-            </p>
-          )}
-          {(work?.details || problem?.detail) && (
-            <details className="mb-3 text-xs text-[#596b5e]">
-              <summary className="cursor-pointer focus-visible:outline-3 focus-visible:outline-[#94733c] focus-visible:outline-offset-3">
-                Ver detalle
-              </summary>
-              <pre className="whitespace-pre-wrap [overflow-wrap:anywhere] max-h-[220px] overflow-auto p-3 bg-[#efefe7]">
-                {problem?.detail}
-                {work?.details}
-              </pre>
-            </details>
-          )}
-          {state.works.length === 0 && state.hasBrand === false && <button className={`${buttonPrimary} mb-4`}
-            disabled={!online || !state.engine.available || !state.engine.safety.allowed || !state.account.connected || pending || readingFiles || busy}
-            onClick={() => submitRequest("Ayudame a armar mi marca y mis plantillas para empezar.")}>
-            Armar mi agencia
-          </button>}
+
+        {/* Composer */}
+        {!gallery && (
           <form
-            className="bg-[#fffefa] border border-[#cdd4c8] rounded-xl py-[14px] px-[18px]"
+            className="mx-5 min-[960px]:mx-7 mb-5 bg-surface border border-line focus-within:border-ink has-[textarea:focus-visible]:outline-2 has-[textarea:focus-visible]:outline-accent has-[textarea:focus-visible]:outline-offset-2 rounded-[6px] px-3 py-2.5 flex flex-col gap-2"
             onSubmit={(e) => {
               e.preventDefault();
               submitRequest();
             }}
           >
-            <label className="text-xs font-semibold" htmlFor="request">
-              Tu pedido
-            </label>
-            <textarea
-              className="resize-y min-h-20 max-h-60 border-none bg-transparent block py-[10px] w-full text-inherit text-[15px] placeholder:text-[#748075] focus-visible:outline-3 focus-visible:outline-[#94733c] focus-visible:outline-offset-3"
-              id="request"
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              maxLength={MAX_REQUEST_TEXT}
-              placeholder="Por ejemplo: ayudame a organizar una propuesta de viaje…"
-              rows={3}
+            <input
+              ref={fileInput}
+              id="attachments"
+              aria-label="Elegir archivos"
+              type="file"
+              multiple
+              accept=".png,.jpg,.jpeg,.webp,.pdf,.txt,.md,.csv,.json"
+              className="sr-only"
+              tabIndex={-1}
+              onChange={(e) => {
+                void addFiles(Array.from(e.target.files || []));
+                e.target.value = "";
+              }}
             />
-            <div className="mb-3">
-              <input ref={fileInput} id="attachments" aria-label="Elegir archivos" type="file" multiple accept=".png,.jpg,.jpeg,.webp,.pdf,.txt,.md,.csv,.json" className="sr-only" tabIndex={-1} onChange={e => { void addFiles(Array.from(e.target.files || [])); e.target.value = ""; }} />
-              <button type="button" className={buttonSecondary} disabled={pending || readingFiles} onClick={() => fileInput.current?.click()}>Adjuntar archivos</button>
-              <p className="mt-2 text-xs text-[#69746a]">También podés arrastrarlos acá. Hasta 20 MB por archivo y 40 MB por pedido.</p>
-              <p role="status" className="text-xs">{readingFiles ? "Leyendo archivos…" : ""}</p>
-              <ul>{attachments.map((f, i) => <li key={i} className="flex items-center gap-3 my-2 break-words text-sm"><span>{f.name}</span><button className={buttonSecondary} type="button" aria-label={`Quitar ${f.name}`} onClick={() => setAttachments(a => a.filter((_, n) => n !== i))}>Quitar</button></li>)}</ul>
-            </div>
-            <footer className="flex items-center justify-between gap-4 [&>span]:text-[11px] [&>span]:text-[#69746a] [&>button]:text-[13px] max-[720px]:[&>span]:hidden">
-              <span>
-                {!online
-                  ? "Esperando la conexión con Bitácora."
-                  : busy
-                    ? "Podés pausar el pedido en curso."
-                    : "Escribí con tus palabras."}
-              </span>
+
+            {(attachments.length > 0 || readingFiles) && (
+              <div className="flex flex-wrap items-center gap-2 pb-1 border-b border-line">
+                {attachments.map((f, i) => (
+                  <span
+                    key={i}
+                    className="inline-flex items-center gap-1.5 rounded-[6px] border border-line bg-paper px-2.5 py-1 text-[13px] text-ink max-w-full"
+                  >
+                    <span className="truncate max-w-[200px]">{f.name}</span>
+                    <button
+                      type="button"
+                      className={`text-muted hover:text-ink cursor-pointer ${focusRing}`}
+                      aria-label={`Quitar ${f.name}`}
+                      title={`Quitar ${f.name}`}
+                      onClick={() =>
+                        setAttachments((a) => a.filter((_, n) => n !== i))
+                      }
+                    >
+                      <X size={18} strokeWidth={1.75} aria-hidden="true" />
+                    </button>
+                  </span>
+                ))}
+                {readingFiles && (
+                  <span role="status" className="text-[12px] text-muted">
+                    Leyendo archivos…
+                  </span>
+                )}
+              </div>
+            )}
+
+            <div className="flex items-end gap-2.5">
+              <button
+                type="button"
+                className={iconButton}
+                disabled={pending || readingFiles}
+                title="Adjuntar archivos"
+                aria-label="Adjuntar archivos"
+                onClick={() => fileInput.current?.click()}
+              >
+                <Paperclip size={18} strokeWidth={1.75} aria-hidden="true" />
+              </button>
+
+              <label className="sr-only" htmlFor="request">
+                Tu pedido
+              </label>
+              <textarea
+                ref={composerInput}
+                id="request"
+                rows={2}
+                value={text}
+                maxLength={MAX_REQUEST_TEXT}
+                placeholder="Escribí qué necesitás…"
+                onChange={(e) => setText(e.target.value)}
+                className="flex-1 min-w-0 resize-y min-h-[44px] max-h-48 border-0 bg-transparent py-1.5 text-[15px] leading-[1.45] text-ink placeholder:text-muted focus:outline-none"
+              />
+
               {busy ? (
                 <button
-                  className={buttonSecondary}
+                  key="pause"
                   type="button"
+                  className={buttonQuiet}
+                  title="Pausar pedido"
+                  aria-label="Pausar pedido"
                   onClick={() => {
                     const active = state.works.find((w) => w.busy);
                     if (active) send({ type: "interrupt", workId: active.id });
                   }}
                 >
-                  Pausar pedido
+                  <Square size={18} strokeWidth={1.75} aria-hidden="true" />
+                  Pausar
                 </button>
               ) : (
                 <button
-                  className={buttonPrimary}
+                  key="send"
+                  type="submit"
                   disabled={
-                    !online ||
-                    !state.engine.available ||
-                    !state.engine.safety.allowed ||
-                    !state.account.connected ||
+                    !canSend ||
                     pending ||
                     readingFiles ||
                     (!text.trim() && !attachments.length)
                   }
-                  type="submit"
+                  title="Enviar pedido"
+                  aria-label="Enviar pedido"
+                  className={`w-9 h-9 shrink-0 rounded-[6px] bg-ink text-surface grid place-items-center cursor-pointer hover:opacity-90 disabled:opacity-40 disabled:cursor-default transition-opacity duration-150 ${focusRing}`}
                 >
-                  {pending ? "Enviando…" : "Enviar pedido"}
+                  <ArrowUp size={18} strokeWidth={1.75} aria-hidden="true" />
                 </button>
               )}
-            </footer>
+            </div>
           </form>
-        </div>}
+        )}
       </main>
+
+      {/* Right sidebar: Deliverables */}
+      {!gallery && (
+        <aside
+          className={`${
+            deliverablesOpen
+              ? "fixed inset-y-0 right-0 z-40 w-[min(320px,90vw)] flex"
+              : "hidden min-[960px]:flex"
+          } flex-col border-l border-line bg-surface px-[18px] py-5 min-h-0`}
+        >
+          <DeliverablesPanel
+            work={work}
+            focusedMessageId={focusedMessageId}
+            token={state.fileToken}
+            fileRevision={state.fileRevision}
+            hasGalleryResults={hasGalleryResults}
+            onOpenGallery={() => {
+              setGallery(true);
+              setDeliverablesOpen(false);
+              setFocusedMessageId(undefined);
+            }}
+            onPreview={(file, list) => setPreview({ file, list })}
+            onCloseMobile={() => closeDeliverablesDrawer(true)}
+            closeMobileRef={deliverablesCloseRef}
+          />
+        </aside>
+      )}
+
+      {preview && (
+        <ImagePreviewModal
+          file={preview.file}
+          list={preview.list}
+          token={state.fileToken}
+          fileRevision={state.fileRevision}
+          onSelect={(file) => setPreview((prev) => (prev ? { ...prev, file } : prev))}
+          onClose={() => setPreview(undefined)}
+        />
+      )}
     </div>
   );
 }
+
 createRoot(document.getElementById("root")!).render(<App />);
