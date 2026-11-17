@@ -66,7 +66,7 @@ Bitácora es el cuaderno de a bordo de la agencia: un registro de lo que se hizo
 
 ## Patrones
 
-- **El punto del logo:** el círculo naranja de `6 px` (`--accent`) de «Bitácora.» es el marcador único de estado: aparece delante de cada respuesta de Bitácora y en la barra izquierda junto al trabajo en curso (sin texto naranja suelto como «ahora»).
+- **El punto del logo:** el círculo naranja de `6 px` (`--accent`) de «Bitácora.» es el marcador de estado en la barra izquierda (junto al trabajo en curso, en lugar de texto suelto como «ahora») y delante de cada respuesta de Bitácora.
 - **Progreso del agente:**
   - **Cierre como asiento:** cuando termina una respuesta, el asiento final se dibuja como una línea horizontal completa de `1 px` en `--line`, con la hora a la izquierda (`tabular-nums`) y «Listo.» a la derecha.
   - **Paso en curso:** «ahora» con `pen-line`, en `--accent-ink`.
@@ -74,13 +74,13 @@ Bitácora es el cuaderno de a bordo de la agencia: un registro de lo que se hizo
   - Sin porcentajes ni pasos técnicos visibles por defecto.
 - **Trabajos:** en la barra izquierda, el nombre ocupa la línea completa y debajo va la fecha corta en `--muted` (junto al punto naranja si está en curso). El activo va en `--surface`, con un filete naranja a la izquierda.
 - **Entregable:**
-  - Grilla de placas con `gap` de 8 px: 2 columnas hasta 4 placas, 3 columnas con 5 o más.
+  - Grilla de placas con `gap` de 8 px: 2 columnas hasta 4 placas, 3 columnas con 5 o más (muestra hasta 6 miniaturas y un tile `+N` en la sexta para abrir desde la placa 7).
   - Debajo, la línea de meta («4 placas · 14:05»); no se repite el nombre del trabajo si coincide con el encabezado.
   - **Descargar:** texto con ícono `arrow-down-to-line`, subrayado en `--accent`, indicando la cantidad cuando el lote tiene varias placas o imágenes («Descargar 4 placas») y solo «Descargar» para un único archivo. No es un botón relleno.
   - Si el lote trae un PDF junto a las placas, va dentro de la misma tarjeta debajo de una línea fina en `--line`, como fila con el ícono `file-text` y su nombre.
   - Lo demás va en íconos a la derecha: ver, copiar y «⋯».
   - Entregables anteriores: una fila con su ícono de bajar.
-- **Deshacer:** barra fija superior de una sola línea corta («Se cambiaron 4 placas» o «Hubo cambios en los archivos») con el pedido completo en `title` y el botón «Deshacer», sin desplazar la conversación al iniciar un nuevo pedido.
+- **Deshacer:** barra superior en flujo normal de una sola línea corta («Se cambiaron 4 placas» o el texto del pedido si no hay entregables) con el pedido completo en `title` y el botón «Deshacer».
 - **Errores:** un solo aviso rojo sobre la caja de texto (ícono, una frase llana y «Reintentar»), sin duplicar líneas en el registro ni en el pie de la barra izquierda.
 - **Cuenta:**
   - Conectada: abajo a la izquierda, el mail con el ícono `mail`. Sin puntito de estado.
