@@ -3,9 +3,9 @@ import { createRoot } from "react-dom/client";
 import ReactMarkdown from "react-markdown";
 import {
   AlertCircle,
+  ArrowRight,
   ArrowUp,
-  Check,
-  Compass,
+  Info,
   LayoutGrid,
   LogIn,
   Mail,
@@ -33,7 +33,7 @@ import type {
 import { MAX_TITLE } from "../../server/src/titles";
 import "./style.css";
 import { DeliverablesPanel, FileCard, ImagePreviewModal } from "./files";
-import { formatTime, formatWorkDate } from "./format";
+import { formatTime, formatWorkDate, undoSummary } from "./format";
 import { protectionText, protectionWarning } from "./protection-text";
 import {
   appendReadFiles,
@@ -47,6 +47,12 @@ import {
 // Matches the server limit for a request (server/src/app.ts).
 const MAX_REQUEST_TEXT = 20000;
 
+const SUGGESTED_ROUTES = [
+  "Armame una propuesta con este link",
+  "Armame una cotización rápida",
+  "Revisá este PDF",
+] as const;
+
 const latestResult = (work: Work) =>
   work.messages
     .flatMap((m) => m.results || [])
@@ -56,7 +62,50 @@ const focusRing =
   "focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2";
 const buttonBordered = `inline-flex items-center justify-center gap-2 px-3 py-2 rounded-[6px] border border-ink bg-surface text-ink font-bold text-[14px] hover:bg-soft cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors duration-150 ${focusRing}`;
 const buttonQuiet = `inline-flex items-center justify-center gap-2 px-3 py-2 rounded-[6px] border border-line bg-surface text-ink text-[14px] hover:bg-soft cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors duration-150 ${focusRing}`;
-const iconButton = `w-[34px] h-[34px] inline-grid place-items-center rounded-[6px] text-muted hover:text-ink hover:bg-soft cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors duration-150 ${focusRing}`;
+const iconButton = `w-[36px] h-[36px] max-[959px]:w-[40px] max-[959px]:h-[40px] shrink-0 inline-grid place-items-center rounded-[6px] text-muted hover:text-ink hover:bg-soft cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors duration-150 ${focusRing}`;
+
+function DetailsToggle({
+  text,
+  prefix,
+  trailing,
+  className = "",
+}: {
+  text?: string;
+  prefix?: React.ReactNode;
+  trailing?: React.ReactNode;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className={className}>
+      <div className="flex items-center justify-between gap-2.5">
+        {prefix && (
+          <div className="flex items-center gap-2.5 min-w-0 flex-1">{prefix}</div>
+        )}
+        <div className="flex items-center gap-1.5 shrink-0">
+          {text && (
+            <button
+              type="button"
+              onClick={() => setOpen((v) => !v)}
+              aria-expanded={open}
+              title="Ver detalle"
+              aria-label="Ver detalle"
+              className={iconButton}
+            >
+              <Info size={16} strokeWidth={1.75} aria-hidden="true" />
+            </button>
+          )}
+          {trailing}
+        </div>
+      </div>
+      {open && text && (
+        <pre className="mt-2 whitespace-pre-wrap [overflow-wrap:anywhere] max-h-[220px] overflow-auto p-3 bg-soft border border-line rounded-[6px] text-[13px] text-ink">
+          {text}
+        </pre>
+      )}
+    </div>
+  );
+}
 
 function App() {
   const [state, setState] = useState<Snapshot>({
@@ -245,6 +294,18 @@ function App() {
   }, [selected, work?.messages.length, work?.messages.at(-1)?.text]);
 
   useEffect(() => {
+    const resize = () => {
+      const el = composerInput.current;
+      if (!el) return;
+      el.style.height = "auto";
+      el.style.height = `${Math.min(el.scrollHeight, 192)}px`;
+    };
+    resize();
+    window.addEventListener("resize", resize);
+    return () => window.removeEventListener("resize", resize);
+  }, [text, gallery]);
+
+  useEffect(() => {
     // The form closes only when the server's snapshot shows the saved name.
     // The input is locked while saving, so the submitted name is the one shown.
     if (savingName && work?.title === savingName) {
@@ -379,61 +440,75 @@ function App() {
       )
     : -1;
 
+  const lastDeliverablesIndex = work
+    ? work.messages.reduce(
+        (idx, m, i) => (m.results?.length ? i : idx),
+        -1,
+      )
+    : -1;
+
+  const showEngineStoppedBanner = online && !state.engine.available;
+  const showProblemBanner =
+    !showEngineStoppedBanner && (!!problem || !!work?.problem);
+  const hasErrorBanner =
+    !gallery && (showEngineStoppedBanner || showProblemBanner);
+
   const isPausedProgress = work?.progress === "Trabajo pausado.";
   const isDoneProgress = work?.progress === "Listo.";
 
-  const progressBlock = work && (work.busy || work.progress) && (
+  const inProgressBlock = work?.busy && (
     <div
       className="grid grid-cols-[48px_20px_minmax(0,1fr)] gap-y-[7px] items-center text-[14px] text-muted"
       role="status"
     >
-      {work.busy ? (
-        <>
-          <time className="text-[13px] tabular-nums text-accent-ink font-bold">
-            ahora
-          </time>
-          <PenLine
-            size={18}
-            strokeWidth={1.75}
-            className="text-accent-ink"
-            aria-hidden="true"
-          />
-          <span className="text-accent-ink font-bold">
-            {work.progress || "Preparando la respuesta…"}
-          </span>
-        </>
-      ) : (
-        <>
-          <time className="text-[13px] tabular-nums">
-            {formatTime(work.updatedAt)}
-          </time>
-          {isDoneProgress ? (
-            <Check
-              size={18}
-              strokeWidth={1.75}
-              className="text-ok"
-              aria-hidden="true"
-            />
-          ) : isPausedProgress ? (
-            <AlertCircle
-              size={18}
-              strokeWidth={1.75}
-              className="text-muted"
-              aria-hidden="true"
-            />
-          ) : (
-            <AlertCircle
-              size={18}
-              strokeWidth={1.75}
-              className="text-danger"
-              aria-hidden="true"
-            />
-          )}
-          <span className={!isDoneProgress && !isPausedProgress ? "text-danger" : undefined}>
-            {work.progress}
-          </span>
-        </>
-      )}
+      <time className="text-[13px] tabular-nums text-accent-ink font-bold">
+        ahora
+      </time>
+      <PenLine
+        size={18}
+        strokeWidth={1.75}
+        className="text-accent-ink"
+        aria-hidden="true"
+      />
+      <span className="text-accent-ink font-bold">
+        {work.progress || "Preparando la respuesta…"}
+      </span>
+    </div>
+  );
+
+  const pausedProgressBlock = work &&
+    !work.busy &&
+    work.progress &&
+    !isDoneProgress &&
+    (isPausedProgress
+      ? !(showEngineStoppedBanner || !!work.problem)
+      : !hasErrorBanner) && (
+      <div
+        className="grid grid-cols-[48px_20px_minmax(0,1fr)] gap-y-[7px] items-center text-[14px] text-muted"
+        role="status"
+      >
+        <time className="text-[13px] tabular-nums">
+          {formatTime(work.updatedAt)}
+        </time>
+        <AlertCircle
+          size={18}
+          strokeWidth={1.75}
+          className={isPausedProgress ? "text-muted" : "text-danger"}
+          aria-hidden="true"
+        />
+        <span className={!isPausedProgress ? "text-danger" : undefined}>
+          {work.progress}
+        </span>
+      </div>
+    );
+
+  const closingBlock = work && !work.busy && isDoneProgress && (
+    <div
+      className="w-full border-t border-line pt-2 flex items-center justify-between text-[13px] text-muted"
+      role="status"
+    >
+      <time className="tabular-nums">{formatTime(work.updatedAt)}</time>
+      <span>Listo.</span>
     </div>
   );
 
@@ -443,13 +518,13 @@ function App() {
     state.engine.safety.allowed &&
     state.account.connected;
 
-  const showCenterNotConnected =
-    !gallery &&
-    !work &&
+  const notConnected =
     online &&
     state.engine.available &&
     state.engine.safety.allowed &&
     !state.account.connected;
+
+  const showCenterNotConnected = !gallery && !work && notConnected;
 
   const showSidebarNotConnected =
     online &&
@@ -563,7 +638,7 @@ function App() {
                 <li key={w.id}>
                   <button
                     type="button"
-                    className={`grid grid-cols-[minmax(0,1fr)_auto] gap-2 items-baseline px-[10px] py-[9px] text-left w-full border-l-2 cursor-pointer transition-colors duration-150 ${focusRing} ${
+                    className={`flex flex-col items-start gap-0.5 px-[10px] py-[9px] text-left w-full border-l-2 cursor-pointer transition-colors duration-150 ${focusRing} ${
                       active
                         ? "bg-surface text-ink font-bold border-accent rounded-r-[6px] rounded-l-none"
                         : "border-transparent rounded-[6px] text-muted hover:bg-soft hover:text-ink"
@@ -578,14 +653,16 @@ function App() {
                       setProblem(undefined);
                     }}
                   >
-                    <span className="truncate text-[15px]">{w.title}</span>
-                    <small
-                      className={`text-[12px] tabular-nums shrink-0 ${
-                        w.busy ? "text-accent-ink font-bold" : ""
-                      }`}
-                    >
-                      {w.busy ? "ahora" : formatWorkDate(w.updatedAt)}
-                    </small>
+                    <span className="w-full truncate text-[15px]">{w.title}</span>
+                    <span className="flex items-center gap-1.5 text-[13px] font-normal tabular-nums text-muted">
+                      {w.busy && (
+                        <span
+                          className="w-1.5 h-1.5 rounded-full bg-accent shrink-0"
+                          aria-hidden="true"
+                        />
+                      )}
+                      {formatWorkDate(w.updatedAt)}
+                    </span>
                   </button>
                 </li>
               );
@@ -598,7 +675,7 @@ function App() {
           )}
         </nav>
 
-        {(!online || !state.engine.available || state.account.connected || showSidebarNotConnected) && (
+        {(!online || state.account.connected || showSidebarNotConnected) && (
           <section
             className="mt-auto border-t border-line pt-3 px-[10px] flex flex-col gap-2 text-[13px] text-muted"
             aria-label="Cuenta de ChatGPT"
@@ -607,11 +684,6 @@ function App() {
               <div className="flex items-center gap-2">
                 <WifiOff size={18} strokeWidth={1.75} className="shrink-0" aria-hidden="true" />
                 <span>Reconectando…</span>
-              </div>
-            ) : !state.engine.available ? (
-              <div className="flex items-center gap-2 text-danger">
-                <AlertCircle size={18} strokeWidth={1.75} className="shrink-0" aria-hidden="true" />
-                <span>Bitácora se detuvo</span>
               </div>
             ) : state.account.connected ? (
               <div
@@ -638,7 +710,7 @@ function App() {
             )}
 
             {login && showSidebarNotConnected && (
-              <p className="text-[12px]">
+              <p className="text-[13px]">
                 <a
                   className={`text-ink font-bold underline decoration-accent decoration-2 underline-offset-4 ${focusRing}`}
                   href={login}
@@ -743,16 +815,16 @@ function App() {
                   >
                     <WifiOff size={18} strokeWidth={1.75} aria-hidden="true" />
                   </button>
-                ) : !state.engine.available ? (
+                ) : !state.engine.available && gallery ? (
                   <span
-                    className="w-[34px] h-[34px] inline-grid place-items-center text-danger min-[960px]:hidden"
+                    className="w-[36px] h-[36px] max-[959px]:w-[40px] max-[959px]:h-[40px] inline-grid place-items-center text-danger"
                     role="img"
                     title="Bitácora se detuvo"
                     aria-label="Bitácora se detuvo"
                   >
                     <AlertCircle size={18} strokeWidth={1.75} aria-hidden="true" />
                   </span>
-                ) : !state.account.connected && !showCenterNotConnected ? (
+                ) : !state.account.connected && !showCenterNotConnected && state.engine.available ? (
                   <button
                     type="button"
                     onClick={startConnect}
@@ -787,7 +859,7 @@ function App() {
                       setFocusedMessageId(undefined);
                       setDeliverablesOpen(true);
                     }}
-                    className={`min-[960px]:hidden inline-flex items-center gap-1.5 px-2.5 h-[34px] rounded-[6px] border border-line bg-surface text-ink text-[13px] font-bold hover:bg-soft cursor-pointer ${focusRing}`}
+                    className={`min-[960px]:hidden inline-flex items-center justify-center gap-1.5 px-2.5 min-w-[40px] h-[40px] rounded-[6px] border border-line bg-surface text-ink text-[13px] font-bold hover:bg-soft cursor-pointer ${focusRing}`}
                     title="Entregables"
                     aria-label="Abrir entregables"
                   >
@@ -807,31 +879,31 @@ function App() {
         {((state.undo && !busy) || state.notice) && (
           <section
             aria-label="Deshacer el último pedido"
-            className="px-5 min-[960px]:px-7 py-2.5 border-b border-line bg-surface text-[13px] flex flex-col gap-2"
+            className="shrink-0 px-5 min-[960px]:px-7 py-2 border-b border-line bg-surface text-[13px] flex flex-col gap-2"
           >
             {state.undo && !busy && (
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="flex flex-1 items-start gap-2 text-ink min-w-0">
+              <div className="flex flex-wrap items-center justify-between gap-2 min-w-0">
+                <p className="flex flex-1 items-center gap-2 text-ink min-w-[140px] max-w-full">
                   <RotateCcw
-                    size={18}
+                    size={16}
                     strokeWidth={1.75}
-                    className="text-muted shrink-0 mt-0.5"
+                    className="text-muted shrink-0"
                     aria-hidden="true"
                   />
                   <span
-                    className="line-clamp-2 [overflow-wrap:anywhere]"
+                    className="truncate"
                     title={`Último pedido con cambios: ${state.undo.title} · «${state.undo.request}»`}
                   >
-                    Último pedido con cambios: {state.undo.title} · «
-                    {state.undo.request}»
+                    {undoSummary(state.undo, state.works) ||
+                      `${state.undo.title} · «${state.undo.request}»`}
                   </span>
                 </p>
                 {confirmUndo !== state.undo.id && (
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex flex-wrap items-center gap-2 max-w-full ml-auto">
                     {state.undo.retry && (
                       <button
                         type="button"
-                        className={buttonQuiet}
+                        className={`inline-flex items-center justify-center gap-2 px-3 py-1.5 rounded-[6px] border border-line bg-surface text-ink text-[13px] hover:bg-soft cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors duration-150 ${focusRing}`}
                         disabled={!online}
                         onClick={() => {
                           if (
@@ -847,7 +919,7 @@ function App() {
                     )}
                     <button
                       type="button"
-                      className={buttonQuiet}
+                      className={`inline-flex items-center justify-center gap-2 px-3 py-1.5 rounded-[6px] border border-line bg-surface text-ink text-[13px] hover:bg-soft cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors duration-150 ${focusRing}`}
                       disabled={!online}
                       onClick={() => setConfirmUndo(state.undo!.id)}
                     >
@@ -899,290 +971,307 @@ function App() {
           </section>
         )}
 
-        <div className="flex-1 min-h-0 overflow-y-auto px-5 min-[960px]:px-8 py-6">
-          <div
-            className={`mx-auto w-full flex flex-col gap-[18px] ${
-              gallery ? "max-w-[880px]" : "max-w-[720px]"
-            }`}
-          >
-            {gallery && (
-              <section aria-label="Resultados por trabajo" className="flex flex-col gap-6">
-                <h2 className="font-display text-[25px] font-normal text-ink">
-                  Todo lo que creamos
-                </h2>
-                {!hasGalleryResults && (
-                  <div className="rounded-[6px] border border-line bg-surface p-6 flex flex-col items-start gap-3">
-                    <span className="w-9 h-9 rounded-[6px] border border-line bg-paper grid place-items-center text-muted">
-                      <LayoutGrid size={18} strokeWidth={1.75} aria-hidden="true" />
-                    </span>
-                    <p className="text-[15px] text-muted">
-                      Cuando preparemos imágenes o PDFs, los vas a encontrar acá.
+        <div className="flex-1 min-h-0 overflow-y-auto px-5 min-[960px]:px-7 py-6">
+            <div
+              className={`mx-auto w-full flex flex-col gap-[18px] ${
+                gallery ? "max-w-[880px]" : "max-w-[720px]"
+              }`}
+            >
+              {gallery && (
+                <section aria-label="Resultados por trabajo" className="flex flex-col gap-6">
+                  <h2 className="font-display text-[25px] font-normal text-ink">
+                    Todo lo que creamos
+                  </h2>
+                  {!hasGalleryResults && (
+                    <div className="rounded-[6px] border border-line bg-surface p-6 flex flex-col items-start gap-3">
+                      <p className="text-[15px] text-muted">
+                        Cuando preparemos imágenes o PDFs, los vas a encontrar acá.
+                      </p>
+                      <button
+                        type="button"
+                        className={buttonBordered}
+                        onClick={() => setGallery(false)}
+                      >
+                        Volver al trabajo
+                      </button>
+                    </div>
+                  )}
+                  {[...state.works]
+                    .sort((a, b) => latestResult(b).localeCompare(latestResult(a)))
+                    .map((w) => {
+                      const results = w.messages
+                        .flatMap((m) => m.results || [])
+                        .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+                      return results.length ? (
+                        <section key={w.id} className="flex flex-col gap-3">
+                          <div className="flex items-center justify-between gap-3 border-b border-line pb-2">
+                            <h3 className="font-display text-[20px] font-normal text-ink truncate">
+                              {w.title}
+                            </h3>
+                            <button
+                              type="button"
+                              className={buttonQuiet}
+                              onClick={() => {
+                                setSelected(w.id);
+                                setGallery(false);
+                                setRenaming(false);
+                              }}
+                            >
+                              Ir al trabajo
+                            </button>
+                          </div>
+                          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                            {results.map((f) => (
+                              <FileCard
+                                key={`${f.id}-${state.fileRevision}`}
+                                file={f}
+                                token={state.fileToken}
+                                fileRevision={state.fileRevision}
+                                result
+                                onPreview={(file) =>
+                                  setPreview({
+                                    file,
+                                    list: results.filter((x) =>
+                                      x.mime.startsWith("image/"),
+                                    ),
+                                  })
+                                }
+                              />
+                            ))}
+                          </div>
+                        </section>
+                      ) : null;
+                    })}
+                </section>
+              )}
+
+              {/* Offline state */}
+              {!gallery && !online && !work && (
+                <section className="my-12 max-w-[420px] w-full flex flex-col items-start gap-3">
+                  <h2 className="font-display text-[25px] font-normal leading-tight text-ink flex items-center gap-2.5">
+                    <WifiOff size={20} strokeWidth={1.75} className="text-muted shrink-0" aria-hidden="true" />
+                    <span>Sin conexión</span>
+                  </h2>
+                  <p className="text-[15px] text-muted">
+                    Se perdió la conexión con Bitácora. Estoy intentando reconectar.
+                  </p>
+                  <button
+                    type="button"
+                    className={buttonBordered}
+                    onClick={() => reconnectRef.current()}
+                  >
+                    Reintentar
+                  </button>
+                </section>
+              )}
+
+              {/* Not connected empty state */}
+              {showCenterNotConnected && (
+                <section className="my-12 max-w-[460px] w-full flex flex-col items-start gap-3">
+                  <h2 className="font-display text-[25px] font-normal leading-tight text-ink flex items-center gap-2.5">
+                    <LogIn size={20} strokeWidth={1.75} className="text-muted shrink-0" aria-hidden="true" />
+                    <span>Conectá tu cuenta</span>
+                  </h2>
+                  <p className="text-[15px] leading-relaxed text-muted">
+                    Para trabajar, conectá tu cuenta de ChatGPT.
+                  </p>
+                  <button
+                    type="button"
+                    className={buttonBordered}
+                    onClick={startConnect}
+                  >
+                    <LogIn size={18} strokeWidth={1.75} aria-hidden="true" />
+                    Conectar cuenta
+                  </button>
+                  {login && (
+                    <p className="text-[13px] text-muted">
+                      <a
+                        className={`text-ink font-bold underline decoration-accent decoration-2 underline-offset-4 ${focusRing}`}
+                        href={login}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Continuar en el navegador
+                      </a>{" "}
+                      Cuando termines, volvé a esta ventana.
                     </p>
+                  )}
+                </section>
+              )}
+
+              {/* Ready empty state */}
+              {!gallery && !work && canSend && (
+                <section className="my-12 max-w-[460px] w-full flex flex-col items-start gap-4">
+                  <div className="flex flex-col gap-1.5">
+                    <h2 className="font-display text-[25px] font-normal leading-tight text-ink">
+                      ¿En qué trabajamos hoy?
+                    </h2>
+                    <p className="text-[15px] text-muted">
+                      Contame qué necesitás para tu agencia o pegá un link para
+                      empezar.
+                    </p>
+                  </div>
+                  {state.works.length === 0 && state.hasBrand === false && (
                     <button
                       type="button"
                       className={buttonBordered}
-                      onClick={() => setGallery(false)}
+                      disabled={!canSend || pending || readingFiles || busy}
+                      onClick={() =>
+                        submitRequest(
+                          "Ayudame a armar mi marca y mis plantillas para empezar.",
+                        )
+                      }
                     >
-                      Volver al trabajo
-                    </button>
-                  </div>
-                )}
-                {[...state.works]
-                  .sort((a, b) => latestResult(b).localeCompare(latestResult(a)))
-                  .map((w) => {
-                    const results = w.messages
-                      .flatMap((m) => m.results || [])
-                      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-                    return results.length ? (
-                      <section key={w.id} className="flex flex-col gap-3">
-                        <div className="flex items-center justify-between gap-3 border-b border-line pb-2">
-                          <h3 className="font-display text-[20px] font-normal text-ink truncate">
-                            {w.title}
-                          </h3>
-                          <button
-                            type="button"
-                            className={buttonQuiet}
-                            onClick={() => {
-                              setSelected(w.id);
-                              setGallery(false);
-                              setRenaming(false);
-                            }}
-                          >
-                            Ir al trabajo
-                          </button>
-                        </div>
-                        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                          {results.map((f) => (
-                            <FileCard
-                              key={`${f.id}-${state.fileRevision}`}
-                              file={f}
-                              token={state.fileToken}
-                              fileRevision={state.fileRevision}
-                              result
-                              onPreview={(file) =>
-                                setPreview({
-                                  file,
-                                  list: results.filter((x) =>
-                                    x.mime.startsWith("image/"),
-                                  ),
-                                })
-                              }
-                            />
-                          ))}
-                        </div>
-                      </section>
-                    ) : null;
-                  })}
-              </section>
-            )}
-
-            {/* Offline state */}
-            {!gallery && !online && !work && (
-              <section className="my-12 mx-auto max-w-[420px] w-full rounded-[6px] border border-line bg-surface p-6 flex flex-col items-start gap-3">
-                <span className="w-9 h-9 rounded-[6px] border border-line bg-paper grid place-items-center text-muted">
-                  <WifiOff size={18} strokeWidth={1.75} aria-hidden="true" />
-                </span>
-                <p className="text-[15px] text-ink">
-                  Se perdió la conexión con Bitácora. Estoy intentando reconectar.
-                </p>
-                <button
-                  type="button"
-                  className={buttonBordered}
-                  onClick={() => reconnectRef.current()}
-                >
-                  Reintentar
-                </button>
-              </section>
-            )}
-
-            {/* Not connected empty state */}
-            {showCenterNotConnected && (
-              <section className="my-12 mx-auto max-w-[460px] w-full flex flex-col items-start gap-3">
-                <span className="w-9 h-9 rounded-[6px] border border-line bg-surface grid place-items-center text-ink">
-                  <Mail size={18} strokeWidth={1.75} aria-hidden="true" />
-                </span>
-                <p className="text-[17px] leading-relaxed text-ink">
-                  Para trabajar, conectá tu cuenta de ChatGPT.
-                </p>
-                <button
-                  type="button"
-                  className={buttonBordered}
-                  onClick={startConnect}
-                >
-                  <LogIn size={18} strokeWidth={1.75} aria-hidden="true" />
-                  Conectar cuenta
-                </button>
-                {login && (
-                  <p className="text-[13px] text-muted">
-                    <a
-                      className={`text-ink font-bold underline decoration-accent decoration-2 underline-offset-4 ${focusRing}`}
-                      href={login}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Continuar en el navegador
-                    </a>{" "}
-                    Cuando termines, volvé a esta ventana.
-                  </p>
-                )}
-              </section>
-            )}
-
-            {/* Ready empty state */}
-            {!gallery && !work && canSend && (
-              <section className="my-12 mx-auto max-w-[460px] w-full flex flex-col items-start gap-3">
-                <span className="w-9 h-9 rounded-[6px] border border-line bg-surface grid place-items-center text-accent">
-                  <Compass size={18} strokeWidth={1.75} aria-hidden="true" />
-                </span>
-                <h2 className="font-display text-[25px] font-normal leading-tight text-ink">
-                  ¿En qué trabajamos hoy?
-                </h2>
-                <p className="text-[15px] text-muted">
-                  Contame qué necesitás para tu agencia o pegá un link para
-                  empezar.
-                </p>
-                {state.works.length === 0 && state.hasBrand === false ? (
-                  <button
-                    type="button"
-                    className={buttonBordered}
-                    disabled={!canSend || pending || readingFiles || busy}
-                    onClick={() =>
-                      submitRequest(
-                        "Ayudame a armar mi marca y mis plantillas para empezar.",
-                      )
-                    }
-                  >
-                    <PenLine size={18} strokeWidth={1.75} aria-hidden="true" />
-                    Armar mi agencia
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    className={buttonBordered}
-                    onClick={() => composerInput.current?.focus()}
-                  >
-                    <PenLine size={18} strokeWidth={1.75} aria-hidden="true" />
-                    Escribir un pedido
-                  </button>
-                )}
-              </section>
-            )}
-
-            {/* Conversation messages + timed progress log */}
-            {!gallery &&
-              work?.messages.map((m, i) => (
-                <React.Fragment key={m.id}>
-                  <article
-                    className={
-                      m.role === "user"
-                        ? "self-end max-w-[76%] bg-surface border border-line rounded-[6px] px-3.5 py-2.5 text-[15px] leading-[1.55] flex flex-col gap-2"
-                        : "max-w-[88%] text-[15px] leading-[1.6] text-ink"
-                    }
-                  >
-                    <h2 className="sr-only">
-                      {m.role === "user" ? "Vos" : "Bitácora"}
-                    </h2>
-                    {m.role === "user" ? (
-                      <div className="whitespace-pre-wrap [overflow-wrap:anywhere]">
-                        {m.text.split(/(https?:\/\/[^\s]+)/g).map((part, idx) =>
-                          /^https?:\/\//.test(part) ? (
-                            <a
-                              key={idx}
-                              className="underline decoration-accent decoration-2 underline-offset-4 text-ink"
-                              href={part}
-                              target="_blank"
-                              rel="noreferrer"
-                            >
-                              {part}
-                            </a>
-                          ) : (
-                            part
-                          ),
-                        )}
-                      </div>
-                    ) : (
-                      <div className="markdown [overflow-wrap:anywhere]">
-                        <ReactMarkdown
-                          skipHtml
-                          components={{
-                            a: ({ node: _, ...props }) =>
-                              /^https?:\/\//i.test(props.href || "") ? (
-                                <a
-                                  {...props}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                />
-                              ) : (
-                                <span>{props.children}</span>
-                              ),
-                          }}
-                        >
-                          {m.text}
-                        </ReactMarkdown>
-                      </div>
-                    )}
-                    {!!m.attachments?.length && (
-                      <div className="grid gap-2 sm:grid-cols-2">
-                        {m.attachments.map((f) => (
-                          <FileCard
-                            key={`${f.id}-${state.fileRevision}`}
-                            file={f}
-                            token={state.fileToken}
-                            fileRevision={state.fileRevision}
-                          />
-                        ))}
-                      </div>
-                    )}
-                  </article>
-                  {!!m.results?.length && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setFocusedMessageId(m.id);
-                        setDeliverablesOpen(true);
-                      }}
-                      className={`min-[960px]:hidden inline-flex items-center gap-1.5 text-[13px] font-bold text-ink underline decoration-accent decoration-2 underline-offset-4 cursor-pointer ${focusRing} ${
-                        m.role === "user" ? "self-end -mt-2" : "self-start -mt-2"
-                      }`}
-                    >
-                      <Package size={18} strokeWidth={1.75} className="text-accent" aria-hidden="true" />
-                      Ver {m.results.length}{" "}
-                      {m.results.length === 1 ? "entregable" : "entregables"}
+                      <PenLine size={18} strokeWidth={1.75} aria-hidden="true" />
+                      Armar mi agencia
                     </button>
                   )}
-                  {i === lastUserIndex && progressBlock}
-                </React.Fragment>
-              ))}
+                  <div className="w-full flex flex-col gap-1">
+                    <h3 className="text-[13px] text-muted">Rumbos sugeridos</h3>
+                    <div className="w-full divide-y divide-line border-t border-b border-line">
+                      {SUGGESTED_ROUTES.map((route) => (
+                        <button
+                          key={route}
+                          type="button"
+                          onClick={() => {
+                            setText((current) =>
+                              current.trim() ? current : route,
+                            );
+                            composerInput.current?.focus();
+                          }}
+                          className={`w-full py-2.5 flex items-center justify-between gap-3 text-left text-[15px] text-ink hover:text-accent-ink cursor-pointer transition-colors duration-150 ${focusRing}`}
+                        >
+                          <span>{route}</span>
+                          <ArrowRight
+                            size={16}
+                            strokeWidth={1.75}
+                            className="text-muted shrink-0"
+                            aria-hidden="true"
+                          />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </section>
+              )}
 
-            {!gallery && work && lastUserIndex === -1 && progressBlock}
+              {/* Conversation messages + timed progress log */}
+              {!gallery &&
+                work?.messages.map((m, i) => (
+                  <React.Fragment key={m.id}>
+                    <article
+                      className={
+                        m.role === "user"
+                          ? "self-end max-w-[76%] bg-surface border border-line rounded-[6px] px-3.5 py-2.5 text-[15px] leading-[1.55] flex flex-col gap-2"
+                          : "max-w-[88%] flex items-start gap-2.5 text-[15px] leading-[1.6] text-ink"
+                      }
+                    >
+                      <h2 className="sr-only">
+                        {m.role === "user" ? "Vos" : "Bitácora"}
+                      </h2>
+                      {m.role === "assistant" && (
+                        <span
+                          className="w-1.5 h-1.5 rounded-full bg-accent shrink-0 mt-[10px]"
+                          aria-hidden="true"
+                        />
+                      )}
+                      <div className={m.role === "assistant" ? "min-w-0 flex-1 flex flex-col gap-2" : "flex flex-col gap-2"}>
+                        {m.role === "user" ? (
+                          <div className="whitespace-pre-wrap [overflow-wrap:anywhere]">
+                            {m.text.split(/(https?:\/\/[^\s]+)/g).map((part, idx) =>
+                              /^https?:\/\//.test(part) ? (
+                                <a
+                                  key={idx}
+                                  className="underline decoration-accent decoration-2 underline-offset-4 text-ink"
+                                  href={part}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  {part}
+                                </a>
+                              ) : (
+                                part
+                              ),
+                            )}
+                          </div>
+                        ) : (
+                          <div className="markdown [overflow-wrap:anywhere]">
+                            <ReactMarkdown
+                              skipHtml
+                              components={{
+                                a: ({ node: _, ...props }) =>
+                                  /^https?:\/\//i.test(props.href || "") ? (
+                                    <a
+                                      {...props}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                    />
+                                  ) : (
+                                    <span>{props.children}</span>
+                                  ),
+                              }}
+                            >
+                              {m.text}
+                            </ReactMarkdown>
+                          </div>
+                        )}
+                        {!!m.attachments?.length && (
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            {m.attachments.map((f) => (
+                              <FileCard
+                                key={`${f.id}-${state.fileRevision}`}
+                                file={f}
+                                token={state.fileToken}
+                                fileRevision={state.fileRevision}
+                              />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </article>
+                    {i === lastDeliverablesIndex && !!m.results?.length && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFocusedMessageId(m.id);
+                          setDeliverablesOpen(true);
+                        }}
+                        className={`min-[960px]:hidden inline-flex items-center gap-1.5 text-[13px] font-bold text-ink underline decoration-accent decoration-2 underline-offset-4 cursor-pointer ${focusRing} ${
+                          m.role === "user" ? "self-end -mt-2" : "self-start pl-4 -mt-2"
+                        }`}
+                      >
+                        <Package size={18} strokeWidth={1.75} className="text-accent" aria-hidden="true" />
+                        Ver {m.results.length}{" "}
+                        {m.results.length === 1 ? "entregable" : "entregables"}
+                      </button>
+                    )}
+                    {i === lastUserIndex && (inProgressBlock || pausedProgressBlock)}
+                  </React.Fragment>
+                ))}
 
-            {/* Details toggle inside conversation log when no active error banner */}
-            {!gallery && !(problem || work?.problem) && work?.details && (
-              <details className="text-[12px] text-muted">
-                <summary className={`cursor-pointer ${focusRing}`}>
-                  Ver detalle
-                </summary>
-                <pre className="mt-2 whitespace-pre-wrap [overflow-wrap:anywhere] max-h-[220px] overflow-auto p-3 bg-soft border border-line rounded-[6px] text-ink">
-                  {work.details}
-                </pre>
-              </details>
-            )}
+              {!gallery && work && lastUserIndex === -1 && (inProgressBlock || pausedProgressBlock)}
 
-            <div ref={bottom} />
+              {/* Details toggle inside conversation log when not shown in an active error banner */}
+              {!gallery && !showProblemBanner && work?.details && (
+                <DetailsToggle text={work.details} className="pl-4 -mt-2" />
+              )}
+
+              {!gallery && closingBlock}
+
+              <div ref={bottom} />
+            </div>
           </div>
-        </div>
 
         {/* Status & error banners pinned above composer */}
         {!gallery &&
           ((!online && !!work) ||
-            (online && !state.engine.available) ||
+            showEngineStoppedBanner ||
             (online && state.engine.available && !state.engine.safety.allowed) ||
             (online &&
               state.engine.available &&
               state.engine.safety.allowed &&
               !!protectionWarning(state.engine.safety)) ||
-            !!problem ||
-            !!work?.problem) && (
+            showProblemBanner) && (
             <div className="shrink-0 max-h-[40dvh] overflow-y-auto px-5 min-[960px]:px-7 pt-2 pb-3">
               <div className="mx-auto w-full max-w-[720px] flex flex-col gap-2.5">
                 {!online && work && (
@@ -1212,40 +1301,43 @@ function App() {
                 )}
 
                 {/* Engine stopped / error state */}
-                {online && !state.engine.available && (
-                  <section className="rounded-[6px] border border-danger bg-surface p-4 flex flex-col items-start gap-2.5">
-                    <div className="flex items-center gap-2.5">
-                      <AlertCircle
-                        size={18}
-                        strokeWidth={1.75}
-                        className="text-danger shrink-0"
-                        aria-hidden="true"
-                      />
-                      <p role="status" className="text-[14px] text-ink">
-                        {state.engine.exhausted
-                          ? "Bitácora se detuvo y no pudo volver a iniciarse."
-                          : "Bitácora se detuvo. Estoy intentando volver a iniciarla."}
-                      </p>
-                    </div>
-                    {state.engine.exhausted && (
-                      <button
-                        type="button"
-                        className={buttonBordered}
-                        onClick={() => send({ type: "retry" })}
-                      >
-                        Reintentar
-                      </button>
-                    )}
-                    {state.engine.safety.detail && (
-                      <details className="w-full text-[12px] text-muted">
-                        <summary className={`cursor-pointer ${focusRing}`}>
-                          Ver detalle
-                        </summary>
-                        <pre className="mt-2 whitespace-pre-wrap [overflow-wrap:anywhere] max-h-[220px] overflow-auto p-3 bg-soft border border-line rounded-[6px] text-ink">
-                          {state.engine.safety.detail}
-                        </pre>
-                      </details>
-                    )}
+                {showEngineStoppedBanner && (
+                  <section className="rounded-[6px] border border-danger bg-surface px-4 py-3">
+                    <DetailsToggle
+                      text={state.engine.safety.detail}
+                      prefix={
+                        <>
+                          <AlertCircle
+                            size={18}
+                            strokeWidth={1.75}
+                            className="text-danger shrink-0"
+                            aria-hidden="true"
+                          />
+                          <div role="status" className="text-[14px] text-ink">
+                            <p>
+                              {state.engine.exhausted
+                                ? "Bitácora se detuvo y no pudo volver a iniciarse."
+                                : "Bitácora se detuvo. Estoy intentando volver a iniciarla."}
+                            </p>
+                            {/* Keep the work's own problem visible: this banner replaces the problem banner. */}
+                            {(problem?.text || work?.problem) && (
+                              <p className="text-muted">{problem?.text || work?.problem}</p>
+                            )}
+                          </div>
+                        </>
+                      }
+                      trailing={
+                        state.engine.exhausted && (
+                          <button
+                            type="button"
+                            className={buttonBordered}
+                            onClick={() => send({ type: "retry" })}
+                          >
+                            Reintentar
+                          </button>
+                        )
+                      }
+                    />
                   </section>
                 )}
 
@@ -1299,27 +1391,25 @@ function App() {
                         <p role="status" className="text-[14px] text-ink">
                           {protectionText(state.engine.safety)}
                         </p>
-                        <button
-                          type="button"
-                          className={buttonBordered}
-                          disabled={state.engine.safety.status === "preparing"}
-                          onClick={() => send({ type: "prepareProtection" })}
-                        >
-                          {state.engine.safety.status === "preparing"
-                            ? "Preparando…"
-                            : state.engine.safety.status === "failed"
-                              ? "Reintentar"
-                              : "Preparar la protección"}
-                        </button>
+                        <div className="flex items-center gap-2 w-full justify-between">
+                          <button
+                            type="button"
+                            className={buttonBordered}
+                            disabled={state.engine.safety.status === "preparing"}
+                            onClick={() => send({ type: "prepareProtection" })}
+                          >
+                            {state.engine.safety.status === "preparing"
+                              ? "Preparando…"
+                              : state.engine.safety.status === "failed"
+                                ? "Reintentar"
+                                : "Preparar la protección"}
+                          </button>
+                        </div>
                         {state.engine.safety.detail && (
-                          <details className="w-full text-[12px] text-muted">
-                            <summary className={`cursor-pointer ${focusRing}`}>
-                              Ver detalle
-                            </summary>
-                            <pre className="mt-2 whitespace-pre-wrap [overflow-wrap:anywhere] max-h-[220px] overflow-auto p-3 bg-soft border border-line rounded-[6px] text-ink">
-                              {state.engine.safety.detail}
-                            </pre>
-                          </details>
+                          <DetailsToggle
+                            text={state.engine.safety.detail}
+                            className="w-full"
+                          />
                         )}
                       </section>
                     )
@@ -1345,40 +1435,40 @@ function App() {
                   )}
 
                 {/* Error state on active work / request / attachments */}
-                {(problem || work?.problem) && (
+                {showProblemBanner && (
                   <div
                     role="alert"
-                    className="rounded-[6px] border border-danger bg-surface px-4 py-3 text-[14px] text-ink flex flex-col gap-2"
+                    className="rounded-[6px] border border-danger bg-surface px-4 py-3 text-[14px] text-ink"
                   >
-                    <div className="flex items-start gap-2.5">
-                      <AlertCircle
-                        size={18}
-                        strokeWidth={1.75}
-                        className="text-danger shrink-0 mt-0.5"
-                        aria-hidden="true"
-                      />
-                      <span className="flex-1">{problem?.text || work?.problem}</span>
-                      {state.engine.exhausted && (
-                        <button
-                          type="button"
-                          className={buttonQuiet}
-                          onClick={() => send({ type: "retry" })}
-                        >
-                          Reintentar
-                        </button>
-                      )}
-                    </div>
-                    {(work?.details || problem?.detail) && (
-                      <details className="text-[12px] text-muted">
-                        <summary className={`cursor-pointer ${focusRing}`}>
-                          Ver detalle
-                        </summary>
-                        <pre className="mt-2 whitespace-pre-wrap [overflow-wrap:anywhere] max-h-[220px] overflow-auto p-3 bg-soft border border-line rounded-[6px] text-ink">
-                          {problem?.detail}
-                          {work?.details}
-                        </pre>
-                      </details>
-                    )}
+                    <DetailsToggle
+                      text={
+                        problem?.detail || work?.details
+                          ? [problem?.detail, work?.details].filter(Boolean).join("\n")
+                          : undefined
+                      }
+                      prefix={
+                        <>
+                          <AlertCircle
+                            size={18}
+                            strokeWidth={1.75}
+                            className="text-danger shrink-0"
+                            aria-hidden="true"
+                          />
+                          <span className="flex-1">{problem?.text || work?.problem}</span>
+                        </>
+                      }
+                      trailing={
+                        state.engine.exhausted && (
+                          <button
+                            type="button"
+                            className={buttonQuiet}
+                            onClick={() => send({ type: "retry" })}
+                          >
+                            Reintentar
+                          </button>
+                        )
+                      }
+                    />
                   </div>
                 )}
               </div>
@@ -1387,117 +1477,124 @@ function App() {
 
         {/* Composer */}
         {!gallery && (
-          <form
-            className="mx-5 min-[960px]:mx-7 mb-5 bg-surface border border-line focus-within:border-ink has-[textarea:focus-visible]:outline-2 has-[textarea:focus-visible]:outline-accent has-[textarea:focus-visible]:outline-offset-2 rounded-[6px] px-3 py-2.5 flex flex-col gap-2"
-            onSubmit={(e) => {
-              e.preventDefault();
-              submitRequest();
-            }}
-          >
-            <input
-              ref={fileInput}
-              id="attachments"
-              aria-label="Elegir archivos"
-              type="file"
-              multiple
-              accept=".png,.jpg,.jpeg,.webp,.pdf,.txt,.md,.csv,.json"
-              className="sr-only"
-              tabIndex={-1}
-              onChange={(e) => {
-                void addFiles(Array.from(e.target.files || []));
-                e.target.value = "";
+          <div className="shrink-0 px-5 min-[960px]:px-7 pb-5">
+            <form
+              className="mx-auto w-full max-w-[720px] bg-surface border border-line focus-within:border-ink has-[textarea:focus-visible]:outline-2 has-[textarea:focus-visible]:outline-accent has-[textarea:focus-visible]:outline-offset-2 rounded-[6px] px-3 py-2.5 flex flex-col gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                submitRequest();
               }}
-            />
-
-            {(attachments.length > 0 || readingFiles) && (
-              <div className="flex flex-wrap items-center gap-2 pb-1 border-b border-line">
-                {attachments.map((f, i) => (
-                  <span
-                    key={i}
-                    className="inline-flex items-center gap-1.5 rounded-[6px] border border-line bg-paper px-2.5 py-1 text-[13px] text-ink max-w-full"
-                  >
-                    <span className="truncate max-w-[200px]">{f.name}</span>
-                    <button
-                      type="button"
-                      className={`text-muted hover:text-ink cursor-pointer ${focusRing}`}
-                      aria-label={`Quitar ${f.name}`}
-                      title={`Quitar ${f.name}`}
-                      onClick={() =>
-                        setAttachments((a) => a.filter((_, n) => n !== i))
-                      }
-                    >
-                      <X size={18} strokeWidth={1.75} aria-hidden="true" />
-                    </button>
-                  </span>
-                ))}
-                {readingFiles && (
-                  <span role="status" className="text-[12px] text-muted">
-                    Leyendo archivos…
-                  </span>
-                )}
-              </div>
-            )}
-
-            <div className="flex items-end gap-2.5">
-              <button
-                type="button"
-                className={iconButton}
-                disabled={pending || readingFiles}
-                title="Adjuntar archivos"
-                aria-label="Adjuntar archivos"
-                onClick={() => fileInput.current?.click()}
-              >
-                <Paperclip size={18} strokeWidth={1.75} aria-hidden="true" />
-              </button>
-
-              <label className="sr-only" htmlFor="request">
-                Tu pedido
-              </label>
-              <textarea
-                ref={composerInput}
-                id="request"
-                rows={2}
-                value={text}
-                maxLength={MAX_REQUEST_TEXT}
-                placeholder="Escribí qué necesitás…"
-                onChange={(e) => setText(e.target.value)}
-                className="flex-1 min-w-0 resize-y min-h-[44px] max-h-48 border-0 bg-transparent py-1.5 text-[15px] leading-[1.45] text-ink placeholder:text-muted focus:outline-none"
+            >
+              <input
+                ref={fileInput}
+                id="attachments"
+                aria-label="Elegir archivos"
+                type="file"
+                multiple
+                accept=".png,.jpg,.jpeg,.webp,.pdf,.txt,.md,.csv,.json"
+                className="sr-only"
+                tabIndex={-1}
+                onChange={(e) => {
+                  void addFiles(Array.from(e.target.files || []));
+                  e.target.value = "";
+                }}
               />
 
-              {busy ? (
-                <button
-                  key="pause"
-                  type="button"
-                  className={buttonQuiet}
-                  title="Pausar pedido"
-                  aria-label="Pausar pedido"
-                  onClick={() => {
-                    const active = state.works.find((w) => w.busy);
-                    if (active) send({ type: "interrupt", workId: active.id });
-                  }}
-                >
-                  <Square size={18} strokeWidth={1.75} aria-hidden="true" />
-                  Pausar
-                </button>
-              ) : (
-                <button
-                  key="send"
-                  type="submit"
-                  disabled={
-                    !canSend ||
-                    pending ||
-                    readingFiles ||
-                    (!text.trim() && !attachments.length)
-                  }
-                  title="Enviar pedido"
-                  aria-label="Enviar pedido"
-                  className={`w-9 h-9 shrink-0 rounded-[6px] bg-ink text-surface grid place-items-center cursor-pointer hover:opacity-90 disabled:opacity-40 disabled:cursor-default transition-opacity duration-150 ${focusRing}`}
-                >
-                  <ArrowUp size={18} strokeWidth={1.75} aria-hidden="true" />
-                </button>
+              {(attachments.length > 0 || readingFiles) && (
+                <div className="flex flex-wrap items-center gap-2 pb-1 border-b border-line">
+                  {attachments.map((f, i) => (
+                    <span
+                      key={i}
+                      className="inline-flex items-center gap-1 rounded-[6px] border border-line bg-paper pl-2.5 pr-1 py-0.5 text-[13px] text-ink max-w-full"
+                    >
+                      <span className="truncate max-w-[200px]">{f.name}</span>
+                      <button
+                        type="button"
+                        className={`w-[36px] h-[36px] max-[959px]:w-[40px] max-[959px]:h-[40px] shrink-0 -my-1 inline-grid place-items-center rounded-[6px] text-muted hover:text-ink hover:bg-soft cursor-pointer transition-colors duration-150 ${focusRing}`}
+                        aria-label={`Quitar ${f.name}`}
+                        title={`Quitar ${f.name}`}
+                        onClick={() =>
+                          setAttachments((a) => a.filter((_, n) => n !== i))
+                        }
+                      >
+                        <X size={16} strokeWidth={1.75} aria-hidden="true" />
+                      </button>
+                    </span>
+                  ))}
+                  {readingFiles && (
+                    <span role="status" className="text-[13px] text-muted">
+                      Leyendo archivos…
+                    </span>
+                  )}
+                </div>
               )}
-            </div>
-          </form>
+
+              <div className="flex items-end gap-2.5">
+                <button
+                  type="button"
+                  className={iconButton}
+                  disabled={pending || readingFiles || notConnected}
+                  title="Adjuntar archivos"
+                  aria-label="Adjuntar archivos"
+                  onClick={() => fileInput.current?.click()}
+                >
+                  <Paperclip size={18} strokeWidth={1.75} aria-hidden="true" />
+                </button>
+
+                <label className="sr-only" htmlFor="request">
+                  Tu pedido
+                </label>
+                <textarea
+                  ref={composerInput}
+                  id="request"
+                  rows={1}
+                  disabled={notConnected}
+                  value={text}
+                  maxLength={MAX_REQUEST_TEXT}
+                  placeholder={
+                    notConnected
+                      ? "Conectá tu cuenta para escribir un pedido…"
+                      : "Escribí qué necesitás…"
+                  }
+                  onChange={(e) => setText(e.target.value)}
+                  className="flex-1 min-w-0 resize-none min-h-[44px] max-h-48 border-0 bg-transparent py-2.5 text-[15px] leading-[1.45] text-ink placeholder:text-muted focus:outline-none disabled:cursor-default disabled:opacity-70"
+                />
+
+                {busy ? (
+                  <button
+                    key="pause"
+                    type="button"
+                    className={buttonQuiet}
+                    title="Pausar pedido"
+                    aria-label="Pausar pedido"
+                    onClick={() => {
+                      const active = state.works.find((w) => w.busy);
+                      if (active) send({ type: "interrupt", workId: active.id });
+                    }}
+                  >
+                    <Square size={18} strokeWidth={1.75} aria-hidden="true" />
+                    Pausar
+                  </button>
+                ) : (
+                  <button
+                    key="send"
+                    type="submit"
+                    disabled={
+                      !canSend ||
+                      pending ||
+                      readingFiles ||
+                      (!text.trim() && !attachments.length)
+                    }
+                    title="Enviar pedido"
+                    aria-label="Enviar pedido"
+                    className={`w-[36px] h-[36px] max-[959px]:w-[40px] max-[959px]:h-[40px] shrink-0 rounded-[6px] bg-ink text-surface grid place-items-center cursor-pointer enabled:hover:opacity-90 disabled:bg-ink/40 disabled:cursor-default transition-colors duration-150 ${focusRing}`}
+                  >
+                    <ArrowUp size={18} strokeWidth={1.75} aria-hidden="true" />
+                  </button>
+                )}
+              </div>
+            </form>
+          </div>
         )}
       </main>
 
@@ -1508,7 +1605,7 @@ function App() {
             deliverablesOpen
               ? "fixed inset-y-0 right-0 z-40 w-[min(320px,90vw)] flex"
               : "hidden min-[960px]:flex"
-          } flex-col border-l border-line bg-surface px-[18px] py-5 min-h-0`}
+          } flex-col border-l border-line bg-surface px-3 py-5 min-h-0`}
         >
           <DeliverablesPanel
             work={work}
