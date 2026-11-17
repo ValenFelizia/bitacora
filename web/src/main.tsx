@@ -1313,11 +1313,17 @@ function App() {
                             className="text-danger shrink-0"
                             aria-hidden="true"
                           />
-                          <p role="status" className="text-[14px] text-ink">
-                            {state.engine.exhausted
-                              ? "Bitácora se detuvo y no pudo volver a iniciarse."
-                              : "Bitácora se detuvo. Estoy intentando volver a iniciarla."}
-                          </p>
+                          <div role="status" className="text-[14px] text-ink">
+                            <p>
+                              {state.engine.exhausted
+                                ? "Bitácora se detuvo y no pudo volver a iniciarse."
+                                : "Bitácora se detuvo. Estoy intentando volver a iniciarla."}
+                            </p>
+                            {/* Keep the work's own problem visible: this banner replaces the problem banner. */}
+                            {(problem?.text || work?.problem) && (
+                              <p className="text-muted">{problem?.text || work?.problem}</p>
+                            )}
+                          </div>
                         </>
                       }
                       trailing={
