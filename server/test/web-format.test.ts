@@ -3,7 +3,12 @@ import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { FileRef, Work } from "../src/contracts";
-import { formatTime, formatWorkDate, groupDeliverables } from "../../web/src/format";
+import {
+  formatTime,
+  formatWorkDate,
+  groupDeliverables,
+  undoSummary,
+} from "../../web/src/format";
 
 const makeFile = (name: string, mime = "image/png", createdAt = "2026-11-16T14:05:00.000Z"): FileRef => ({
   id: name,
@@ -134,6 +139,127 @@ test("groupDeliverables uses work title for single-plate batch and handles singl
   assert.equal(single.featured?.title, "viaje.pdf");
   assert.equal(single.featured?.plates.length, 0);
   assert.equal(single.older.length, 0);
+});
+
+test("undoSummary formats plate counts, images, file counts, empty results, and fallback", () => {
+  const works: Work[] = [
+    makeWork({
+      id: "w1",
+      messages: [
+        {
+          id: "m-plates",
+          role: "assistant",
+          text: "Listo.",
+          results: [
+            makeFile("todas.png"),
+            makeFile("pieza-1.png"),
+            makeFile("pieza-2.png"),
+            makeFile("pieza-3.png"),
+            makeFile("pieza-4.png"),
+            makeFile("piezas.pdf", "application/pdf"),
+          ],
+        },
+        {
+          id: "m-single",
+          role: "assistant",
+          text: "PDF.",
+          results: [makeFile("cotizacion.pdf", "application/pdf")],
+        },
+        {
+          id: "m-images",
+          role: "assistant",
+          text: "Fotos.",
+          results: [makeFile("foto-a.png"), makeFile("foto-b.png")],
+        },
+        {
+          id: "m-single-image",
+          role: "assistant",
+          text: "Foto.",
+          results: [makeFile("foto.png")],
+        },
+        {
+          id: "m-image-pdf",
+          role: "assistant",
+          text: "Foto y PDF.",
+          results: [makeFile("foto.png"), makeFile("resumen.pdf", "application/pdf")],
+        },
+        {
+          id: "m-plates-extra",
+          role: "assistant",
+          text: "Placas y extra.",
+          results: [
+            makeFile("pieza-1.png"),
+            makeFile("pieza-2.png"),
+            makeFile("portada.png"),
+          ],
+        },
+        {
+          id: "m-empty",
+          role: "assistant",
+          text: "Sin archivos.",
+          results: [],
+        },
+        {
+          id: "m-multi-pdf",
+          role: "assistant",
+          text: "Dos PDFs.",
+          results: [
+            makeFile("uno.pdf", "application/pdf"),
+            makeFile("dos.pdf", "application/pdf"),
+          ],
+        },
+      ],
+    }),
+  ];
+
+  assert.equal(groupDeliverables(works[0], "m-plates").featured?.kind, "plates");
+  assert.equal(groupDeliverables(works[0], "m-single").featured?.kind, "file");
+  assert.equal(groupDeliverables(works[0], "m-images").featured?.kind, "images");
+  assert.equal(groupDeliverables(works[0], "m-single-image").featured?.kind, "images");
+  assert.equal(groupDeliverables(works[0], "m-image-pdf").featured?.kind, "file");
+  assert.equal(groupDeliverables(works[0], "m-plates-extra").featured?.kind, "plates");
+  assert.equal(groupDeliverables(works[0], "m-multi-pdf").featured?.kind, "file");
+
+  assert.equal(
+    undoSummary({ workId: "w1", messageId: "m-plates" }, works),
+    "Se cambiaron 4 placas",
+  );
+  assert.equal(
+    undoSummary({ workId: "w1", messageId: "m-single" }, works),
+    "Se cambió 1 archivo",
+  );
+  assert.equal(
+    undoSummary({ workId: "w1", messageId: "m-images" }, works),
+    "Se cambiaron 2 imágenes",
+  );
+  assert.equal(
+    undoSummary({ workId: "w1", messageId: "m-single-image" }, works),
+    "Se cambió 1 imagen",
+  );
+  assert.equal(
+    undoSummary({ workId: "w1", messageId: "m-image-pdf" }, works),
+    "Se cambiaron 2 archivos",
+  );
+  assert.equal(
+    undoSummary({ workId: "w1", messageId: "m-plates-extra" }, works),
+    "Se cambiaron 2 placas",
+  );
+  assert.equal(
+    undoSummary({ workId: "w1", messageId: "m-empty" }, works),
+    "",
+  );
+  assert.equal(
+    undoSummary({ workId: "w1", messageId: "m-multi-pdf" }, works),
+    "Se cambiaron 2 archivos",
+  );
+  assert.equal(
+    undoSummary({ workId: "w1" }, works),
+    "Hubo cambios en los archivos",
+  );
+  assert.equal(
+    undoSummary({ workId: "missing", messageId: "m-plates" }, works),
+    "Hubo cambios en los archivos",
+  );
 });
 
 test("web UI source does not contain the word motor", async () => {
