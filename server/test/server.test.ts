@@ -1,13 +1,86 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { WebSocket } from "ws";
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
-import { resolve } from "node:path";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { createConnection } from "node:net";
+import { get } from "node:http";
 import { randomBytes } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { serve } from "../src/server";
 import { FakeEngine } from "./fake-engine";
+
+test("desktop serves only bundled assets and accepts the window's assigned origin", async () => {
+  await mkdir(".local", { recursive: true });
+  const dir = await mkdtemp(resolve(".local/desktop-"));
+  const webRoot = join(dir, "web");
+  const data = join(dir, "data");
+  await mkdir(webRoot);
+  await writeFile(join(webRoot, "index.html"), "<title>Bitácora</title>");
+  await writeFile(join(dir, "private.html"), "private");
+  const server = await serve(new FakeEngine(), data, 0, undefined, undefined, {
+    webRoot, kitSource: join(dir, "kit"),
+  });
+  const origin = `http://127.0.0.1:${server.port}`;
+  try {
+    const page = await fetch(origin);
+    assert.equal(page.status, 200);
+    assert.match(page.headers.get("content-type") || "", /^text\/html/);
+    assert.equal(await page.text(), "<title>Bitácora</title>");
+    assert.equal((await fetch(origin + "/private.html")).status, 404);
+    assert.equal((await fetch(origin + "/files")).status, 403);
+    assert.equal((await fetch(origin, { headers: { Origin: "http://127.0.0.1:5173" } })).status, 403);
+    const aliasStatus = await new Promise<number | undefined>((resolve, reject) => {
+      get(origin, { headers: { Host: `localhost:${server.port}` } }, (response) => {
+        response.resume();
+        resolve(response.statusCode);
+      }).on("error", reject);
+    });
+    assert.equal(aliasStatus, 403);
+
+    const url = `ws://127.0.0.1:${server.port}/ws`;
+    const socket = new WebSocket(url, { origin });
+    const message = await new Promise<string>((resolve, reject) => {
+      socket.once("message", (data) => resolve(String(data)));
+      socket.once("error", reject);
+    });
+    assert.equal(JSON.parse(message).type, "snapshot");
+    await terminateAndClose(socket);
+    const foreign = new WebSocket(url, { origin: "http://127.0.0.1:5173" });
+    await assert.rejects(new Promise<void>((resolve, reject) => {
+      foreign.once("open", resolve);
+      foreign.once("error", reject);
+    }));
+    await waitForClose(foreign);
+  } finally {
+    await server.close();
+    await rm(dir, { recursive: true });
+  }
+});
+
+test("startup uses the reported account while Codex is being replaced", async () => {
+  class ReplacingEngine extends FakeEngine {
+    override async start() {
+      this.emit({ type: "account", account: { connected: true } });
+    }
+    override async account(): Promise<never> {
+      throw new Error("Codex is being replaced");
+    }
+  }
+
+  await mkdir(".local", { recursive: true });
+  const dir = await mkdtemp(resolve(".local/account-"));
+  try {
+    const server = await serve(new ReplacingEngine(), dir, 0);
+    try {
+      assert.equal(server.app.snapshot().account.connected, true);
+    } finally {
+      await server.close();
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
 
 async function waitForClose(ws: WebSocket, timeoutMs = 15000) {
   if (ws.readyState === WebSocket.CLOSED) return;

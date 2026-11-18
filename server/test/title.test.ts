@@ -62,9 +62,9 @@ async function appFixture() {
   };
 }
 
-async function until(predicate: () => boolean) {
+async function until(predicate: () => boolean | Promise<boolean>) {
   for (let i = 0; i < 100; i++) {
-    if (predicate()) return;
+    if (await predicate()) return;
     await delay(10);
   }
   assert.fail("condition timed out");
@@ -214,9 +214,10 @@ test("a name the engine refuses is saved in the detail", async () => {
     await f.app.command({ type: "send", text: "Armame una propuesta" }, f.reply);
     f.engine.emit({ type: "finished", conversationId: "conversation-1", status: "completed" });
     await until(() => f.app.snapshot().works[0].title === "Porto de Galinhas, febrero");
-    await delay(100);
-    const saved = JSON.parse(await readFile(join(f.dir, "works.json"), "utf8"));
-    assert.match(saved.works[0].details, /No pude guardar el título en la sesión/);
+    await until(async () => {
+      const saved = JSON.parse(await readFile(join(f.dir, "works.json"), "utf8"));
+      return /No pude guardar el título en la sesión/.test(saved.works[0].details);
+    });
   } finally {
     await f.app.close();
     await rm(f.dir, { recursive: true });

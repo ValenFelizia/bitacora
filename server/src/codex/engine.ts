@@ -1,6 +1,5 @@
 import {
   spawn,
-  execFileSync,
   execFile,
   type ChildProcessWithoutNullStreams,
 } from "node:child_process";
@@ -231,6 +230,7 @@ export class CodexEngine implements Engine {
   private stderr = "";
   constructor(
     private options: {
+      mcpEntry?: string;
       home: string;
       workspace: string;
       binary?: string;
@@ -301,7 +301,7 @@ export class CodexEngine implements Engine {
     await mkdir(this.options.home, { recursive: true });
     await mkdir(this.options.workspace, { recursive: true });
     if (!this.options.args) {
-      await registerKit(this.options.home, this.options.workspace);
+      await registerKit(this.options.home, this.options.workspace, this.options.mcpEntry);
     }
     if (this.stopping) return true;
     const binary = this.options.binary || codexBinary();
@@ -319,11 +319,13 @@ export class CodexEngine implements Engine {
     env.CODEX_HOME = this.options.home;
     const version = this.options.args
       ? codexVersion
-      : execFileSync(binary, ["--version"], {
+      : (await promisify(execFile)(binary, ["--version"], {
           env,
           encoding: "utf8",
           windowsHide: true,
-        }).trim();
+          timeout: 30_000,
+        })).stdout.trim();
+    if (this.stopping) return true;
     if (version !== codexVersion)
       throw new Error(`Expected ${codexVersion}, received ${version}`);
     const args =
