@@ -232,9 +232,15 @@ accepted direction from implementation alone.
     pérdidas): se usa para poder cortar el lote y avisar qué quedó prendido.
     `effectiveEnabled` no se cree, porque repite lo pedido; después de cada
     lote se vuelve a pedir `skills/list` y se avisa lo que siga prendido. La
-    sincronización entera tiene un tope de 20 s y nunca rechaza: si falla o se
-    queda sin tiempo, queda como detalle del trabajo y la app sigue. No se
-    modifican `HOME` ni `USERPROFILE`.
+    sincronización entera tiene un tope de 20 s por pasada y nunca rechaza: si
+    falla o se queda sin tiempo, queda como detalle del trabajo y la app sigue.
+    Al iniciar corre en segundo plano, después de publicar la protección y la
+    disponibilidad juntas: la app abre sin esperarla y no muestra «detenida»
+    con el motor listo. `createWork`, `resumeWork` y cada turno sí la esperan.
+    Si la revisión no termina (por tiempo o por error) el pedido sigue con un
+    aviso, porque `skills.include_instructions=false` ya evita que el catálogo
+    llegue al agente y el apagado uno por uno es la segunda barrera.
+    No se modifican `HOME` ni `USERPROFILE`.
 - Rationale: el objetivo no es cortarle las patas a Codex sino darle a la
   agencia un entorno limpio, sin descargas de catálogos ni herramientas de
   programación o conectores sorpresa, dejando una estructura lista para que
