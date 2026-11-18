@@ -81,6 +81,11 @@ Bitácora es el cuaderno de a bordo de la agencia: un registro de lo que se hizo
   - Lo demás va en íconos a la derecha: ver, copiar y «⋯».
   - Entregables anteriores: una fila con su ícono de bajar.
 - **Deshacer:** barra superior en flujo normal de una sola línea corta («Se cambiaron 4 placas» o el texto del pedido si no hay entregables) con el pedido completo en `title` y el botón «Deshacer».
+- **Preguntas del agente:**
+  - Tarjeta al final de la conversación, en `--surface` con borde de `1 px` en `--line` y, mientras espera, el filete naranja a la izquierda del trabajo activo. Arriba, el ícono `message-circle-question` en `--accent` y «Te hago una pregunta» en `13 px` `--muted`.
+  - Cada pregunta es un grupo con su texto en `17 px` negrita (y el rótulo corto arriba, en `--muted`). Las opciones son filas de texto separadas por líneas de `1 px`, con su botón de opción nativo, el nombre en negrita y la explicación en `13 px` `--muted`. La sugerida por el agente lleva «Recomendada» en `--muted`, sin color.
+  - «Otra» es la última fila y abre un campo para escribir. Se responde con un botón con borde, «Responder» con `check`; si falta elegir, un aviso corto en `--danger` debajo de la pregunta y el foco va ahí.
+  - Lo respondido queda como mensaje de la usuaria («Trato: Vos»). Si ya no se puede responder (pausa, reinicio, cierre), la tarjeta queda sin filete, con la pregunta en `--muted` y el aviso con `alert-circle`; se borra con el pedido siguiente.
 - **Errores:** un solo aviso rojo sobre la caja de texto (ícono, una frase llana y «Reintentar»), sin duplicar líneas en el registro ni en el pie de la barra izquierda.
 - **Cuenta:**
   - Conectada: abajo a la izquierda, el mail con el ícono `mail`. Sin puntito de estado.

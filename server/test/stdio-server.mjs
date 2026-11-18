@@ -8,6 +8,21 @@ const setupFile = process.env.CODEX_HOME + "/fake-protection";
 let configuredMode = existsSync(setupFile) ? readFileSync(setupFile, "utf8") : null;
 const threadId = "thread-1";
 let interrupts = 0;
+/** Id of the question waiting for the client, the way `request_user_input` asks. */
+let question = null;
+const questions = process.env.BITACORA_FAKE_QUESTIONS
+  ? JSON.parse(process.env.BITACORA_FAKE_QUESTIONS)
+  : [{
+      id: "trato",
+      header: "Trato",
+      question: "¿Les hablás de vos o de usted?",
+      isOther: true,
+      isSecret: false,
+      options: [
+        { label: "Vos (Recommended)", description: "Más cercano, como en una charla." },
+        { label: "Usted", description: "Más formal." },
+      ],
+    }];
 let interruptHangs = false;
 let interruptRejects = false;
 let crashScheduled = false;
@@ -64,6 +79,15 @@ createInterface({ input: process.stdin })
     if (process.env.BITACORA_FAKE_LOG)
       appendFileSync(process.env.BITACORA_FAKE_LOG, JSON.stringify(m) + "\n");
     if (!m.method) {
+      if (question !== null && m.id === question) {
+        // The answer reaches the agent and the turn goes on, as in 0.168.0:
+        // the request is resolved first, then the turn ends.
+        question = null;
+        notify("serverRequest/resolved", { threadId, requestId: m.id });
+        notify("item/completed", { threadId, item: { type: "agentMessage", id: "after-answer", text: `Recibí: ${JSON.stringify(m.result?.answers ?? null)}` } });
+        notify("turn/completed", { threadId, turn: turn("completed") });
+        return;
+      }
       if (String(m.id).startsWith('interactive-')) {
         if (!m.result && !m.error) process.exit(5);
         if (m.id === 'interactive-9') notify('turn/completed', { threadId, turn: turn('completed') });
@@ -248,7 +272,14 @@ createInterface({ input: process.stdin })
         else if (++interrupts > 1) send({ id: m.id, error: { message: "already interrupted" } });
         else {
           reply({});
-          if (!interruptHangs) setTimeout(() => notify("turn/completed", { threadId, turn: turn("interrupted") }), 140);
+          // As in 0.168.0, a pause ends the turn first and only then says it
+          // stopped waiting for the question.
+          const waiting = question;
+          question = null;
+          if (!interruptHangs) setTimeout(() => {
+            notify("turn/completed", { threadId, turn: turn("interrupted") });
+            if (waiting !== null) notify("serverRequest/resolved", { threadId, requestId: waiting });
+          }, 140);
         }
         break;
       case "turn/start": {
@@ -258,6 +289,24 @@ createInterface({ input: process.stdin })
         }
         if (scenario === "crash") {
           process.exit(3);
+        }
+        if (scenario === "question") {
+          // The agent calls `request_user_input` and waits for the answer.
+          reply({ turn: turn() });
+          notify("turn/started", { threadId, turn: turn() });
+          question = `question-${Date.now()}`;
+          send({
+            id: question,
+            method: "item/tool/requestUserInput",
+            params: { threadId, turnId: "turn-1", itemId: "call-1", questions, isBlocking: false, autoResolutionMs: null },
+          });
+          // The turn ends on its own while the question is still waiting.
+          if (process.env.BITACORA_FAKE_QUESTION_ENDS)
+            setTimeout(() => {
+              question = null;
+              notify("turn/completed", { threadId, turn: turn("completed") });
+            }, 100);
+          break;
         }
         if (scenario === "environment")
           notify("item/commandExecution/outputDelta", {

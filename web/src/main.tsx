@@ -33,6 +33,7 @@ import type {
 import { MAX_TITLE } from "../../server/src/titles";
 import "./style.css";
 import { DeliverablesPanel, FileCard, FilePreviewModal } from "./files";
+import { QuestionCard } from "./question";
 import { formatTime, formatWorkDate, undoSummary } from "./format";
 import { protectionText, protectionWarning } from "./protection-text";
 import {
@@ -144,6 +145,8 @@ function App() {
   const [text, setText] = useState("");
   const [online, setOnline] = useState(false);
   const [pending, setPending] = useState(false);
+  // The question whose answer was sent and not yet confirmed by a snapshot.
+  const [answering, setAnswering] = useState<string>();
   const [problem, setProblem] = useState<{ text: string; detail?: string }>();
   const [login, setLogin] = useState<string>();
   const loginWindow = useRef<Window | null>(null);
@@ -216,6 +219,7 @@ function App() {
         if (message.type === "problem") {
           setProblem(message);
           setPending(false);
+          setAnswering(undefined);
           // A rename that was refused keeps its form open with the message.
           setSavingName(undefined);
         }
@@ -230,6 +234,8 @@ function App() {
       ws.onclose = () => {
         setOnline(false);
         setPending(false);
+        // An answer in flight may never arrive: the card can send it again.
+        setAnswering(undefined);
         // A rename in flight may never be answered: the form stays open with
         // the typed name so it can be saved again.
         setSavingName(undefined);
@@ -300,7 +306,7 @@ function App() {
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: "end" });
-  }, [selected, work?.messages.length, work?.messages.at(-1)?.text]);
+  }, [selected, work?.messages.length, work?.messages.at(-1)?.text, work?.question?.id, work?.question?.closed]);
 
   useEffect(() => {
     const resize = () => {
@@ -1267,6 +1273,20 @@ function App() {
                 ))}
 
               {!gallery && work && lastUserIndex === -1 && (inProgressBlock || pausedProgressBlock)}
+
+              {!gallery && work?.question && (
+                <QuestionCard
+                  key={work.question.id}
+                  question={work.question}
+                  disabled={!online}
+                  sending={answering === work.question.id}
+                  onAnswer={(answers) => {
+                    const question = work.question!;
+                    setAnswering(question.id);
+                    send({ type: "answer", workId: work.id, questionId: question.id, answers });
+                  }}
+                />
+              )}
 
               {/* Details toggle inside conversation log when not shown in an active error banner */}
               {!gallery && !showProblemBanner && work?.details && (

@@ -7,9 +7,10 @@ import { randomUUID } from "node:crypto";
 import { rememberUserUrls } from './allowed-urls';
 import { initializeKit } from './tools/kit';
 import type { Account, Engine, EngineEvent, SuggestedTitle } from "./engine";
-import { problemText, EngineFailure, activityText } from "./engine";
+import { problemText, EngineFailure, activityText, questionEndText } from "./engine";
 import { fallbackTitle, MAX_TITLE } from "./titles";
-import type { FileRef, Message, Work, Snapshot, ClientCommand, ServerMessage } from "./contracts";
+import { agentAnswer, answerRecord } from "./questions";
+import type { FileRef, Message, Work, Snapshot, ClientCommand, ServerMessage, PendingQuestion } from "./contracts";
 
 type SavedWork = Work & { conversationId: string; titlePending?: boolean; renamedByUser?: boolean; pendingFiles?: { messageId: string; before?: Record<string, string> } };
 const isText = (value: unknown) => typeof value === "string";
@@ -25,11 +26,21 @@ const isMessage = (value: unknown) => {
     (message.attachments === undefined || (Array.isArray(message.attachments) && message.attachments.every(isFileRef))) &&
     (message.results === undefined || (Array.isArray(message.results) && message.results.every(isFileRef)));
 };
+const isQuestion = (value: unknown) => {
+  const question = value as Partial<PendingQuestion> | null;
+  return !!question && isText(question.id) && isText(question.askedAt) &&
+    (question.closed === undefined || isText(question.closed)) &&
+    Array.isArray(question.questions) && question.questions.every((q) =>
+      !!q && isText(q.id) && isText(q.header) && isText(q.text) && typeof q.other === "boolean" && typeof q.secret === "boolean" &&
+      Array.isArray(q.options) && q.options.every((o) => !!o && isText(o.label) && isText(o.description)));
+};
+const WAITING_ANSWER = "Esperando tu respuesta…";
 const isSavedWork = (value: unknown) => {
   const work = value as Partial<SavedWork> | null;
   return !!work && isText(work.id) && isText(work.conversationId) && isText(work.title) && isText(work.details) &&
     isText(work.createdAt) && isText(work.updatedAt) && isText(work.progress) &&
     (work.problem === undefined || isText(work.problem)) &&
+    (work.question === undefined || isQuestion(work.question)) &&
     (work.busy === undefined || typeof work.busy === "boolean") &&
     (work.titlePending === undefined || typeof work.titlePending === "boolean") &&
     (work.renamedByUser === undefined || typeof work.renamedByUser === "boolean") &&
@@ -101,12 +112,15 @@ export class App {
         if (work.titlePending) this.titlePending.add(work.id);
         if (work.renamedByUser) this.renamed.add(work.id);
       }
-      for (const work of this.works)
+      for (const work of this.works) {
         if (work.busy) {
           work.busy = false;
           work.progress =
             "El trabajo se detuvo al cerrar la app. Podés continuarlo.";
         }
+        // The app-server that asked is gone: the question cannot be answered.
+        this.closeQuestion(work, "closed");
+      }
     } catch (error) {
       if (error instanceof SyntaxError) {
         const source = join(this.data, "works.json");
@@ -292,6 +306,12 @@ export class App {
       this.changed();
     }
   }
+  /** Marks a waiting question as no longer answerable, saying why. */
+  private closeQuestion(work: SavedWork, reason: Parameters<typeof questionEndText>[0], id?: string) {
+    if (!work.question || work.question.closed || (id && work.question.id !== id)) return false;
+    work.question.closed = questionEndText(reason);
+    return true;
+  }
   private event(event: EngineEvent) {
     if (event.type === "protection") {
       this.publish({ type: "snapshot", state: this.snapshot() });
@@ -305,12 +325,14 @@ export class App {
       this.resumed.clear();
       if (!event.available) {
         this.accountState = { connected: false };
-        for (const work of this.works)
+        for (const work of this.works) {
           if (work.busy) {
             work.busy = false;
             work.progress =
               "Bitácora se detuvo. Podés continuar cuando vuelva.";
           }
+          this.closeQuestion(work, "stopped");
+        }
       }
       if (!event.available) for (const work of this.works) this.finishFiles(work);
       this.changed();
@@ -328,6 +350,10 @@ export class App {
           ? this.works.find((w) => w.busy)
           : undefined;
     if (!work) {
+      // Nobody can see a question without its work: the agent is told no one
+      // answered instead of waiting forever.
+      if (event.type === "question")
+        void this.engine.answer(event.conversationId, event.id, {}).catch(() => {});
       if (event.type === "detail" && !event.conversationId) {
         this.pendingDetails.push({ text: event.text, key: event.key });
         if (this.pendingDetails.length > 50) this.pendingDetails.shift();
@@ -360,6 +386,13 @@ export class App {
       }
       case "detail":
         work.details = (work.details + event.text + "\n").slice(-100000);
+        break;
+      case "question":
+        work.question = { id: event.id, askedAt: new Date().toISOString(), questions: event.questions };
+        work.progress = WAITING_ANSWER;
+        break;
+      case "questionClosed":
+        if (!this.closeQuestion(work, event.reason, event.id)) return;
         break;
       case "problem":
         work.problem = problemText(event.kind);
@@ -490,6 +523,39 @@ export class App {
       await this.engine.interrupt(work.conversationId);
       return;
     }
+    if (command.type === "answer") {
+      const work = this.works.find((w) => w.id === command.workId);
+      if (!work) throw new Error("Unknown work");
+      const question = work.question;
+      if (!question || question.closed || question.id !== command.questionId) {
+        reply({ type: "problem", text: "Esa pregunta ya no está esperando respuesta." });
+        return;
+      }
+      const given = command.answers && typeof command.answers === "object" ? command.answers : {};
+      const answers: Record<string, string[]> = {};
+      for (const q of question.questions) {
+        const answer = agentAnswer(q, Object.hasOwn(given, q.id) ? given[q.id] : undefined);
+        if (!answer) {
+          reply({ type: "problem", text: "Respondé cada pregunta antes de seguir." });
+          return;
+        }
+        answers[q.id] = answer;
+      }
+      try {
+        await this.engine.answer(work.conversationId, question.id, answers);
+      } catch (error) {
+        // Another path closed it meanwhile (a pause, a restart): its own notice
+        // is already on the card.
+        reply({ type: "problem", text: "Esa pregunta ya no está esperando respuesta.", detail: String(error) });
+        return;
+      }
+      work.question = undefined;
+      work.messages.push({ id: randomUUID(), role: "user", text: answerRecord(question, given) });
+      work.progress = activityText.preparing;
+      work.updatedAt = new Date().toISOString();
+      this.changed();
+      return;
+    }
     if (
       typeof command.text !== "string" ||
       !command.text.trim() ||
@@ -595,6 +661,8 @@ export class App {
       });
       work.busy = true;
       work.problem = undefined;
+      // A question left unanswered stays on screen until the next request.
+      work.question = undefined;
       work.progress = "Preparando la respuesta…";
       this.unsent.add(work.id);
       this.changed();
@@ -658,6 +726,7 @@ export class App {
     // The desktop shell gives us a short grace period. Queue the current
     // transcript before waiting for titles, scans or Codex shutdown.
     for (const work of this.works) {
+      if (this.closeQuestion(work, "closed")) this.dirty = true;
       if (!work.busy || this.scanning.has(work.id)) continue;
       work.busy = false;
       work.progress = "El trabajo se detuvo al cerrar la app. Podés continuarlo.";

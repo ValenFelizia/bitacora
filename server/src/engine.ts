@@ -22,8 +22,25 @@ export type Activity =
   | "tool"
   | "responding"
   | "retrying";
+export type QuestionOption = { label: string; description: string };
+/** One question the agent asks the user, with the choices it offers. */
+export type Question = {
+  id: string;
+  /** Short label for the question; may be empty. */
+  header: string;
+  text: string;
+  options: QuestionOption[];
+  /** True when a written answer («Otra») is accepted besides the options. */
+  other: boolean;
+  /** The answer must not be shown back in the conversation. */
+  secret: boolean;
+};
+/** Why a question stopped waiting without an answer. */
+export type QuestionEnd = "paused" | "finished" | "stopped" | "closed";
 export type EngineEvent =
   | { type: "availability"; available: boolean; exhausted?: boolean; safety: ExecutionSafety }
+  | { type: "question"; conversationId: string; id: string; questions: Question[] }
+  | { type: "questionClosed"; conversationId: string; id: string; reason: Exclude<QuestionEnd, "closed"> }
   | { type: "protection"; safety: ExecutionSafety }
   | { type: "account"; account: Account }
   | { type: "title"; conversationId: string; title: string }
@@ -78,6 +95,12 @@ export interface Engine {
   send(conversationId: string, text: string, files?: EngineFile[], context?: { filesReverted?: boolean }): Promise<void>;
   interrupt(conversationId: string): Promise<void>;
   /**
+   * Answers a question the agent is waiting on. Keys are question ids and each
+   * value is what the agent receives for that question; an empty object tells
+   * it the user did not answer. Rejects when the question is no longer waiting.
+   */
+  answer(conversationId: string, questionId: string, answers: Record<string, string[]>): Promise<void>;
+  /**
    * Drops the memory of notices that were emitted but never delivered to a
    * work, so the next check says them again instead of treating them as said.
    */
@@ -109,6 +132,16 @@ export function problemText(
     other:
       "No pude completar el pedido. Podés ver el detalle y volver a intentarlo.",
   }[kind];
+}
+
+export function questionEndText(reason: QuestionEnd): string {
+  const why = {
+    paused: "Pausaste el trabajo",
+    finished: "El pedido terminó",
+    stopped: "Bitácora se reinició",
+    closed: "Bitácora se cerró",
+  }[reason];
+  return `${why} y esta pregunta quedó sin responder. Si querés, contestala en un mensaje nuevo.`;
 }
 
 export const activityText: Record<Activity, string> = {
