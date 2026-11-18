@@ -135,11 +135,14 @@ export class App {
   async startEngine() {
     this.unsubscribe = this.engine.subscribe((event) => this.event(event));
     await this.engine.start();
+    // Usable as soon as the engine is: the account read below must not keep a
+    // ready protection looking stopped (see DEC-011).
+    this.available = true;
+    this.starting = false;
+    this.publish({ type: "snapshot", state: this.snapshot() });
     // Codex reports the account during start. Avoid a second read racing the
     // automatic MXC setup, which can replace the app-server.
     this.accountState ??= await this.engine.account();
-    this.available = true;
-    this.starting = false;
     this.publish({ type: "snapshot", state: this.snapshot() });
   }
   snapshot(): Snapshot {
@@ -296,6 +299,8 @@ export class App {
     }
     if (event.type === "availability") {
       this.available = event.available;
+      // The engine publishes availability together with a decided protection.
+      if (event.available) this.starting = false;
       this.exhausted = event.exhausted ?? false;
       this.resumed.clear();
       if (!event.available) {
