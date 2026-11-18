@@ -93,7 +93,7 @@ export function kitSkillsRoot(workspace: string): string {
  * Windows reports the same file with either separator and any case; the engine
  * has to compare what the app-server listed against the path Bitácora wrote.
  */
-function pathKey(path: string): string {
+export function skillPathKey(path: string): string {
   return resolve(path).replace(/\\/g, "/").replace(/\/{2,}/g, "/").toLowerCase();
 }
 
@@ -113,5 +113,5 @@ export function isAllowedSkill(
   if (!environment.allowedSkills.includes(skill.name)) return false;
   if (typeof skill.path !== "string" || !skill.path) return false;
   const expected = join(kitSkillsRoot(workspace), skill.name, "SKILL.md");
-  return pathKey(skill.path) === pathKey(expected);
+  return skillPathKey(skill.path) === skillPathKey(expected);
 }

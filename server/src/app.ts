@@ -102,7 +102,20 @@ export class App {
   async initialize() {
     await mkdir(this.data, { recursive: true });
     await this.workspace?.initialize();
-    if (this.workspace) await initializeKit(this.workspace.root, this.data, this.kitSource);
+    if (this.workspace) {
+      // The kit's skills are refreshed on every start. A read-only file, a
+      // junction or another process holding one of them cannot keep the app
+      // from opening: it is a notice, never a failed start (DEC-011).
+      try {
+        const kit = await initializeKit(this.workspace.root, this.data, this.kitSource);
+        if (kit.skillsError)
+          this.notice =
+            "No pude poner al día las guías de trabajo del kit. Podés seguir trabajando; si faltan, reiniciá Bitácora.";
+      } catch {
+        this.notice =
+          "No pude preparar los archivos del kit. Podés seguir trabajando; si faltan, reiniciá Bitácora.";
+      }
+    }
     try {
       const saved = JSON.parse(
         await readFile(join(this.data, "works.json"), "utf8"),

@@ -1,6 +1,6 @@
 ---
 name: entender-el-pedido
-description: Entrevista corta y conversada antes de arrancar un pedido ambiguo o grande, sobre todo una propuesta. Usala cuando el pedido se puede entender de más de una manera, cuando falta saber para quién es, el destino, las fechas, el presupuesto, qué material tiene o por dónde lo va a mandar, o cuando una cotización puntual no aclara la base.
+description: Entrevista corta y conversada antes de arrancar un pedido ambiguo o grande, sobre todo una propuesta. Usala cuando no podés arrancar sin adivinar algo que cambia el resultado: para quién es, el destino, las fechas, el presupuesto, qué material tiene, por dónde lo va a mandar o si es una cotización puntual.
 ---
 
 # Entender el pedido
@@ -32,6 +32,10 @@ archivo tocar, qué cambiar, sobre qué propuesta.
 - Si existe la herramienta `request_user_input`, usala para las preguntas con
   opciones: mostrá dos o tres alternativas concretas y dejá que elija. Si no
   está disponible, hacé la misma pregunta en texto, con las opciones escritas.
+- Las opciones son para decisiones cerradas, nunca para un dato de la oferta:
+  no propongas precios, presupuestos, fechas ni noches como opción. El
+  presupuesto y las fechas se preguntan en texto, porque la usuaria es la que
+  los sabe.
 - Ofrecé opciones cuando ayudan a decidir («¿es para una familia con chicos o
   para una pareja?»), y preguntá abierto cuando la respuesta puede ser cualquiera
   («¿qué fechas tenés en mente?»).
@@ -39,6 +43,8 @@ archivo tocar, qué cambiar, sobre qué propuesta.
   en la conversación anterior. Antes de preguntar, leé lo que ya tenés.
 - Si la respuesta no cambia el trabajo (por ejemplo un color que ya está en la
   marca), no la pidas: resolvelo con lo que hay.
+- Si `marca/voz.md` existe, seguilo para el trato: si la agencia habla de usted,
+  preguntá de usted. Si no hay marca, tratá de vos.
 
 ## Cuándo parar
 

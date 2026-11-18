@@ -11,7 +11,12 @@ import { createInterface } from "node:readline";
 import { mkdir } from "node:fs/promises";
 import { registerKit } from './kit';
 import { cleanTitle, TITLE_PROMPT } from "../titles";
-import { AGENCY_ENVIRONMENT, isAllowedSkill, type AgencyEnvironment } from "../agency-environment";
+import {
+  AGENCY_ENVIRONMENT,
+  isAllowedSkill,
+  skillPathKey,
+  type AgencyEnvironment,
+} from "../agency-environment";
 import { codexEnvironmentArgs } from "./environment";
 import type { Engine, EngineEvent, Account, ExecutionSafety, Question } from "../engine";
 import { EngineFailure } from "../engine";
@@ -1352,15 +1357,20 @@ export class CodexEngine implements Engine {
     // One at a time lets the loop stop and say so when the time runs out. The
     // app-server serializes these writes itself, so the order is not about
     // avoiding a race on `config.toml`.
+    //
+    // Every target and every comparison uses the normalized path: Windows
+    // reports the same file with another separator or case, and that is not a
+    // different skill.
     const disable = new Map<string, { path: string; failure?: string }>();
     const enable = new Map<string, { path: string; failure?: string }>();
     for (const entry of entries)
       for (const skill of entry.skills) {
         if (!skill?.path) continue;
+        const key = skillPathKey(skill.path);
         if (this.allowsSkill(skill)) {
-          if (!skill.enabled) enable.set(skill.path, { path: skill.path });
+          if (!skill.enabled) enable.set(key, { path: skill.path });
         } else if (skill.enabled) {
-          disable.set(skill.path, { path: skill.path });
+          disable.set(key, { path: skill.path });
         }
       }
     // Nothing to change is the only pass that proves the state without writing.
@@ -1380,9 +1390,8 @@ export class CodexEngine implements Engine {
     }
     // Ask again: an accepted write is not a skill that is off (or on). When this
     // list fails, runs out of time or comes back incomplete, nothing proves the
-    // batch worked, so the app says it could not check and names every skill it
-    // tried to switch.
-    const written = [...disable.keys(), ...enable.keys()];
+    // batch worked, so the app says it could not check.
+    const written = [...disable.values(), ...enable.values()].map((target) => target.path);
     let after: SkillsListResponse | undefined;
     try {
       after = await this.rpc(
@@ -1394,57 +1403,88 @@ export class CodexEngine implements Engine {
       after = undefined;
     }
     if (this.child !== child || this.stopping) return result;
-    const verified =
-      Array.isArray(after?.data) &&
-      after.data.every((entry) => Array.isArray(entry?.skills));
-    if (!verified) {
+    const complete =
+      Array.isArray(after?.data) && after.data.every((entry) => Array.isArray(entry?.skills));
+    if (!complete) {
       stopForTime();
       this.reportSkillError(
         "verify",
-        `No pude comprobar si quedaron desactivados los complementos: ${written.join(", ")}.`,
+        `No pude comprobar si los complementos quedaron como tienen que estar: ${written.join(", ")}.`,
         conversationId,
       );
       return result;
     }
-    this.reportedSkillErrors.delete("verify");
-    result.verified = true;
-    const stillOn = new Set<string>();
-    const stillOff = new Set<string>();
-    for (const entry of after?.data ?? [])
-      for (const skill of entry?.skills ?? []) {
+    const afterSkills = new Map<
+      string,
+      { path: string; enabled: boolean; allowed: boolean }
+    >();
+    for (const entry of after!.data)
+      for (const skill of entry.skills ?? []) {
         if (!skill?.path) continue;
-        if (this.allowsSkill(skill)) {
-          if (!skill.enabled) stillOff.add(skill.path);
-        } else if (skill.enabled) {
-          stillOn.add(skill.path);
-        }
+        afterSkills.set(skillPathKey(skill.path), {
+          path: skill.path,
+          enabled: skill.enabled,
+          allowed: this.allowsSkill(skill),
+        });
       }
-    for (const target of disable.values()) {
-      const key = `skill:${target.path}`;
-      if (!stillOn.has(target.path)) {
-        this.reportedSkillErrors.delete(key);
+    // A complete list that shows every foreign skill off and every kit skill
+    // that is listed on is the only thing that counts as verified. A foreign
+    // skill that appeared after the first list (it is on and was not a target)
+    // stays named even though nothing tried to turn it off.
+    const stillOn = [...afterSkills.entries()].filter(([, skill]) => skill.enabled && !skill.allowed);
+    const stillOff = [...afterSkills.entries()].filter(([, skill]) => !skill.enabled && skill.allowed);
+    const unknownOn = stillOn.filter(([key]) => !disable.has(key));
+    const verified = !stillOn.length && !stillOff.length;
+    if (verified) this.reportedSkillErrors.delete("verify");
+    else
+      this.reportSkillError(
+        "verify",
+        `No pude comprobar si los complementos quedaron como tienen que estar: ${[...stillOn, ...stillOff].map(([, skill]) => skill.path).join(", ")}.`,
+        conversationId,
+      );
+    for (const [key, target] of disable) {
+      const reportKey = `skill:${key}`;
+      if (!afterSkills.get(key)?.enabled) {
+        this.reportedSkillErrors.delete(reportKey);
         continue;
       }
       const detail = target.failure ? ` ${target.failure}` : "";
       this.reportSkillError(
-        key,
+        reportKey,
         `No pude desactivar un complemento que no es del kit: ${target.path}.${detail}`,
         conversationId,
       );
     }
-    for (const target of enable.values()) {
-      const key = `skill:${target.path}`;
-      if (!stillOff.has(target.path)) {
-        this.reportedSkillErrors.delete(key);
+    for (const [key, target] of enable) {
+      const reportKey = `skill:${key}`;
+      const current = afterSkills.get(key);
+      if (!current || current.enabled) {
+        this.reportedSkillErrors.delete(reportKey);
         continue;
       }
       const detail = target.failure ? ` ${target.failure}` : "";
       this.reportSkillError(
-        key,
+        reportKey,
         `No pude activar un complemento del kit: ${target.path}.${detail}`,
         conversationId,
       );
     }
+    for (const [key, skill] of unknownOn) {
+      this.reportSkillError(
+        `skill:${key}`,
+        `No pude desactivar un complemento que no es del kit: ${skill.path}.`,
+        conversationId,
+      );
+    }
+    for (const [key, skill] of stillOff) {
+      if (enable.has(key)) continue;
+      this.reportSkillError(
+        `skill:${key}`,
+        `No pude activar un complemento del kit: ${skill.path}.`,
+        conversationId,
+      );
+    }
+    result.verified = verified;
     return result;
   }
   /** Whether the kit provides this exact skill, at the path Bitácora copied it to. */
@@ -1478,6 +1518,10 @@ export class CodexEngine implements Engine {
    * the app keeps working and the failure is reported as a work detail. The
    * whole cycle shares one deadline, so a request waits at most `timeoutMs` no
    * matter how many changes arrive while it runs.
+   *
+   * A turn the engine starts on its own (a goal, once goals are back on) never
+   * passes through here: that is why the skill catalogue stays off for the
+   * whole process (DEC-011) instead of relying on this check before each turn.
    */
   private syncSkills(
     conversationId?: string,
@@ -1486,22 +1530,22 @@ export class CodexEngine implements Engine {
     const child = this.child;
     if (!child || this.stopping) return Promise.resolve();
     const running = this.skillsSync;
-    // A request that arrives while a cycle runs waits for that cycle instead of
-    // asking for another pass: only a change from the engine adds a pass.
-    if (running) return running.promise;
+    // A request that arrives while a cycle runs asks for one more pass, so the
+    // list it gets is taken after its request. The cycle shares a single
+    // deadline, so that extra pass can never keep anyone waiting past it.
+    if (running) {
+      this.skillsDirty = true;
+      return running.promise;
+    }
     const deadline = Date.now() + timeoutMs;
     const slot: { promise: Promise<void> } = { promise: Promise.resolve() };
     slot.promise = (async () => {
+      let clean = false;
       try {
         do {
           this.skillsDirty = false;
           const pass = await this.runSkillSync(child, conversationId, deadline);
-          // A check that ended in time is the only one that proves the next
-          // failure is new, so the notices it would repeat are allowed again.
-          if (!pass.timedOut) {
-            this.reportedSkillErrors.delete("timeout");
-            this.reportedSkillErrors.delete("sync");
-          }
+          clean = !pass.timedOut;
           if (pass.verified) this.reportedSkillErrors.delete("verify");
         } while (
           this.skillsDirty &&
@@ -1509,6 +1553,14 @@ export class CodexEngine implements Engine {
           !this.stopping &&
           Date.now() < deadline
         );
+        // A check that ended in time and left nothing pending is the only one
+        // that proves the next failure is new, so the notices it would repeat
+        // are allowed again. A cycle cut with a change pending keeps the cap
+        // notice: that pass never ran.
+        if (clean && !this.skillsDirty && this.child === child && !this.stopping) {
+          this.reportedSkillErrors.delete("timeout");
+          this.reportedSkillErrors.delete("sync");
+        }
       } catch (error) {
         if (this.child !== child || this.stopping) return;
         this.reportSkillError(

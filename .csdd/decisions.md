@@ -330,6 +330,65 @@ accepted direction from implementation alone.
   - **Avisos que salen de la cola:** si el tope de 50 avisos sin trabajo saca
     uno, la app llama a `forgetDetails`, así el motor lo vuelve a decir en el
     próximo trabajo en vez de darlo por dicho.
+- Update (2026-11-18, issue #50): el kit estrena skills propias y la regla
+  anterior («hoy ninguna») queda reemplazada.
+  - **Dónde viven:** `kit/turismo/.agents/skills/<nombre>/SKILL.md`. Verificado
+    con el binario real de Codex `0.168.0`: un archivo en
+    `<agencia>/.agents/skills/<nombre>/SKILL.md` aparece en `skills/list` con
+    alcance `repo`; una carpeta `.agents/skills` de una carpeta de arriba no se
+    descubre, así que las skills del kit se copian a la raíz de la agencia,
+    que es la carpeta de trabajo del motor.
+  - **Cómo llegan:** `initializeKit` refresca solo `<agencia>/.agents/skills`
+    en cada arranque, además de la copia única que marca el inicializador. Una
+    agencia inicializada antes de que el kit tuviera skills las recibe igual, y
+    lo que la agencia editó fuera de esa carpeta no se toca. Solo escribe si
+    los bytes cambiaron, así un arranque normal no escribe nada; un archivo de
+    solo lectura con el texto del kit no puede fallar. Si el refresco falla (un
+    enlace en `.agents`, un archivo abierto por otro proceso), la app abre
+    igual y lo dice como aviso. Si el kit no trae su carpeta de skills, el
+    refresco lo informa en vez de arrancar sin ellas.
+  - **Qué queda permitido:** la lista se compara por ruta, no por nombre.
+    `KIT_SKILLS` nombra las skills del kit y `isAllowedSkill` exige alcance
+    `repo`, ese nombre y exactamente
+    `<agencia>/.agents/skills/<nombre>/SKILL.md`. Una skill con el mismo nombre
+    en la carpeta de usuario, o una que el agente escriba a mano dentro de
+    `.agents/skills`, queda apagada porque su ruta no es la que copió el kit.
+  - **Qué se prende:** una skill permitida que figure apagada se vuelve a
+    prender (`enabled: true`); las demás se siguen apagando una por una. La
+    confirmación pide `skills/list` otra vez y comprueba las dos cosas.
+  - **El catálogo de Codex queda apagado para todo el proceso:**
+    `skills.include_instructions=false`. Se probó con el binario real y un
+    servidor local que imita al modelo (verificado que el pedido al modelo
+    lleva o no el catálogo): `thread/start` acepta
+    `config: {"skills.include_instructions": false}` y lo respeta, pero el
+    catálogo solo se elige al crear el hilo. Ni `thread/resume` ni
+    `turn/start` con la misma configuración lo cambian en un hilo existente,
+    así que no se puede retirar para un turno si la última pasada no quedó
+    verificada. Por eso la barrera es el `AGENTS.md` del kit, que nombra cada
+    skill por su archivo (`.agents/skills/entrevista/SKILL.md` y
+    `.agents/skills/entender-el-pedido/SKILL.md`); el apagado uno por uno
+    sigue, pero ya no es la única barrera. Vale también para los turnos que
+    arranca el motor solo (metas): no pasan por `send` y aun así no reciben
+    catálogo porque el interruptor es del proceso.
+  - **Peor caso de espera:** todo el ciclo comparte un solo tope de 20 s, con
+    las pasadas incluidas. Un pedido que llega mientras el ciclo corre pide una
+    pasada más (para que su lista se tome después de su pedido) dentro de ese
+    mismo tope. Así un pedido nunca espera varias pasadas de 20 s.
+  - **Confirmación honesta:** una pasada solo da la revisión por hecha cuando
+    la segunda lista vino completa y muestra apagada cada skill ajena y
+    prendida cada skill del kit que figura en la lista; las rutas se comparan
+    normalizadas, como las escribe Windows. Una skill ajena que aparece
+    prendida recién en esa segunda lista se nombra y no cuenta como
+    verificada. Una pasada que se queda sin tiempo antes de confirmar no da el
+    aviso por resuelto, y un ciclo cortado con un cambio pendiente no borra el
+    aviso del tope.
+  - **Un fallo pasajero no se muestra:** `skills/config/write` se reintenta una
+    vez (en un pedido real falló una de 167 con `failed to persist config`, con
+    `config.toml` ocupado). Un fallo que sobrevive al reintento queda como
+    detalle del trabajo, nunca como problema de la app.
+  - **Avisos que salen de la cola:** si el tope de 50 avisos sin trabajo saca
+    uno, la app llama a `forgetDetails`, así el motor lo vuelve a decir en el
+    próximo trabajo en vez de darlo por dicho.
 - Rationale: el objetivo no es cortarle las patas a Codex sino darle a la
   agencia un entorno limpio, sin descargas de catálogos ni herramientas de
   programación o conectores sorpresa, dejando una estructura lista para que

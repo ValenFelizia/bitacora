@@ -1,9 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readdir, readFile, rm, symlink } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { KIT_SKILLS } from '../src/agency-environment';
+import { App } from '../src/app';
+import { WorkspaceFiles } from '../src/workspace-files';
+import { FakeEngine } from './fake-engine';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { callKitTool, connectKitClient, listKitTools } from './mcp-client';
@@ -58,6 +61,55 @@ test('kit skills arrive in an agency initialized before the kit shipped them', a
       .sort();
     assert.deepEqual(folders, [...KIT_SKILLS].sort());
   } finally { await f.close(); }
+});
+test('a read-only or edited skill never keeps the app from opening, and the kit text comes back', async () => {
+  await mkdir(base, { recursive: true });
+  const dir = await mkdtemp(join(base, 'skills '));
+  const root = join(dir, 'agencia'), data = join(dir, 'datos'), kit = join(dir, 'kit');
+  await mkdir(root); await mkdir(data);
+  const skill = join(kit, '.agents', 'skills', 'entrevista');
+  await mkdir(skill, { recursive: true });
+  const text = '---\nname: entrevista\ndescription: Del kit.\n---\nContenido del kit.\n';
+  await writeFile(join(skill, 'SKILL.md'), text);
+  await writeFile(join(kit, 'AGENTS.md'), 'Instrucciones del kit\n');
+  const target = join(root, '.agents', 'skills', 'entrevista', 'SKILL.md');
+  const files = new WorkspaceFiles(root);
+  const start = async () => {
+    const app = new App(new FakeEngine(), data, () => {}, undefined, files, kit);
+    await app.start();
+    return app;
+  };
+  try {
+    let app = await start();
+    assert.equal(await readFile(target, 'utf8'), text);
+    await app.close();
+
+    // Read-only with the kit's bytes: nothing is written, so the start is clean.
+    await chmod(target, 0o444);
+    app = await start();
+    assert.equal(app.snapshot().engine.available, true);
+    assert.equal(app.snapshot().notice, undefined);
+    await app.close();
+
+    // Edited and read-only: the refresh cannot write it, and that is a notice,
+    // never a failed start.
+    await chmod(target, 0o666);
+    await writeFile(target, 'editado por la agencia', 'utf8');
+    await chmod(target, 0o444);
+    app = await start();
+    assert.equal(app.snapshot().engine.available, true);
+    assert.match(app.snapshot().notice ?? '', /No pude poner al día las guías/);
+    await app.close();
+
+    // Writable again: the kit's own text comes back.
+    await chmod(target, 0o666);
+    app = await start();
+    assert.equal(await readFile(target, 'utf8'), text);
+    await app.close();
+  } finally {
+    await chmod(target, 0o666).catch(() => {});
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 test('fetch with explicit test-only local grant, photos, append, SSRF and redirect rejection', async () => {
   const f = await fixture();

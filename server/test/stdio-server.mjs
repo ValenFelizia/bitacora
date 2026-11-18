@@ -271,6 +271,24 @@ async function handle(line) {
           send({ id: m.id, error: { code: -32603, message: String(error) } });
           break;
         }
+        // The same file, spelled with forward slashes: Windows reports it
+        // either way, so the engine has to compare normalized paths.
+        if (process.env.BITACORA_FAKE_SKILLS_RESPell && listNumber >= 2)
+          skills = skills.map((skill) => ({ ...skill, path: skill.path.replace(/\\/g, "/") }));
+        // A skill that is only in the verification list: it was never a target,
+        // and it must still be named instead of counting as verified.
+        const appeared = process.env.BITACORA_FAKE_SKILLS_ADD_ON_VERIFY;
+        if (appeared && listNumber >= 2 && !skills.some((skill) => skill.name === appeared))
+          skills = [
+            ...skills,
+            {
+              name: appeared,
+              description: "Apareció al verificar",
+              path: `${process.env.CODEX_HOME}/skills/${appeared}/SKILL.md`.replaceAll("\\", "/"),
+              scope: "user",
+              enabled: true,
+            },
+          ];
         const answer = () =>
           reply({ data: [{ cwd: m.params?.cwds?.[0] || "", skills, errors }] });
         const delayMs = Number(process.env.BITACORA_FAKE_SKILLS_DELAY || 0);
