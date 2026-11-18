@@ -51,6 +51,8 @@ if (installed) {
     console.log(`BITACORA_READY ${server.port}`);
     try {
       await server.app.startEngine();
+      // The shell tells a first-start failure from a lost connection by this line.
+      if (!closing) console.log("BITACORA_STARTED");
     } catch (error) {
       if (!closing) {
         console.error(error);

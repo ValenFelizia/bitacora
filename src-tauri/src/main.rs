@@ -116,7 +116,6 @@ fn supervise(
                 return;
             }
             let retry = if let Ok(port) = result {
-                has_connected = true;
                 let url = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
                 *endpoint.lock().unwrap() = Some(url.clone());
                 let _ = window.navigate(url);
@@ -130,6 +129,9 @@ fn supervise(
                         Err(mpsc::RecvTimeoutError::Disconnected) => return,
                     }
                 }
+                // Only a server that got Codex running counts as a connection to
+                // lose; before that, a failure is a failed start.
+                has_connected |= server.started();
                 if !server.exiting() {
                     server.log("El servidor se cerró.");
                 }

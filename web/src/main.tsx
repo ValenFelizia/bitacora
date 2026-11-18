@@ -833,7 +833,7 @@ function App() {
                   </button>
                 ) : !state.engine.available && gallery ? (
                   <span
-                    className="w-[36px] h-[36px] max-[959px]:w-[40px] max-[959px]:h-[40px] inline-grid place-items-center text-danger"
+                    className={`w-[36px] h-[36px] max-[959px]:w-[40px] max-[959px]:h-[40px] inline-grid place-items-center ${state.engine.starting ? "text-muted" : "text-danger"}`}
                     role="img"
                     title={engineStatusText}
                     aria-label={engineStatusText}
@@ -1319,15 +1319,15 @@ function App() {
 
                 {/* Engine stopped / error state */}
                 {showEngineStoppedBanner && (
-                  <section className="rounded-[6px] border border-danger bg-surface px-4 py-3">
+                  <section className={`rounded-[6px] border ${state.engine.starting ? "border-line" : "border-danger"} bg-surface px-4 py-3`}>
                     <DetailsToggle
-                      text={state.engine.safety.detail}
+                      text={state.engine.starting ? undefined : state.engine.safety.detail}
                       prefix={
                         <>
                           <AlertCircle
                             size={18}
                             strokeWidth={1.75}
-                            className="text-danger shrink-0"
+                            className={`${state.engine.starting ? "text-muted" : "text-danger"} shrink-0`}
                             aria-hidden="true"
                           />
                           <div role="status" className="text-[14px] text-ink">

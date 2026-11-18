@@ -30,6 +30,7 @@ const LOG_LIMIT: u64 = 1024 * 1024;
 pub struct Server {
     process: Mutex<Option<Process>>,
     exiting: AtomicBool,
+    started: Arc<AtomicBool>,
     log: Arc<Mutex<PathBuf>>,
 }
 
@@ -45,6 +46,7 @@ impl Server {
         Self {
             process: Mutex::new(None),
             exiting: AtomicBool::new(false),
+            started: Arc::new(AtomicBool::new(false)),
             log: Arc::new(Mutex::new(log_dir)),
         }
     }
@@ -78,11 +80,20 @@ impl Server {
         let stdout = child.stdout.take().unwrap();
         let mut stderr = child.stderr.take().unwrap();
         let (notify, ready) = mpsc::channel();
+        self.started.store(false, Ordering::Release);
+        let started = Arc::clone(&self.started);
         thread::spawn(move || {
             let mut output = BufReader::new(stdout);
             let _ = notify.send(parse_ready(&mut output));
-            // Keep consuming stdout after readiness.
-            let _ = io::copy(&mut output, &mut io::sink());
+            // Keep consuming stdout after readiness, watching for the line that
+            // says Codex started too.
+            let mut line = Vec::new();
+            while matches!(output.read_until(b'\n', &mut line), Ok(1..)) {
+                if is_started(&line) {
+                    started.store(true, Ordering::Release);
+                }
+                line.clear();
+            }
         });
         let log = Arc::clone(&self.log);
         thread::spawn(move || {
@@ -95,6 +106,11 @@ impl Server {
         stdin.write_all(b"\n")?;
         *active = Some(Process { child, stdin, job });
         Ok(ready)
+    }
+
+    /// Whether this server process also got Codex running.
+    pub fn started(&self) -> bool {
+        self.started.load(Ordering::Acquire)
     }
 
     pub fn exiting(&self) -> bool {
@@ -195,6 +211,11 @@ pub fn ready_port(ready: mpsc::Receiver<io::Result<u16>>) -> io::Result<u16> {
         })?
 }
 
+fn is_started(line: &[u8]) -> bool {
+    let line = line.strip_suffix(b"\n").unwrap_or(line);
+    line.strip_suffix(b"\r").unwrap_or(line) == b"BITACORA_STARTED"
+}
+
 fn parse_ready(mut output: impl BufRead) -> io::Result<u16> {
     let mut line = Vec::new();
     while output.read_until(b'\n', &mut line)? != 0 {
@@ -226,6 +247,14 @@ mod tests {
             &b"\xff\nBITACORA_READY 0\nBITACORA_READY 65536\r\nBITACORA_READY 43179\r\nmore\n"[..];
         assert_eq!(parse_ready(&mut output).unwrap(), 43179);
         assert_eq!(output, b"more\n");
+    }
+
+    #[test]
+    fn recognizes_the_started_line() {
+        assert!(is_started(b"BITACORA_STARTED\r\n"));
+        assert!(is_started(b"BITACORA_STARTED\n"));
+        assert!(!is_started(b"BITACORA_STARTED later\n"));
+        assert!(!is_started(b"BITACORA_READY 43179\n"));
     }
 
     #[test]

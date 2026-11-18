@@ -14,7 +14,7 @@ import type { FileRef, Message, Work, Snapshot, ClientCommand, ServerMessage } f
 type SavedWork = Work & { conversationId: string; titlePending?: boolean; renamedByUser?: boolean; pendingFiles?: { messageId: string; before?: Record<string, string> } };
 const isText = (value: unknown) => typeof value === "string";
 /** How long close() lets a title request already in flight finish before stopping the engine. */
-const TITLE_CLOSE_WAIT_MS = 2000;
+const TITLE_CLOSE_WAIT_MS = 400;
 const isFileRef = (value: unknown) => {
   const file = value as Partial<FileRef> | null;
   return !!file && isText(file.id) && isText(file.path) && isText(file.name) && isText(file.mime) && isText(file.createdAt);
