@@ -27,7 +27,7 @@ test("desktop serves only bundled assets and accepts the window's assigned origi
     assert.equal(page.status, 200);
     assert.match(page.headers.get("content-type") || "", /^text\/html/);
     assert.equal(await page.text(), "<title>Bitácora</title>");
-    assert.equal((await fetch(origin + "/private.html")).status, 403);
+    assert.equal((await fetch(origin + "/private.html")).status, 404);
     assert.equal((await fetch(origin + "/files")).status, 403);
     assert.equal((await fetch(origin, { headers: { Origin: "http://127.0.0.1:5173" } })).status, 403);
     const aliasStatus = await new Promise<number | undefined>((resolve, reject) => {

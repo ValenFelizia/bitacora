@@ -114,7 +114,7 @@ export function FileCard({
   token?: string;
   result?: boolean;
   fileRevision?: number;
-  onPreview?: (file: FileRef) => void;
+  onPreview: (file: FileRef) => void;
 }) {
   const fetched = useFetchedFile(file, token, fileRevision);
   const [notice, setNotice] = useState("");
@@ -151,16 +151,15 @@ export function FileCard({
         {!fetched.missing && fetched.url && (
           <div className="flex items-center gap-0.5 shrink-0">
             {!image && (
-              <a
+              <button
                 className={iconBtn}
-                href={fetched.url}
-                target="_blank"
-                rel="noreferrer"
+                type="button"
+                onClick={() => onPreview(file)}
                 title={`Abrir ${file.name}`}
                 aria-label={`Abrir ${file.name}`}
               >
                 <Eye size={18} strokeWidth={1.75} aria-hidden="true" />
-              </a>
+              </button>
             )}
             <button
               type="button"
@@ -187,7 +186,7 @@ export function FileCard({
         <button
           type="button"
           className="block w-full rounded-[3px] overflow-hidden border border-line bg-paper cursor-pointer focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
-          onClick={() => onPreview?.(file)}
+          onClick={() => onPreview(file)}
           title={`Ver ${file.name}`}
           aria-label={`Ver ${file.name}`}
         >
@@ -199,15 +198,14 @@ export function FileCard({
         </button>
       )}
       {!image && !fetched.missing && fetched.url && (
-        <a
-          href={fetched.url}
-          target="_blank"
-          rel="noreferrer"
+        <button
+          type="button"
+          onClick={() => onPreview(file)}
           className="flex items-center justify-center gap-2 py-8 rounded-[3px] border border-line bg-paper text-muted hover:text-ink transition-colors duration-150"
         >
           <FileText size={18} strokeWidth={1.75} aria-hidden="true" />
           <span className="text-[13px] font-bold">PDF</span>
-        </a>
+        </button>
       )}
       <div>
         <figcaption className="font-display text-[17px] leading-snug text-ink break-words">
@@ -246,7 +244,7 @@ export function FileCard({
                   className={iconBtn}
                   title="Ver"
                   aria-label={`Ver ${file.name}`}
-                  onClick={() => onPreview?.(file)}
+                  onClick={() => onPreview(file)}
                 >
                   <Eye size={18} strokeWidth={1.75} aria-hidden="true" />
                 </button>
@@ -263,16 +261,15 @@ export function FileCard({
               </>
             )}
             {!image && fetched.url && (
-              <a
+              <button
                 className={iconBtn}
-                href={fetched.url}
-                target="_blank"
-                rel="noreferrer"
+                type="button"
+                onClick={() => onPreview(file)}
                 title="Abrir"
                 aria-label={`Abrir ${file.name}`}
               >
                 <Eye size={18} strokeWidth={1.75} aria-hidden="true" />
-              </a>
+              </button>
             )}
           </div>
         </div>
@@ -369,25 +366,16 @@ function OlderDeliverableRow({
         <span className="truncate text-muted" title="Este archivo ya no está disponible.">
           {file.name}
         </span>
-      ) : isImage ? (
+      ) : (
         <button
           type="button"
+          disabled={!fetched.url}
           onClick={() => onPreview(file)}
           className="truncate text-left text-ink hover:underline cursor-pointer focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
           title={file.name}
         >
           {file.name}
         </button>
-      ) : (
-        <a
-          href={fetched.url}
-          target="_blank"
-          rel="noreferrer"
-          className="truncate text-ink hover:underline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
-          title={file.name}
-        >
-          {file.name}
-        </a>
       )}
       <button
         type="button"
@@ -409,10 +397,12 @@ function BatchPdfRow({
   file,
   token,
   fileRevision,
+  onPreview,
 }: {
   file: FileRef;
   token?: string;
   fileRevision?: number;
+  onPreview: (file: FileRef) => void;
 }) {
   const fetched = useFetchedFile(file, token, fileRevision);
 
@@ -430,15 +420,15 @@ function BatchPdfRow({
           {file.name}
         </span>
       ) : (
-        <a
-          href={fetched.url}
-          target="_blank"
-          rel="noreferrer"
-          className="truncate text-ink hover:underline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+        <button
+          type="button"
+          disabled={!fetched.url}
+          onClick={() => onPreview(file)}
+          className="truncate text-left text-ink hover:underline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
           title={file.name}
         >
           {file.name}
-        </a>
+        </button>
       )}
       <button
         type="button"
@@ -560,15 +550,15 @@ function FeaturedDeliverable({
           })}
         </div>
       ) : (
-        <a
-          href={primaryFetched.url}
-          target="_blank"
-          rel="noreferrer"
+        <button
+          type="button"
+          disabled={!primaryFetched.url}
+          onClick={() => onPreview(group.primary, [group.primary])}
           className="flex flex-col items-center justify-center gap-2 py-8 rounded-[3px] border border-line bg-paper text-muted hover:text-ink transition-colors duration-150"
         >
           <FileText size={18} strokeWidth={1.75} aria-hidden="true" />
           <span className="text-[13px] font-bold">PDF</span>
-        </a>
+        </button>
       )}
 
       {(showTitle || group.meta) && (
@@ -617,16 +607,15 @@ function FeaturedDeliverable({
                 </button>
               ) : (
                 primaryFetched.url && (
-                  <a
+                  <button
                     className={iconBtn}
-                    href={primaryFetched.url}
-                    target="_blank"
-                    rel="noreferrer"
+                    type="button"
+                    onClick={() => onPreview(group.primary, [group.primary])}
                     title="Abrir"
                     aria-label="Abrir PDF"
                   >
                     <Eye size={18} strokeWidth={1.75} aria-hidden="true" />
-                  </a>
+                  </button>
                 )
               )
             )}
@@ -662,6 +651,7 @@ function FeaturedDeliverable({
         <BatchPdfRow
           key={`${pdf.id}-${fileRevision ?? 0}`}
           file={pdf}
+          onPreview={(file) => onPreview(file, [file])}
           token={token}
           fileRevision={fileRevision}
         />
@@ -784,7 +774,7 @@ export function DeliverablesPanel({
   );
 }
 
-export function ImagePreviewModal({
+export function FilePreviewModal({
   file,
   list,
   token,
@@ -801,6 +791,9 @@ export function ImagePreviewModal({
 }) {
   const fetched = useFetchedFile(file, token, fileRevision);
   const [notice, setNotice] = useState("");
+  const image = file.mime.startsWith("image/");
+  const pdf = fetched.blob?.type === "application/pdf";
+  const plainText = fetched.blob?.type === "text/plain";
   const index = list.findIndex((f) => f.id === file.id);
 
   useEffect(() => {
@@ -878,7 +871,14 @@ export function ImagePreviewModal({
           </div>
         </header>
         <div className="flex-1 min-h-0 overflow-auto p-5 bg-paper flex items-center justify-center">
-          {fetched.url && !fetched.missing ? (
+          {fetched.url && (pdf || plainText) ? (
+            <iframe
+              src={fetched.url}
+              title={file.name}
+              sandbox={plainText ? "" : undefined}
+              className="h-[68dvh] w-full border-0"
+            />
+          ) : fetched.url && image ? (
             <img
               src={fetched.url}
               alt={file.name}
@@ -886,7 +886,9 @@ export function ImagePreviewModal({
             />
           ) : (
             <p className="text-[14px] text-muted">
-              {fetched.missing ? "Este archivo ya no está disponible." : "Cargando archivo…"}
+              {fetched.missing ? "Este archivo ya no está disponible."
+                : fetched.loading ? "Cargando archivo…"
+                : "Podés descargar el archivo para verlo."}
             </p>
           )}
         </div>
@@ -906,19 +908,21 @@ export function ImagePreviewModal({
               <ArrowDownToLine size={18} strokeWidth={1.75} className="text-accent" aria-hidden="true" />
               Descargar
             </button>
-            <button
-              type="button"
-              disabled={!fetched.blob || fetched.missing}
-              className="inline-flex items-center gap-1.5 text-[14px] text-ink hover:underline cursor-pointer disabled:opacity-40"
-              onClick={async () => {
-                if (!fetched.blob) return;
-                const ok = await copyImageBlob(fetched.blob);
-                setNotice(ok ? "Imagen copiada." : "No pude copiar.");
-              }}
-            >
-              <Copy size={18} strokeWidth={1.75} className="text-muted" aria-hidden="true" />
-              Copiar
-            </button>
+            {image && (
+              <button
+                type="button"
+                disabled={!fetched.blob || fetched.missing}
+                className="inline-flex items-center gap-1.5 text-[14px] text-ink hover:underline cursor-pointer disabled:opacity-40"
+                onClick={async () => {
+                  if (!fetched.blob) return;
+                  const ok = await copyImageBlob(fetched.blob);
+                  setNotice(ok ? "Imagen copiada." : "No pude copiar.");
+                }}
+              >
+                <Copy size={18} strokeWidth={1.75} className="text-muted" aria-hidden="true" />
+                Copiar
+              </button>
+            )}
           </div>
           {notice && <span role="status" className="text-[13px] text-muted">{notice}</span>}
         </footer>

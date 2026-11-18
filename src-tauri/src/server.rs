@@ -1,12 +1,16 @@
 use std::{
-    io::{self, BufRead, BufReader, Write},
+    fs::{self, OpenOptions},
+    io::{self, BufRead, BufReader, Read, Write},
     os::windows::{
         io::{AsRawHandle, FromRawHandle, OwnedHandle},
         process::CommandExt,
     },
-    path::Path,
-    process::{Child, ChildStdin, ChildStdout, Command, Stdio},
-    sync::Mutex,
+    path::{Path, PathBuf},
+    process::{Child, ChildStdin, Command, Stdio},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc, Arc, Mutex,
+    },
     thread,
     time::{Duration, Instant},
 };
@@ -19,7 +23,15 @@ use windows_sys::Win32::System::{
     Threading::CREATE_NO_WINDOW,
 };
 
-pub struct Server(Mutex<Option<Process>>);
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(90);
+const SAVE_GRACE: Duration = Duration::from_millis(500);
+const LOG_LIMIT: u64 = 1024 * 1024;
+
+pub struct Server {
+    process: Mutex<Option<Process>>,
+    exiting: AtomicBool,
+    log: Arc<Mutex<PathBuf>>,
+}
 
 struct Process {
     child: Child,
@@ -29,7 +41,19 @@ struct Process {
 }
 
 impl Server {
-    pub fn start(runtime: &Path) -> io::Result<(Self, ChildStdout)> {
+    pub fn new(log_dir: PathBuf) -> Self {
+        Self {
+            process: Mutex::new(None),
+            exiting: AtomicBool::new(false),
+            log: Arc::new(Mutex::new(log_dir)),
+        }
+    }
+
+    pub fn start(&self, runtime: &Path) -> io::Result<mpsc::Receiver<io::Result<u16>>> {
+        let mut active = self.process.lock().unwrap();
+        if self.exiting() {
+            return Err(io::ErrorKind::Interrupted.into());
+        }
         let job = create_job()?;
         let mut child = Command::new(runtime.join("node.exe"))
             // Windows may return the resource directory in verbatim form.
@@ -42,40 +66,101 @@ impl Server {
             .creation_flags(CREATE_NO_WINDOW)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
             .spawn()?;
 
         if unsafe { AssignProcessToJobObject(job.as_raw_handle(), child.as_raw_handle()) } == 0 {
             let error = io::Error::last_os_error();
             let _ = child.kill();
-            let _ = child.wait();
             return Err(error);
         }
         let mut stdin = child.stdin.take().unwrap();
         let stdout = child.stdout.take().unwrap();
+        let mut stderr = child.stderr.take().unwrap();
+        let (notify, ready) = mpsc::channel();
+        thread::spawn(move || {
+            let mut output = BufReader::new(stdout);
+            let _ = notify.send(parse_ready(&mut output));
+            // Keep consuming stdout after readiness.
+            let _ = io::copy(&mut output, &mut io::sink());
+        });
+        let log = Arc::clone(&self.log);
+        thread::spawn(move || {
+            let mut bytes = [0; 8192];
+            while let Ok(size @ 1..) = stderr.read(&mut bytes) {
+                append_log(&log, &bytes[..size]);
+            }
+        });
         // Only now can Node start Codex and let it spawn its helpers.
         stdin.write_all(b"\n")?;
-        Ok((
-            Self(Mutex::new(Some(Process { child, stdin, job }))),
-            stdout,
-        ))
+        *active = Some(Process { child, stdin, job });
+        Ok(ready)
+    }
+
+    pub fn exiting(&self) -> bool {
+        self.exiting.load(Ordering::Acquire)
+    }
+
+    pub fn running(&self) -> bool {
+        let mut active = self.process.lock().unwrap();
+        !self.exiting()
+            && active
+                .as_mut()
+                .is_some_and(|process| matches!(process.child.try_wait(), Ok(None)))
     }
 
     pub fn stop(&self) {
-        let Some(Process {
+        // RunEvent::Exit owns the final shutdown, including the flush window.
+        let mut active = self.process.lock().unwrap();
+        if !self.exiting() {
+            active.take();
+        }
+    }
+
+    pub fn shutdown(&self) {
+        self.exiting.store(true, Ordering::Release);
+        if let Some(Process {
             mut child,
             stdin,
             job,
-        }) = self.0.lock().unwrap().take()
-        else {
-            return;
-        };
-        drop(stdin);
-        let deadline = Instant::now() + Duration::from_secs(12);
-        while Instant::now() < deadline && matches!(child.try_wait(), Ok(None)) {
-            thread::sleep(Duration::from_millis(50));
+        }) = self.process.lock().unwrap().take()
+        {
+            drop(stdin);
+            let deadline = Instant::now() + SAVE_GRACE;
+            while Instant::now() < deadline && matches!(child.try_wait(), Ok(None)) {
+                thread::sleep(Duration::from_millis(20));
+            }
+            // Never wait on the process after terminating its tree.
+            drop(job);
         }
-        drop(job);
-        let _ = child.wait();
+    }
+
+    pub fn log(&self, message: &str) {
+        append_log(&self.log, format!("{message}\n").as_bytes());
+    }
+}
+
+fn append_log(log_dir: &Mutex<PathBuf>, bytes: &[u8]) {
+    let dir = log_dir.lock().unwrap();
+    let path = dir.join("servidor.log");
+    let write = || -> io::Result<()> {
+        fs::create_dir_all(&*dir)?;
+        if fs::metadata(&path).is_ok_and(|info| info.len() + bytes.len() as u64 > LOG_LIMIT) {
+            let previous = dir.join("servidor.anterior.log");
+            let _ = fs::remove_file(&previous);
+            // Keep the active log bounded even if the previous one is locked.
+            if fs::rename(&path, previous).is_err() {
+                fs::File::create(&path)?;
+            }
+        }
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)?
+            .write_all(bytes)
+    };
+    if let Err(error) = write() {
+        eprintln!("Bitacora server log: {error}");
     }
 }
 
@@ -101,18 +186,55 @@ fn create_job() -> io::Result<OwnedHandle> {
     Ok(job)
 }
 
-pub fn ready_port(stdout: ChildStdout) -> io::Result<u16> {
-    for line in BufReader::new(stdout).lines() {
-        if let Some(port) = line?
-            .strip_prefix("BITACORA_READY ")
-            .and_then(|value| value.parse::<u16>().ok())
-            .filter(|port| *port != 0)
-        {
-            return Ok(port);
+pub fn ready_port(ready: mpsc::Receiver<io::Result<u16>>) -> io::Result<u16> {
+    ready
+        .recv_timeout(STARTUP_TIMEOUT)
+        .map_err(|error| match error {
+            mpsc::RecvTimeoutError::Timeout => io::ErrorKind::TimedOut,
+            mpsc::RecvTimeoutError::Disconnected => io::ErrorKind::UnexpectedEof,
+        })?
+}
+
+fn parse_ready(mut output: impl BufRead) -> io::Result<u16> {
+    let mut line = Vec::new();
+    while output.read_until(b'\n', &mut line)? != 0 {
+        if let Ok(text) = std::str::from_utf8(&line) {
+            if let Some(port) = text
+                .trim_end_matches(['\r', '\n'])
+                .strip_prefix("BITACORA_READY ")
+                .and_then(|value| value.parse::<u16>().ok())
+                .filter(|port| *port != 0)
+            {
+                return Ok(port);
+            }
         }
+        line.clear();
     }
     Err(io::Error::new(
         io::ErrorKind::UnexpectedEof,
         "Server stopped before startup",
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_port_after_noise_and_leaves_the_rest_in_the_reader() {
+        let mut output =
+            &b"\xff\nBITACORA_READY 0\nBITACORA_READY 65536\r\nBITACORA_READY 43179\r\nmore\n"[..];
+        assert_eq!(parse_ready(&mut output).unwrap(), 43179);
+        assert_eq!(output, b"more\n");
+    }
+
+    #[test]
+    fn eof_without_a_port_is_a_startup_failure() {
+        assert_eq!(
+            parse_ready(&b"BITACORA_READY invalid\n"[..])
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::UnexpectedEof
+        );
+    }
 }

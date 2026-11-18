@@ -302,6 +302,7 @@ export class CodexEngine implements Engine {
           env,
           encoding: "utf8",
           windowsHide: true,
+          timeout: 5_000,
         }).trim();
     if (version !== codexVersion)
       throw new Error(`Expected ${codexVersion}, received ${version}`);

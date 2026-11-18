@@ -607,6 +607,9 @@ export class App {
   }
   async close() {
     clearTimeout(this.flushTimer);
+    // The desktop shell gives us a short grace period. Queue the current
+    // transcript before waiting for titles, scans or Codex shutdown.
+    if (this.dirty) this.changed();
     // A title already on its way gets a short, bounded chance to finish before
     // the engine stops. If it does not, the work stays pending and the next
     // start titles it.

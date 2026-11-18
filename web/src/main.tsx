@@ -32,7 +32,7 @@ import type {
 } from "../../server/src/contracts";
 import { MAX_TITLE } from "../../server/src/titles";
 import "./style.css";
-import { DeliverablesPanel, FileCard, ImagePreviewModal } from "./files";
+import { DeliverablesPanel, FileCard, FilePreviewModal } from "./files";
 import { formatTime, formatWorkDate, undoSummary } from "./format";
 import { protectionText, protectionWarning } from "./protection-text";
 import {
@@ -249,8 +249,11 @@ function App() {
       }
       if (!disposed && socket.current?.readyState !== WebSocket.OPEN) connect();
     };
+    const reopen = () => reconnectRef.current();
+    window.addEventListener("bitacora-reopen", reopen);
     connect();
     return () => {
+      window.removeEventListener("bitacora-reopen", reopen);
       disposed = true;
       clearTimeout(timer);
       socket.current?.close();
@@ -1231,6 +1234,7 @@ function App() {
                                 file={f}
                                 token={state.fileToken}
                                 fileRevision={state.fileRevision}
+                                onPreview={(file) => setPreview({ file, list: [file] })}
                               />
                             ))}
                           </div>
@@ -1634,7 +1638,7 @@ function App() {
       )}
 
       {preview && (
-        <ImagePreviewModal
+        <FilePreviewModal
           file={preview.file}
           list={preview.list}
           token={state.fileToken}

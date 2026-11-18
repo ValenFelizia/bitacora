@@ -27,6 +27,9 @@ export async function serve(
         res.writeHead(403); res.end(); return;
       }
       if (sendAsset && sendAsset(url.pathname, req.method, res, boundPort())) return;
+      if (sendAsset && url.pathname !== "/files") {
+        res.writeHead(404); res.end(); return;
+      }
       const supplied = url.searchParams.get("token") || "";
       const validToken = Buffer.byteLength(supplied) === Buffer.byteLength(token) && timingSafeEqual(Buffer.from(supplied), Buffer.from(token));
       if (!validToken) {
