@@ -1,3 +1,5 @@
+import { join, resolve } from "node:path";
+
 /**
  * Provider-independent curated environment policy for travel agencies (DEC-011).
  *
@@ -32,9 +34,10 @@ export type AgencyEnvironment = {
   /** Provider bundled skills unrelated to travel agencies (skill/plugin creators, review, docs). */
   bundledSkills: boolean;
   /**
-   * Allowlisted skill names provided by Bitácora's kit. Empty because the kit
-   * currently ships no skills; every other skill (user, admin, system, and
-   * repo/ancestor) is disabled so host or external skills never leak in.
+   * Skill names the kit ships. The name alone does not allow a skill: it also
+   * has to be `repo` scope and live at `<agency>/.agents/skills/<name>/SKILL.md`
+   * in the agency's copy of the kit, so the same name in the user folder or in
+   * a folder the agent wrote by hand inside `.agents/skills` stays off.
    */
   allowedSkills: readonly string[];
   /** Automatic install prompts for provider plugins/connectors. */
@@ -59,6 +62,14 @@ export const AGENCY_DEVELOPER_INSTRUCTIONS =
   "Si una pregunta de request_user_input vuelve sin respuestas ({\"answers\":{}}), la usuaria prefirió no responderla ahora: " +
   "no la repitas enseguida, seguí con lo que puedas y contale qué supusiste.";
 
+/**
+ * Skills the kit ships, one folder each under `<agency>/.agents/skills/`.
+ * Verified against `kit/turismo/.agents/skills` by the tests: adding a skill to
+ * the kit without listing it here leaves it off, and a name listed here that
+ * the kit does not ship turns nothing on.
+ */
+export const KIT_SKILLS = ["entender-el-pedido", "entrevista"] as const;
+
 export const AGENCY_ENVIRONMENT: AgencyEnvironment = {
   developerInstructions: AGENCY_DEVELOPER_INSTRUCTIONS,
   aiImages: true,
@@ -67,15 +78,40 @@ export const AGENCY_ENVIRONMENT: AgencyEnvironment = {
   goals: true,
   questions: true,
   bundledSkills: false,
-  allowedSkills: [],
+  allowedSkills: KIT_SKILLS,
   pluginSuggestions: false,
   allowedPlugins: [],
   allowedConnectors: [],
 };
 
+/** Folder the agency's copy of the kit keeps its skills in. */
+export function kitSkillsRoot(workspace: string): string {
+  return join(workspace, ".agents", "skills");
+}
+
+/**
+ * Windows reports the same file with either separator and any case; the engine
+ * has to compare what the app-server listed against the path Bitácora wrote.
+ */
+function pathKey(path: string): string {
+  return resolve(path).replace(/\\/g, "/").replace(/\/{2,}/g, "/").toLowerCase();
+}
+
+/**
+ * True only for a skill the kit ships, listed as `repo` scope, whose file is
+ * exactly `<agency>/.agents/skills/<name>/SKILL.md`. Codex `0.168.0` looks for
+ * project skills in the working folder's `.agents/skills`; a skill of any other
+ * scope, a copy with the same name in another folder, and a folder the agent
+ * wrote by hand are refused because the path is not the one Bitácora copied.
+ */
 export function isAllowedSkill(
-  skill: { name: string; scope: string },
+  skill: { name: string; scope: string; path?: string | null },
+  workspace: string,
   environment: AgencyEnvironment = AGENCY_ENVIRONMENT,
 ): boolean {
-  return skill.scope === "repo" && environment.allowedSkills.includes(skill.name);
+  if (skill.scope !== "repo") return false;
+  if (!environment.allowedSkills.includes(skill.name)) return false;
+  if (typeof skill.path !== "string" || !skill.path) return false;
+  const expected = join(kitSkillsRoot(workspace), skill.name, "SKILL.md");
+  return pathKey(skill.path) === pathKey(expected);
 }

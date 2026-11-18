@@ -1,7 +1,7 @@
 // Deterministic app-server peer. No Codex, credentials, tools, or inference.
 import { createInterface } from "node:readline";
 import { spawn } from "node:child_process";
-import { appendFileSync, existsSync, writeFileSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, writeFileSync, readFileSync, renameSync } from "node:fs";
 const send = (m) => process.stdout.write(JSON.stringify(m) + "\n");
 const notify = (method, params) => send({ method, params });
 const setupFile = process.env.CODEX_HOME + "/fake-protection";
@@ -74,23 +74,44 @@ const fakeSkillsFile = process.env.BITACORA_FAKE_SKILLS_FILE;
 let fakeSkills = process.env.BITACORA_FAKE_SKILLS
   ? JSON.parse(process.env.BITACORA_FAKE_SKILLS)
   : [];
+const waitMs = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const readTempFile = `${fakeSkillsFile || ""}.tmp-${process.pid}`;
 // The test may be rewriting the file while the app-server reads it (a new skill
-// that appears mid-session): an empty or half-written file is read again, and if
-// it stays unreadable the previous list is used instead of crashing.
-const readFakeSkills = () => {
+// that appears mid-session). Writes in the test are atomic, but Windows can
+// still keep a handle for a moment: an empty or half-written file is read again
+// after a wait, and if it stays unreadable the list answers with an error
+// instead of the previous skills, which would hide the real state.
+const readFakeSkills = async () => {
   if (!fakeSkillsFile || !existsSync(fakeSkillsFile)) return fakeSkills;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       return JSON.parse(readFileSync(fakeSkillsFile, "utf8"));
     } catch {
-      // Try again: the writer is between opening and closing the file.
+      // Try again: the writer is between renaming and closing the file.
+      if (attempt < 2) await waitMs(20);
     }
   }
-  return fakeSkills;
+  throw new Error(`fake skills file is unreadable: ${fakeSkillsFile}`);
 };
-const writeFakeSkills = (skills) => {
+const writeFakeSkills = async (skills) => {
   fakeSkills = skills;
-  if (fakeSkillsFile) writeFileSync(fakeSkillsFile, JSON.stringify(skills));
+  if (!fakeSkillsFile) return;
+  // Atomic on purpose: a reader must never see a half-written list. Windows can
+  // keep the target open for a moment (the test reads it, or the indexer does),
+  // so the replace is retried instead of failing the request.
+  const body = JSON.stringify(skills);
+  let lastError;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      writeFileSync(readTempFile, body);
+      renameSync(readTempFile, fakeSkillsFile);
+      return;
+    } catch (error) {
+      lastError = error;
+      await waitMs(10);
+    }
+  }
+  throw lastError;
 };
 /** Lists asked in this process: the second one is the engine's verification. */
 let skillLists = 0;
@@ -108,8 +129,19 @@ const activeProfile = (params) => {
     ? { id: params.permissions, extends: ":workspace" }
     : null;
 };
+/** Queues messages so they are answered in arrival order. */
+let queue = Promise.resolve();
 createInterface({ input: process.stdin })
   .on("line", (line) => {
+    // Messages are answered in arrival order even when one needs to wait for a
+    // file to become readable: the queue keeps the protocol deterministic.
+    queue = queue
+      .then(() => handle(line))
+      .catch((error) => process.stderr.write(`fake app-server: ${String(error)}\n`));
+  })
+  .on("close", () => process.exit());
+
+async function handle(line) {
     const m = JSON.parse(line);
     if (process.env.BITACORA_FAKE_LOG)
       appendFileSync(process.env.BITACORA_FAKE_LOG, JSON.stringify(m) + "\n");
@@ -187,14 +219,24 @@ createInterface({ input: process.stdin })
         break;
       case "skills/list": {
         if (process.env.BITACORA_FAKE_SKILLS_HANG) break;
+        // Hangs on the nth list of this process, so a test can make one pass run
+        // out of time without hanging the next one.
+        const listNumber = ++skillLists;
+        if (process.env.BITACORA_FAKE_SKILLS_HANG_AT === String(listNumber)) break;
         if (process.env.BITACORA_FAKE_SKILLS_LIST_FAIL) {
           send({ id: m.id, error: { code: -32603, message: "skills list failed" } });
           break;
         }
         // The check the engine makes after writing: the second list of the
-        // process can fail, never answer or come back without its skills.
+        // process can fail, never answer or come back without its skills. A test
+        // can choose other lists with `BITACORA_FAKE_SKILLS_VERIFY_AT`.
         const verify = process.env.BITACORA_FAKE_SKILLS_VERIFY;
-        if (verify && ++skillLists === 2) {
+        const verifyAt = (process.env.BITACORA_FAKE_SKILLS_VERIFY_AT || "")
+          .split(",")
+          .filter(Boolean)
+          .map(Number);
+        const isVerify = verify && (verifyAt.length ? verifyAt.includes(listNumber) : listNumber === 2);
+        if (isVerify) {
           if (verify === "fail") {
             send({ id: m.id, error: { code: -32603, message: "verify list failed" } });
             break;
@@ -222,14 +264,33 @@ createInterface({ input: process.stdin })
           : [];
         // A slow list: the engine must not take work for a list it has not
         // answered yet, nor refuse work that the protection already allows.
+        let skills;
+        try {
+          skills = await readFakeSkills();
+        } catch (error) {
+          send({ id: m.id, error: { code: -32603, message: String(error) } });
+          break;
+        }
         const answer = () =>
-          reply({ data: [{ cwd: m.params?.cwds?.[0] || "", skills: readFakeSkills(), errors }] });
+          reply({ data: [{ cwd: m.params?.cwds?.[0] || "", skills, errors }] });
         const delayMs = Number(process.env.BITACORA_FAKE_SKILLS_DELAY || 0);
         if (delayMs > 0) setTimeout(answer, delayMs);
         else answer();
         break;
       }
       case "skills/config/write": {
+        // Fails only the first attempt for that path: a transient Windows lock
+        // on `config.toml`, which the engine must retry once and not report.
+        const failOncePath = process.env.BITACORA_FAKE_SKILL_WRITE_FAIL_ONCE;
+        if (
+          failOncePath &&
+          (failOncePath === "*" || m.params?.path === failOncePath) &&
+          !existsSync(setupFile + ".write-failed-once")
+        ) {
+          writeFileSync(setupFile + ".write-failed-once", "1");
+          send({ id: m.id, error: { code: -32603, message: "failed to persist config" } });
+          break;
+        }
         const failPath = process.env.BITACORA_FAKE_SKILL_WRITE_FAIL;
         if (failPath && (failPath === "*" || m.params?.path === failPath)) {
           send({ id: m.id, error: { code: -32603, message: "skills write failed" } });
@@ -240,13 +301,24 @@ createInterface({ input: process.stdin })
           reply({ effectiveEnabled: true });
           break;
         }
-        const current = readFakeSkills();
+        let current;
+        try {
+          current = await readFakeSkills();
+        } catch (error) {
+          send({ id: m.id, error: { code: -32603, message: String(error) } });
+          break;
+        }
         for (const skill of current) {
           if ((m.params?.path && skill.path === m.params.path) || (m.params?.name && skill.name === m.params.name)) {
             skill.enabled = Boolean(m.params.enabled);
           }
         }
-        writeFakeSkills(current);
+        try {
+          await writeFakeSkills(current);
+        } catch (error) {
+          send({ id: m.id, error: { code: -32603, message: String(error) } });
+          break;
+        }
         reply({ effectiveEnabled: Boolean(m.params?.enabled) });
         break;
       }
@@ -403,8 +475,8 @@ createInterface({ input: process.stdin })
             scope: "user",
             enabled: true,
           };
-          const current = readFakeSkills();
-          if (!current.some((skill) => skill.path === added.path)) writeFakeSkills([...current, added]);
+          const current = await readFakeSkills();
+          if (!current.some((skill) => skill.path === added.path)) await writeFakeSkills([...current, added]);
           notify("skills/changed", {});
           notify("turn/completed", { threadId, turn: turn("completed") });
         }
@@ -465,5 +537,4 @@ createInterface({ input: process.stdin })
         break;
       }
     }
-  })
-  .on("close", () => process.exit());
+}

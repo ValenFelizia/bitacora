@@ -568,3 +568,21 @@ test("final flush includes events delivered during engine shutdown", async () =>
   } finally { await f.app.close(); await rm(f.dir, { recursive: true }); }
 
 });
+
+test("a notice the queue cap pushes out is said again in the next work", async () => {
+  const f = await fixture();
+  try {
+    // Notices that belong to no work wait for the next one, up to 50. The cap
+    // drops the oldest, and a dropped notice was never shown: the engine has to
+    // say it again instead of treating it as said.
+    for (let i = 1; i <= 52; i++)
+      f.engine.emit({ type: "detail", text: `aviso ${i}`, key: `k${i}` });
+    assert.deepEqual(f.engine.forgotten, ["k1", "k2"]);
+
+    await f.app.command({ type: "send", text: "Un pedido" }, f.reply);
+    const work = f.app.snapshot().works[0];
+    assert.match(work.details, /aviso 3\n/);
+    assert.match(work.details, /aviso 52/);
+    assert.doesNotMatch(work.details, /aviso 1\b|aviso 2\b/);
+  } finally { await f.app.close(); await rm(f.dir, { recursive: true }); }
+});

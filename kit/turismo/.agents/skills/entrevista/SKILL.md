@@ -1,3 +1,8 @@
+---
+name: entrevista
+description: Recorrido para armar la agencia con la usuaria (nombre y firma, contactos, logo, qué manda hoy, canales, tono y plantillas). Usala cuando pide ayuda para empezar, cuando todavía no hay marca, o cuando acepta la invitación a configurarla.
+---
+
 # Armar tu agencia
 
 Seguí este recorrido cuando la usuaria pide ayuda para empezar, o acepta la

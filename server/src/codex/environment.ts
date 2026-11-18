@@ -39,6 +39,10 @@ function codexKeySegment(id: string): string {
  *   and `features.apps=true` registers `codex_apps`. While the allowlists are
  *   empty, keeping `features.plugins=false`, `features.apps=false`, and
  *   `include_apps_instructions=false` prevents that download and registration.
+ *
+ * Skills are different since issue #50: the kit ships its own, so the catalogue
+ * stays on (`skills.include_instructions=true`) and every skill the kit does not
+ * provide is turned off one by one before the engine serves a turn (DEC-011).
  */
 export function codexEnvironmentArgs(
   environment: AgencyEnvironment = AGENCY_ENVIRONMENT,

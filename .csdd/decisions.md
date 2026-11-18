@@ -288,6 +288,48 @@ accepted direction from implementation alone.
     la herramienta le pide al modelo opciones excluyentes (de 2 a 3, la
     recomendada primero con «(Recommended)») y suma «Otra». La tarjeta elige una
     opción por pregunta; una tarjeta puede traer hasta tres preguntas.
+- Update (2026-11-18, issue #50): el kit estrena skills propias y la regla
+  anterior («hoy ninguna») queda reemplazada.
+  - **Dónde viven:** `kit/turismo/.agents/skills/<nombre>/SKILL.md`. Verificado
+    con el binario real de Codex `0.168.0`: un archivo en
+    `<agencia>/.agents/skills/<nombre>/SKILL.md` aparece en `skills/list` con
+    alcance `repo`; una carpeta `.agents/skills` de una carpeta de arriba no se
+    descubre, así que las skills del kit se copian a la raíz de la agencia,
+    que es la carpeta de trabajo del motor.
+  - **Cómo llegan:** `initializeKit` refresca solo `<agencia>/.agents/skills`
+    en cada arranque, además de la copia única que marca el inicializador. Una
+    agencia inicializada antes de que el kit tuviera skills las recibe igual, y
+    lo que la agencia editó fuera de esa carpeta no se toca. Las skills son del
+    kit y se reemplazan desde la app en cada arranque.
+  - **Qué queda permitido:** la lista se compara por ruta, no por nombre.
+    `KIT_SKILLS` nombra las skills del kit y `isAllowedSkill` exige alcance
+    `repo`, ese nombre y exactamente
+    `<agencia>/.agents/skills/<nombre>/SKILL.md`. Una skill con el mismo nombre
+    en la carpeta de usuario, o una que el agente escriba a mano dentro de
+    `.agents/skills`, queda apagada porque su ruta no es la que copió el kit.
+  - **Qué se prende:** una skill permitida que figure apagada se vuelve a
+    prender (`enabled: true`); las demás se siguen apagando una por una. La
+    confirmación pide `skills/list` otra vez y comprueba las dos cosas.
+  - **El catálogo vuelve a estar prendido:** como hay skills permitidas,
+    `skills.include_instructions=true`. El apagado uno por uno pasa a ser la
+    única barrera, así que la sincronización tiene que terminar antes del
+    primer turno: `createWork`, `resumeWork` y `send` la esperan, y una pasada
+    que se queda sin tiempo avisa en el detalle del trabajo.
+  - **Peor caso de espera:** todo el ciclo comparte un solo tope de 20 s, con
+    las pasadas incluidas. Solo `skills/changed` pide otra pasada; un pedido
+    que llega mientras el ciclo corre espera ese ciclo en vez de pedir otro.
+    Así un pedido nunca espera varias pasadas de 20 s.
+  - **Confirmación honesta:** una pasada solo da la revisión por hecha cuando
+    la segunda lista vino completa, o cuando no había nada que prender ni
+    apagar. Una pasada que se queda sin tiempo antes de confirmar no da el
+    aviso por resuelto.
+  - **Un fallo pasajero no se muestra:** `skills/config/write` se reintenta una
+    vez (en un pedido real falló una de 167 con `failed to persist config`, con
+    `config.toml` ocupado). Un fallo que sobrevive al reintento queda como
+    detalle del trabajo, nunca como problema de la app.
+  - **Avisos que salen de la cola:** si el tope de 50 avisos sin trabajo saca
+    uno, la app llama a `forgetDetails`, así el motor lo vuelve a decir en el
+    próximo trabajo en vez de darlo por dicho.
 - Rationale: el objetivo no es cortarle las patas a Codex sino darle a la
   agencia un entorno limpio, sin descargas de catálogos ni herramientas de
   programación o conectores sorpresa, dejando una estructura lista para que

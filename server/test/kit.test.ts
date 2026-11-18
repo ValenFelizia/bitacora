@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, symlink } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
+import { KIT_SKILLS } from '../src/agency-environment';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { callKitTool, connectKitClient, listKitTools } from './mcp-client';
@@ -35,6 +36,27 @@ test('path boundaries, Windows names, links and kit preservation', async () => {
     await initializeKit(f.root,f.data); await initializeKit(f.root,f.data);
     assert.equal(await f.files.read('AGENTS.md'), 'Instrucciones propias');
     assert.match(await f.files.read('ejemplo/pieza.html'), /data-cites/);
+  } finally { await f.close(); }
+});
+test('kit skills arrive in an agency initialized before the kit shipped them', async () => {
+  const f = await fixture();
+  try {
+    await initializeKit(f.root, f.data);
+    const skill = '.agents/skills/entrevista/SKILL.md';
+    assert.match(await f.files.read(skill), /Armar tu agencia/);
+    // The agency edits a file outside the skills, and a skill gets removed as a
+    // previous app version would have left the folder.
+    await f.files.write('AGENTS.md', 'Instrucciones propias', false);
+    await rm(join(f.root, '.agents'), { recursive: true, force: true });
+    await initializeKit(f.root, f.data);
+    assert.equal(await f.files.read('AGENTS.md'), 'Instrucciones propias');
+    assert.match(await f.files.read(skill), /Armar tu agencia/);
+    // Every skill the policy allows is there, and nothing else in that folder.
+    const folders = (await readdir(join(f.root, '.agents', 'skills'), { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort();
+    assert.deepEqual(folders, [...KIT_SKILLS].sort());
   } finally { await f.close(); }
 });
 test('fetch with explicit test-only local grant, photos, append, SSRF and redirect rejection', async () => {

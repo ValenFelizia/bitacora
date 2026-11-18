@@ -374,7 +374,12 @@ export class App {
         void this.engine.answer(event.conversationId, event.id, {}).catch(() => {});
       if (event.type === "detail" && !event.conversationId) {
         this.pendingDetails.push({ text: event.text, key: event.key });
-        if (this.pendingDetails.length > 50) this.pendingDetails.shift();
+        if (this.pendingDetails.length > 50) {
+          // A notice the cap pushes out is never shown, so the engine has to
+          // say it again: its key cannot stay as if it had been said.
+          const dropped = this.pendingDetails.shift();
+          if (dropped?.key) this.engine.forgetDetails([dropped.key]);
+        }
       } else if (event.type === "problem")
         this.publish({
           type: "problem",

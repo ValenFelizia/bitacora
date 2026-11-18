@@ -13,11 +13,13 @@ Si existe `marca/`, leé `marca/datos.md`, `marca/voz.md` y `marca/estilo.json`
 antes de cualquier pieza y usá las plantillas de `plantillas/`. Copiá el HTML
 estático a la carpeta de la propuesta y editalo, incluidas sus rutas relativas,
 datos y citas. El estilo JSON es una referencia de edición, no se ejecuta.
-Si no hay marca, ofrecé brevemente la entrevista de `entrevista.md`. No bloquees
+Si no hay marca, ofrecé brevemente la entrevista de la skill `entrevista`. No bloquees
 un pedido rápido: podés hacer una pieza sin marca con los datos que confirme.
-Cuando pida ayuda para empezar o acepte, seguí `entrevista.md`, mostrando
+Cuando pida ayuda para empezar o acepte, seguí la skill `entrevista`, mostrando
 opciones reales dibujadas antes de pedirle que elija. No uses internet para
 buscar fuentes: hay seis familias con licencia en `fuentes/`.
+Antes de arrancar un pedido ambiguo o grande, seguí la skill
+`entender-el-pedido`: una o dos preguntas por vez, sin inventar datos.
 
 ## Preguntar con opciones
 
