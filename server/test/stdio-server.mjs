@@ -248,8 +248,16 @@ async function handle(line) {
           }
         }
         // A list whose shape is not the one the engine expects: it must still
-        // start and say so instead of failing the app.
-        const shape = process.env.BITACORA_FAKE_SKILLS_SHAPE;
+        // start and say so instead of failing the app. `BITACORA_FAKE_SKILLS_SHAPE_AT`
+        // makes only the lists it names incomplete, so a test can mix a complete
+        // list with one the engine cannot read.
+        const shapeAt = (process.env.BITACORA_FAKE_SKILLS_SHAPE_AT || "")
+          .split(",")
+          .filter(Boolean)
+          .map(Number);
+        const shape = shapeAt.length
+          ? (shapeAt.includes(listNumber) ? "skills" : "")
+          : process.env.BITACORA_FAKE_SKILLS_SHAPE;
         if (shape === "missing") {
           reply({});
           break;

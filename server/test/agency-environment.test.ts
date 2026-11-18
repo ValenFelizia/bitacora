@@ -315,6 +315,10 @@ test("agency environment policy and developer instructions match DEC-011", async
   assert.match(AGENCY_DEVELOPER_INSTRUCTIONS, /castellano rioplatense/i);
   assert.match(AGENCY_DEVELOPER_INSTRUCTIONS, /si la usuaria te lo pide explícitamente/i);
   assert.match(AGENCY_DEVELOPER_INSTRUCTIONS, /nunca presentes una imagen con IA.*foto real de un hotel o un destino/i);
+  // The two skills are named in the instructions that travel with every thread,
+  // so they keep working even when the agency rewrites its `AGENTS.md`.
+  assert.match(AGENCY_DEVELOPER_INSTRUCTIONS, /\.agents\/skills\/entrevista\/SKILL\.md/);
+  assert.match(AGENCY_DEVELOPER_INSTRUCTIONS, /\.agents\/skills\/entender-el-pedido\/SKILL\.md/);
 
   // The list the policy allows is exactly what the kit ships, folder by folder,
   // and every one is a Codex skill with its front matter.
@@ -1845,10 +1849,18 @@ test("the same skill spelled with forward slashes still counts as on", async () 
       text.includes("No pude comprobar si los complementos quedaron como tienen que estar"),
     );
     assert.match(verify ?? "", /skills\/external-skill\/SKILL\.md/, "the notice names the other spelling");
+    // The switch was asked for with the path from the first list, the one with
+    // backslashes: without the normalized key this notice would not appear and
+    // the skill would be named a second time with the other spelling.
+    const disabled = details.filter((text) =>
+      text.includes("No pude desactivar un complemento que no es del kit"),
+    );
+    assert.equal(disabled.length, 1, "the skill that is still on is named once");
+    assert.ok(disabled[0].includes(skillPath), "the notice names the original path with backslashes");
     assert.equal(
-      details.some((text) => text.includes("No pude desactivar un complemento que no es del kit")),
-      true,
-      "a skill that is still on is named",
+      disabled[0].includes("skills/external-skill/SKILL.md"),
+      false,
+      "the per-skill notice does not use the other spelling",
     );
   } finally {
     off();
@@ -1908,18 +1920,16 @@ test("a foreign skill that only appears in the confirmation list is named and no
   }
 });
 
-test("a cycle cut with a change pending does not clear the time notice", async () => {
+test("a cycle cut at its cap with a change pending says it did not finish", async () => {
   await mkdir(".local", { recursive: true });
   const dir = await mkdtemp(resolve(".local/skills-pending-notice-"));
   const home = join(dir, "home");
   const workspace = join(dir, "workspace");
   await mkdir(home, { recursive: true });
   await mkdir(workspace, { recursive: true });
-  // The first list never answers: the startup cycle runs out of time and says
-  // so. Later lists answer slowly, so the second cycle has a pass that ends in
-  // time and another one that cannot.
-  process.env.BITACORA_FAKE_SKILLS_HANG_AT = "1";
-  process.env.BITACORA_FAKE_SKILLS_DELAY = "300";
+  // Every list answers in 250 ms and the cycle has 300 ms: the first pass ends
+  // clean, near the cap, and the pass a second request asks for is cut by it.
+  process.env.BITACORA_FAKE_SKILLS_DELAY = "250";
   const engine = new CodexEngine({
     home,
     workspace,
@@ -1927,7 +1937,7 @@ test("a cycle cut with a change pending does not clear the time notice", async (
     args: fakeAppServerArgs,
     restartDelayMs: 30,
     probeProtection: async () => false,
-    skillsSyncTimeoutMs: 400,
+    skillsSyncTimeoutMs: 300,
   });
   const details: string[] = [];
   const off = engine.subscribe((event) => {
@@ -1937,19 +1947,73 @@ test("a cycle cut with a change pending does not clear the time notice", async (
     details.filter((text) => text.includes("No terminé de revisar los complementos a tiempo")).length;
   try {
     await engine.start();
-    await until(() => saidItTimedOut() === 1);
-    // Two requests at once: the second joins the running cycle, asks for one
-    // more pass, and that pass is cut by the shared deadline.
+    // No pass timed out before this: the notice can only come from the cycle
+    // that the second request cut at the cap.
+    assert.equal(saidItTimedOut(), 0);
     await Promise.all([engine.createWork(), engine.createWork()]);
     assert.equal(
       saidItTimedOut(),
       1,
-      "the notice stays: the cycle ended with a change pending",
+      "the cycle that had a change pending says it did not finish",
     );
   } finally {
     off();
-    delete process.env.BITACORA_FAKE_SKILLS_HANG_AT;
     delete process.env.BITACORA_FAKE_SKILLS_DELAY;
+    await engine.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
+});
+
+test("an incomplete list with nothing to change does not call the pass verified", async () => {
+  await mkdir(".local", { recursive: true });
+  const dir = await mkdtemp(resolve(".local/skills-incomplete-verified-"));
+  const home = join(dir, "home");
+  const workspace = join(dir, "workspace");
+  const skillsFile = join(dir, "skills.json");
+  await mkdir(home, { recursive: true });
+  await mkdir(workspace, { recursive: true });
+  const skillPath = join(home, "skills", "external-skill", "SKILL.md");
+  await writeSkillsFile(skillsFile, [
+    { name: "external-skill", description: "Not from the kit", path: skillPath, scope: "user", enabled: true },
+  ]);
+  process.env.BITACORA_FAKE_SKILLS_FILE = skillsFile;
+  process.env.BITACORA_FAKE_SKILL_KEEP_ENABLED = "*";
+  // List 1 is complete and list 2 cannot be read: the first cycle says it could
+  // not check. List 3 is incomplete with nothing visible to change, which used
+  // to pass as verified. Lists 4 and 5 repeat the failed check.
+  process.env.BITACORA_FAKE_SKILLS_SHAPE_AT = "2,3,5";
+  const engine = new CodexEngine({
+    home,
+    workspace,
+    binary: process.execPath,
+    args: fakeAppServerArgs,
+    restartDelayMs: 30,
+    probeProtection: async () => false,
+  });
+  const details: string[] = [];
+  const off = engine.subscribe((event) => {
+    if (event.type === "detail") details.push(event.text);
+  });
+  const couldNotCheck = () =>
+    details.filter((text) =>
+      text.includes("No pude comprobar si los complementos quedaron como tienen que estar"),
+    ).length;
+  try {
+    await engine.start();
+    await engine.createWork();
+    await until(() => couldNotCheck() === 1);
+    // Nothing visible to change and an unreadable entry: not a verification, so
+    // the notice is not cleared.
+    await engine.createWork();
+    // A later check fails again: the notice was never disproved, so it is not
+    // said a second time.
+    await engine.createWork();
+    assert.equal(couldNotCheck(), 1);
+  } finally {
+    off();
+    delete process.env.BITACORA_FAKE_SKILLS_FILE;
+    delete process.env.BITACORA_FAKE_SKILL_KEEP_ENABLED;
+    delete process.env.BITACORA_FAKE_SKILLS_SHAPE_AT;
     await engine.close();
     await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   }

@@ -1069,9 +1069,10 @@ export class CodexEngine implements Engine {
           );
         break;
       case "skills/changed":
-        // Only a change from the engine asks for another pass. A request that
-        // joins the running cycle waits for it instead of extending it, so no
-        // caller can wait for several 20 s passes.
+        // A change asks for another pass. A request that joins the running
+        // cycle also marks it dirty, so the list it gets is taken after its
+        // request; the cycle shares one deadline, so that never adds unbounded
+        // waiting.
         if (!this.available) break;
         if (this.skillsSync) this.skillsDirty = true;
         else void this.syncSkills().catch(() => {});
@@ -1373,9 +1374,11 @@ export class CodexEngine implements Engine {
           disable.set(key, { path: skill.path });
         }
       }
-    // Nothing to change is the only pass that proves the state without writing.
+    // Nothing to change proves the state only when the list was complete: an
+    // entry the app-server could not read could be a skill that stays on, and
+    // that is not something this pass can call verified.
     if (!disable.size && !enable.size) {
-      result.verified = true;
+      result.verified = entries.length === list.data.length;
       return result;
     }
     for (const target of disable.values()) {
@@ -1563,6 +1566,15 @@ export class CodexEngine implements Engine {
           !this.stopping &&
           Date.now() < deadline
         );
+        // A change that arrived during the last pass never got its own pass:
+        // the cycle was cut at its deadline, so say the check did not finish.
+        if (this.skillsDirty && this.child === child && !this.stopping) {
+          this.reportSkillError(
+            "timeout",
+            "No terminé de revisar los complementos a tiempo.",
+            conversationId,
+          );
+        }
         // A check that ended in time and left nothing pending is the only one
         // that proves the next failure is new, so the notices it would repeat
         // are allowed again. A cycle cut with a change pending keeps the cap

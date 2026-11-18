@@ -54,6 +54,14 @@ export class App {
   private scanning = new Set<string>();
   private scans = new Set<Promise<void>>();
   private notice?: string;
+  /**
+   * Set when the single kit copy fails. The rest of the kit is what gives the
+   * agency its rules (`AGENTS.md`) and the example, so no request runs until
+   * the copy works; it is retried on each start and on each request. Only the
+   * skills refresh may fail softly (DEC-011).
+   */
+  private kitProblem?: string;
+  private kitDetail?: string;
   private available = false;
   private starting = true;
   private exhausted = false;
@@ -99,23 +107,35 @@ export class App {
     await this.initialize();
     await this.startEngine();
   }
+  /**
+   * Copies the kit into a new agency and refreshes its skills on every start.
+   * Only the skills refresh may fail softly (a read-only or busy skill is a
+   * notice). Without the rest of the kit the agency would have no `AGENTS.md`,
+   * so a failed copy leaves `kitProblem` set and `command()` refuses requests
+   * until a copy works.
+   */
+  private async prepareKit(): Promise<boolean> {
+    if (!this.workspace) return true;
+    try {
+      const kit = await initializeKit(this.workspace.root, this.data, this.kitSource);
+      this.kitProblem = undefined;
+      this.kitDetail = undefined;
+      if (kit.skillsError)
+        this.notice =
+          "No pude poner al día las guías de trabajo del kit. Podés seguir trabajando; si faltan, reiniciá Bitácora.";
+      return true;
+    } catch (error) {
+      this.kitProblem =
+        "No pude preparar la carpeta de tu agencia. Sin los archivos del kit no puedo empezar tus pedidos. Volvé a abrir Bitácora para intentarlo de nuevo.";
+      this.kitDetail = String(error);
+      this.notice = this.kitProblem;
+      return false;
+    }
+  }
   async initialize() {
     await mkdir(this.data, { recursive: true });
     await this.workspace?.initialize();
-    if (this.workspace) {
-      // The kit's skills are refreshed on every start. A read-only file, a
-      // junction or another process holding one of them cannot keep the app
-      // from opening: it is a notice, never a failed start (DEC-011).
-      try {
-        const kit = await initializeKit(this.workspace.root, this.data, this.kitSource);
-        if (kit.skillsError)
-          this.notice =
-            "No pude poner al día las guías de trabajo del kit. Podés seguir trabajando; si faltan, reiniciá Bitácora.";
-      } catch {
-        this.notice =
-          "No pude preparar los archivos del kit. Podés seguir trabajando; si faltan, reiniciá Bitácora.";
-      }
-    }
+    if (this.workspace) await this.prepareKit();
     try {
       const saved = JSON.parse(
         await readFile(join(this.data, "works.json"), "utf8"),
@@ -643,6 +663,14 @@ export class App {
     }
     const uploads = this.workspace?.validate(command.attachments);
     if (command.attachments?.length && !this.workspace) throw new Error("Attachments unavailable");
+    // The kit carries the agency rules, so a request does not run without it.
+    // The copy is tried again here: the file that failed may be free by now,
+    // and the notice stays until it works.
+    if (this.kitProblem && !(await this.prepareKit())) {
+      this.notice = this.kitProblem;
+      reply({ type: "problem", text: this.kitProblem, detail: this.kitDetail });
+      return;
+    }
     this.submitting = true;
     let work: SavedWork | undefined;
     let attachments: FileRef[] = [];

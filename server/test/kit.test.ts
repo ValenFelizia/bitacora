@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, rmdir, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { KIT_SKILLS } from '../src/agency-environment';
@@ -108,6 +108,45 @@ test('a read-only or edited skill never keeps the app from opening, and the kit 
     await app.close();
   } finally {
     await chmod(target, 0o666).catch(() => {});
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+test('the app opens but refuses requests when the single kit copy fails, until it works', async () => {
+  await mkdir(base, { recursive: true });
+  const dir = await mkdtemp(join(base, 'kit copy '));
+  const root = join(dir, 'agencia'), data = join(dir, 'datos'), kit = join(dir, 'kit');
+  const outside = join(dir, 'afuera');
+  await mkdir(root); await mkdir(data); await mkdir(kit); await mkdir(outside);
+  await mkdir(join(kit, '.agents', 'skills', 'entrevista'), { recursive: true });
+  await writeFile(join(kit, '.agents', 'skills', 'entrevista', 'SKILL.md'), '---\nname: entrevista\ndescription: Del kit.\n---\n');
+  await writeFile(join(kit, 'AGENTS.md'), 'Instrucciones del kit\n');
+  await mkdir(join(kit, 'ejemplo'));
+  await writeFile(join(kit, 'ejemplo', 'pieza.html'), '<p>hola</p>');
+  // A junction where the single copy has to write: the copy cannot run, so the
+  // agency would have no rules if the request were allowed.
+  await symlink(outside, join(root, 'ejemplo'), 'junction');
+  const files = new WorkspaceFiles(root);
+  const app = new App(new FakeEngine(), data, () => {}, undefined, files, kit);
+  const replies: Array<{ type: string; text?: string }> = [];
+  try {
+    await app.start();
+    assert.equal(app.snapshot().engine.available, true);
+    assert.match(app.snapshot().notice ?? '', /No pude preparar la carpeta de tu agencia/);
+
+    await app.command({ type: 'send', text: 'Un pedido' }, (message) => replies.push(message as { type: string; text?: string }));
+    assert.equal(replies[0]?.type, 'problem');
+    assert.match(replies[0]?.text ?? '', /No pude preparar la carpeta de tu agencia/);
+    assert.equal(app.snapshot().works.length, 0, 'no request runs without the kit');
+
+    // The obstruction goes away: the next request copies the kit and runs.
+    await rmdir(join(root, 'ejemplo'));
+    await app.command({ type: 'send', text: 'Un pedido' }, (message) => replies.push(message as { type: string; text?: string }));
+    assert.equal(replies[1]?.type, 'selected');
+    assert.equal(app.snapshot().works.length, 1);
+    assert.equal(await readFile(join(root, 'AGENTS.md'), 'utf8'), 'Instrucciones del kit\n');
+    assert.deepEqual(await readdir(outside), [], 'the junction target was not written');
+  } finally {
+    await app.close();
     await rm(dir, { recursive: true, force: true });
   }
 });

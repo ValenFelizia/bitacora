@@ -44,8 +44,8 @@ archivo tocar, qué cambiar, sobre qué propuesta.
   en la conversación anterior. Antes de preguntar, leé lo que ya tenés.
 - Si la respuesta no cambia el trabajo (por ejemplo un color que ya está en la
   marca), no la pidas: resolvelo con lo que hay.
-- Si `marca/voz.md` existe, seguilo para el trato: si la agencia habla de usted,
-  preguntá de usted. Si no hay marca, tratá de vos.
+- Con la usuaria hablá siempre de vos: `marca/voz.md` es el trato de la agencia
+  con sus clientes en las piezas, no el de esta conversación.
 - Si la pregunta vuelve sin respuesta, la usuaria eligió «Ahora no»: prefirió
   no contestarla por ahora. No la repitas enseguida, seguí con lo que puedas y
   contale qué supusiste.

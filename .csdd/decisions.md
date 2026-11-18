@@ -304,7 +304,10 @@ accepted direction from implementation alone.
     solo lectura con el texto del kit no puede fallar. Si el refresco falla (un
     enlace en `.agents`, un archivo abierto por otro proceso), la app abre
     igual y lo dice como aviso. Si el kit no trae su carpeta de skills, el
-    refresco lo informa en vez de arrancar sin ellas.
+    refresco lo informa en vez de arrancar sin ellas. Si lo que falla es la
+    copia única (`AGENTS.md` y el ejemplo), la app abre igual pero no acepta
+    pedidos hasta que la copia salga bien: se reintenta en el próximo arranque y
+    en el próximo pedido, y el aviso queda a la vista.
   - **Qué queda permitido:** la lista se compara por ruta, no por nombre.
     `KIT_SKILLS` nombra las skills del kit y `isAllowedSkill` exige alcance
     `repo`, ese nombre y exactamente
@@ -324,10 +327,12 @@ accepted direction from implementation alone.
     así que no se puede retirar para un turno si la última pasada no quedó
     verificada. Por eso la barrera es el `AGENTS.md` del kit, que nombra cada
     skill por su archivo (`.agents/skills/entrevista/SKILL.md` y
-    `.agents/skills/entender-el-pedido/SKILL.md`); el apagado uno por uno
-    sigue, pero ya no es la única barrera. Vale también para los turnos que
-    arranca el motor solo (metas): no pasan por `send` y aun así no reciben
-    catálogo porque el interruptor es del proceso.
+    `.agents/skills/entender-el-pedido/SKILL.md`), y las mismas dos oraciones
+    viajan además en `AGENCY_DEVELOPER_INSTRUCTIONS`, que la agencia no edita:
+    si reescribe su `AGENTS.md`, las skills se siguen encontrando. El apagado
+    uno por uno sigue, pero ya no es la única barrera. Vale también para los
+    turnos que arranca el motor solo (metas): no pasan por `send` y aun así no
+    reciben catálogo porque el interruptor es del proceso.
   - **Peor caso de espera:** todo el ciclo comparte un solo tope de 20 s, con
     las pasadas incluidas. Un pedido que llega mientras el ciclo corre pide una
     pasada más (para que su lista se tome después de su pedido) dentro de ese

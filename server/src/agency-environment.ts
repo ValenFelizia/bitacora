@@ -59,6 +59,8 @@ export const AGENCY_DEVELOPER_INSTRUCTIONS =
   "Trabajá en la carpeta actual. " +
   "Usá imágenes generadas con IA solo si la usuaria te lo pide explícitamente, " +
   "y nunca presentes una imagen con IA como si fuera una foto real de un hotel o un destino. " +
+  "Para armar la agencia, seguí `.agents/skills/entrevista/SKILL.md`. " +
+  "Antes de un pedido ambiguo o grande, seguí `.agents/skills/entender-el-pedido/SKILL.md`. " +
   "Si una pregunta de request_user_input vuelve sin respuestas ({\"answers\":{}}), la usuaria prefirió no responderla ahora: " +
   "no la repitas enseguida, seguí con lo que puedas y contale qué supusiste.";
 
