@@ -1,6 +1,5 @@
 import {
   spawn,
-  execFileSync,
   execFile,
   type ChildProcessWithoutNullStreams,
 } from "node:child_process";
@@ -298,12 +297,13 @@ export class CodexEngine implements Engine {
     env.CODEX_HOME = this.options.home;
     const version = this.options.args
       ? codexVersion
-      : execFileSync(binary, ["--version"], {
+      : (await promisify(execFile)(binary, ["--version"], {
           env,
           encoding: "utf8",
           windowsHide: true,
-          timeout: 5_000,
-        }).trim();
+          timeout: 30_000,
+        })).stdout.trim();
+    if (this.stopping) return true;
     if (version !== codexVersion)
       throw new Error(`Expected ${codexVersion}, received ${version}`);
     const args =

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { once } from "node:events";
+import { on, once } from "node:events";
 import { copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -8,6 +8,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { test } from "node:test";
 import { build } from "esbuild";
 import { parse } from "smol-toml";
+import { WebSocket } from "ws";
 import { codexBinary } from "../../scripts/codex-runtime.mjs";
 import { registerKit } from "../src/codex/kit";
 
@@ -80,6 +81,15 @@ test("desktop entry waits for stdin, announces its port, and closes on EOF", {
       assert.ok(port, line);
       const url = `http://127.0.0.1:${port}/`;
       assert.equal(await (await fetch(url)).text(), "<title>Bitácora</title>");
+      const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`, { origin: new URL(url).origin });
+      try {
+        for await (const [raw] of on(socket, "message", { signal: AbortSignal.timeout(45_000) })) {
+          const message = JSON.parse(String(raw));
+          if (message.type === "snapshot" && message.state.engine.available) break;
+        }
+      } finally {
+        socket.terminate();
+      }
       child.stdin.end();
       assert.deepEqual(await closed, [0, null], stderr);
       await assert.rejects(fetch(url));

@@ -459,6 +459,11 @@ function App() {
     : -1;
 
   const showEngineStoppedBanner = online && !state.engine.available;
+  const engineStatusText = state.engine.starting
+    ? "Estoy preparando Bitácora y la protección de tu carpeta."
+    : state.engine.exhausted
+      ? "Bitácora se detuvo y no pudo volver a iniciarse."
+      : "Bitácora se detuvo. Estoy intentando volver a iniciarla.";
   const showProblemBanner =
     !showEngineStoppedBanner && (!!problem || !!work?.problem);
   const hasErrorBanner =
@@ -830,8 +835,8 @@ function App() {
                   <span
                     className="w-[36px] h-[36px] max-[959px]:w-[40px] max-[959px]:h-[40px] inline-grid place-items-center text-danger"
                     role="img"
-                    title="Bitácora se detuvo"
-                    aria-label="Bitácora se detuvo"
+                    title={engineStatusText}
+                    aria-label={engineStatusText}
                   >
                     <AlertCircle size={18} strokeWidth={1.75} aria-hidden="true" />
                   </span>
@@ -1327,9 +1332,7 @@ function App() {
                           />
                           <div role="status" className="text-[14px] text-ink">
                             <p>
-                              {state.engine.exhausted
-                                ? "Bitácora se detuvo y no pudo volver a iniciarse."
-                                : "Bitácora se detuvo. Estoy intentando volver a iniciarla."}
+                              {engineStatusText}
                             </p>
                             {/* Keep the work's own problem visible: this banner replaces the problem banner. */}
                             {(problem?.text || work?.problem) && (

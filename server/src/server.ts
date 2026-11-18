@@ -117,7 +117,8 @@ export async function serve(
     });
   });
   try {
-    await app.start();
+    if (desktop) await app.initialize();
+    else await app.start();
     await new Promise<void>((resolve, reject) => {
       http.once("error", reject);
       http.listen(port, "127.0.0.1", () => {

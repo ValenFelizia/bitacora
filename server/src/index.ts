@@ -33,18 +33,29 @@ const server = await serve(
   desktop,
 );
 let closing = false;
-function close() {
+function close(code = 0) {
   if (closing) return;
   closing = true;
-  void server.close().then(() => process.exit(0), (error) => {
+  void server.close().then(() => process.exit(code), (error) => {
     console.error(error);
     process.exit(1);
   });
 }
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const)
-  process.on(signal, close);
+  process.on(signal, () => close());
 if (installed) {
   process.stdin.once("end", close);
-  if (process.stdin.readableEnded) close();
-  console.log(`BITACORA_READY ${server.port}`);
+  if (process.stdin.readableEnded) {
+    close();
+  } else {
+    console.log(`BITACORA_READY ${server.port}`);
+    try {
+      await server.app.startEngine();
+    } catch (error) {
+      if (!closing) {
+        console.error(error);
+        close(1);
+      }
+    }
+  }
 } else console.log(`Bitácora lista en 127.0.0.1:${server.port}`);

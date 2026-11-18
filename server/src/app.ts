@@ -44,6 +44,7 @@ export class App {
   private scans = new Set<Promise<void>>();
   private notice?: string;
   private available = false;
+  private starting = true;
   private exhausted = false;
   private flushTimer?: NodeJS.Timeout;
   private dirty = false;
@@ -72,6 +73,10 @@ export class App {
     private kitSource?: string,
   ) {}
   async start() {
+    await this.initialize();
+    await this.startEngine();
+  }
+  async initialize() {
     await mkdir(this.data, { recursive: true });
     await this.workspace?.initialize();
     if (this.workspace) await initializeKit(this.workspace.root, this.data, this.kitSource);
@@ -120,18 +125,23 @@ export class App {
       if (this.backups?.restoring) this.notice = "Quedó un Deshacer pendiente. Podés reintentarlo o dejar la carpeta como está.";
     }
     for (const work of this.works) if (work.pendingFiles) { await this.collectResults(work); this.dirty = true; }
+  }
+  async startEngine() {
     this.unsubscribe = this.engine.subscribe((event) => this.event(event));
     await this.engine.start();
-    this.available = true;
     // Codex reports the account during start. Avoid a second read racing the
     // automatic MXC setup, which can replace the app-server.
     this.accountState ??= await this.engine.account();
+    this.available = true;
+    this.starting = false;
+    this.publish({ type: "snapshot", state: this.snapshot() });
   }
   snapshot(): Snapshot {
     return {
-      account: (this.available && this.accountState) || { connected: false },
+      account: (!this.starting && this.available && this.accountState) || { connected: false },
       engine: {
-        available: this.available,
+        available: !this.starting && this.available,
+        starting: this.starting,
         exhausted: this.exhausted,
         safety: this.engine.executionSafety(),
       },
@@ -413,7 +423,7 @@ export class App {
       return;
     }
     if (command.type === "prepareProtection") {
-      if (!this.available || this.submitting || this.works.some(w => w.busy)) return;
+      if (this.starting || !this.available || this.submitting || this.works.some(w => w.busy)) return;
       await this.engine.prepareProtection();
       return;
     }
@@ -422,7 +432,7 @@ export class App {
       return;
     }
     if (command.type === "connect") {
-      if (this.engine.executionSafety().status === "preparing") {
+      if (this.starting || this.engine.executionSafety().status === "preparing") {
         reply({ type: "problem", text: "Estoy preparando la protección de tu compu. Esperá un momento y volvé a intentar conectar." });
         return;
       }
@@ -478,15 +488,17 @@ export class App {
       });
       return;
     }
-    if (!this.available || !this.engine.executionSafety().allowed) {
+    if (this.starting || !this.available || !this.engine.executionSafety().allowed) {
       const safety = this.engine.executionSafety();
       reply({
         type: "problem",
-        text: !this.available
-          ? "Bitácora está detenida. Esperá a que vuelva para enviar el pedido."
-          : safety.issue === "readBlock"
-            ? "No pude activar el bloqueo que impide leer archivos fuera de tu carpeta. Sin eso no puedo empezar tus pedidos. Tocá Reintentar para volver a intentarlo."
-            : "No puedo enviar pedidos porque la protección de la carpeta no está preparada. Hace falta completar la preparación de Windows.",
+        text: this.starting
+          ? "Esperá a que Bitácora termine de prepararse para enviar el pedido."
+          : !this.available
+            ? "Bitácora está detenida. Esperá a que vuelva para enviar el pedido."
+            : safety.issue === "readBlock"
+              ? "No pude activar el bloqueo que impide leer archivos fuera de tu carpeta. Sin eso no puedo empezar tus pedidos. Tocá Reintentar para volver a intentarlo."
+              : "No puedo enviar pedidos porque la protección de la carpeta no está preparada. Hace falta completar la preparación de Windows.",
         detail: safety.detail,
       });
       return;
