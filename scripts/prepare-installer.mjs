@@ -67,6 +67,9 @@ const codexSource = dirname(dirname(codex));
 const codexFiles = [
   "codex-package.json",
   "bin/codex.exe",
+  // Every agent command goes through code mode (`functions.exec`); without
+  // this host the agent cannot run anything, not even read a file.
+  "bin/codex-code-mode-host.exe",
   "codex-path/rg.exe",
   "codex-resources/codex-command-runner.exe",
   "codex-resources/codex-windows-sandbox-setup.exe",
