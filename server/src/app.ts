@@ -6,7 +6,7 @@ import { basename, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { rememberUserUrls } from './allowed-urls';
 import { initializeKit } from './tools/kit';
-import type { Engine, EngineEvent, SuggestedTitle } from "./engine";
+import type { Account, Engine, EngineEvent, SuggestedTitle } from "./engine";
 import { problemText, EngineFailure, activityText } from "./engine";
 import { fallbackTitle, MAX_TITLE } from "./titles";
 import type { FileRef, Message, Work, Snapshot, ClientCommand, ServerMessage } from "./contracts";
@@ -49,7 +49,7 @@ export class App {
   private dirty = false;
   private writeRevision = 0;
   private works: SavedWork[] = [];
-  private accountState = { connected: false };
+  private accountState?: Account;
   private writes: Promise<void> = Promise.resolve();
   private unsubscribe?: () => void;
   private submitting = false;
@@ -123,11 +123,13 @@ export class App {
     this.unsubscribe = this.engine.subscribe((event) => this.event(event));
     await this.engine.start();
     this.available = true;
-    this.accountState = await this.engine.account();
+    // Codex reports the account during start. Avoid a second read racing the
+    // automatic MXC setup, which can replace the app-server.
+    this.accountState ??= await this.engine.account();
   }
   snapshot(): Snapshot {
     return {
-      account: this.available ? this.accountState : { connected: false },
+      account: (this.available && this.accountState) || { connected: false },
       engine: {
         available: this.available,
         exhausted: this.exhausted,

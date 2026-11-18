@@ -58,6 +58,30 @@ test("desktop serves only bundled assets and accepts the window's assigned origi
   }
 });
 
+test("startup uses the reported account while Codex is being replaced", async () => {
+  class ReplacingEngine extends FakeEngine {
+    override async start() {
+      this.emit({ type: "account", account: { connected: true } });
+    }
+    override async account(): Promise<never> {
+      throw new Error("Codex is being replaced");
+    }
+  }
+
+  await mkdir(".local", { recursive: true });
+  const dir = await mkdtemp(resolve(".local/account-"));
+  try {
+    const server = await serve(new ReplacingEngine(), dir, 0);
+    try {
+      assert.equal(server.app.snapshot().account.connected, true);
+    } finally {
+      await server.close();
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 async function waitForClose(ws: WebSocket, timeoutMs = 15000) {
   if (ws.readyState === WebSocket.CLOSED) return;
   await new Promise<void>((resolve, reject) => {

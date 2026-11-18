@@ -9,7 +9,15 @@ use std::{
 };
 use tauri::{webview::NewWindowResponse, Manager, RunEvent, Url, WebviewUrl, WebviewWindowBuilder};
 
-use webview2_com::{take_pwstr, NavigationStartingEventHandler};
+use webview2_com::{
+    take_pwstr,
+    Microsoft::Web::WebView2::Win32::{
+        ICoreWebView2_22, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT,
+        COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_ALL,
+    },
+    NavigationStartingEventHandler, WebResourceRequestedEventHandler,
+};
+use windows_core::{w, Interface};
 
 const SPLASH: &str = "http://tauri.localhost/index.html";
 const ERROR: &str = "http://tauri.localhost/error.html";
@@ -22,10 +30,11 @@ fn external_link(url: &Url) {
 
 // Tauri's navigation hook covers the top-level page. The native PDF
 // viewer can navigate a child frame without honoring the page's frame-src.
-fn restrict_frames(
+fn restrict_webview(
     webview: tauri::webview::PlatformWebview,
     endpoint: Arc<Mutex<Option<Url>>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let frame_endpoint = Arc::clone(&endpoint);
     let handler = NavigationStartingEventHandler::create(Box::new(move |_, args| {
         if let Some(args) = args {
             let mut uri = Default::default();
@@ -34,7 +43,7 @@ fn restrict_frames(
             let allowed = uri == "about:blank"
                 || Url::parse(&uri).is_ok_and(|url| {
                     url.scheme() == "blob"
-                        && endpoint
+                        && frame_endpoint
                             .lock()
                             .unwrap()
                             .as_ref()
@@ -47,10 +56,43 @@ fn restrict_frames(
         Ok(())
     }));
     unsafe {
-        webview
-            .controller()
-            .CoreWebView2()?
-            .add_FrameNavigationStarting(&handler, &mut 0)?;
+        let env = webview.environment();
+        let core = webview.controller().CoreWebView2()?;
+        core.add_FrameNavigationStarting(&handler, &mut 0)?;
+        // PDF links can start an HTTP document request before WebView2 emits
+        // the navigation or new-window callback. Reject it before it goes out.
+        let filter = w!("http*://*");
+        if let Ok(core_22) = core.cast::<ICoreWebView2_22>() {
+            core_22.AddWebResourceRequestedFilterWithRequestSourceKinds(
+                filter,
+                COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT,
+                COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_ALL,
+            )?;
+        } else {
+            core.AddWebResourceRequestedFilter(filter, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT)?;
+        }
+        core.add_WebResourceRequested(
+            &WebResourceRequestedEventHandler::create(Box::new(move |_, args| {
+                let Some(args) = args else { return Ok(()) };
+                let mut uri = Default::default();
+                args.Request()?.Uri(&mut uri)?;
+                let allowed = Url::parse(&take_pwstr(uri)).is_ok_and(|url| {
+                    url.origin() == Url::parse(SPLASH).unwrap().origin()
+                        || endpoint
+                            .lock()
+                            .unwrap()
+                            .as_ref()
+                            .is_some_and(|local| url.origin() == local.origin())
+                });
+                if !allowed {
+                    let response =
+                        env.CreateWebResourceResponse(None, 403, w!("Forbidden"), w!(""))?;
+                    args.SetResponse(&response)?;
+                }
+                Ok(())
+            })),
+            &mut 0,
+        )?;
     }
     Ok(())
 }
@@ -63,15 +105,14 @@ fn supervise(
     reopen: mpsc::Receiver<()>,
 ) {
     while !server.exiting() {
-        for attempt in 0..2 {
-            if server.exiting() {
-                return;
-            }
+        let mut retried_start = false;
+        let mut recovering = false;
+        while !server.exiting() {
             let result = server.start(&runtime).and_then(server::ready_port);
             if server.exiting() {
                 return;
             }
-            if let Ok(port) = result {
+            let retry = if let Ok(port) = result {
                 let url = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
                 *endpoint.lock().unwrap() = Some(url.clone());
                 let _ = window.navigate(url);
@@ -88,17 +129,23 @@ fn supervise(
                 if !server.exiting() {
                     server.log("El servidor se cerró.");
                 }
-            } else if let Err(error) = &result {
+                let retry = !recovering;
+                recovering = true;
+                retry
+            } else {
+                let error = result.unwrap_err();
                 server.log(&format!("No se pudo iniciar el servidor: {error}"));
-            }
+                let retry =
+                    !recovering && !retried_start && error.kind() != std::io::ErrorKind::TimedOut;
+                retried_start = true;
+                retry
+            };
             *endpoint.lock().unwrap() = None;
             server.stop();
             if server.exiting() {
                 return;
             }
-            if attempt == 1
-                || result.is_err_and(|error| error.kind() == std::io::ErrorKind::TimedOut)
-            {
+            if !retry {
                 break;
             }
             let _ = window.navigate(Url::parse(SPLASH).unwrap());
@@ -168,7 +215,7 @@ fn run() -> tauri::Result<()> {
             app.manage(Arc::clone(&server));
             let worker_window = window.clone();
             window.with_webview(move |webview| {
-                if let Err(error) = restrict_frames(webview, Arc::clone(&endpoint)) {
+                if let Err(error) = restrict_webview(webview, Arc::clone(&endpoint)) {
                     server.log(&format!("No se pudo proteger el visor: {error}"));
                     let _ = worker_window.navigate(Url::parse(ERROR).unwrap());
                     return;
