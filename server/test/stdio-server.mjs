@@ -297,6 +297,10 @@ async function handle(line) {
         break;
       }
       case "skills/config/write": {
+        // A slow answer: lets a test make one write eat most of the cycle's
+        // deadline, so the retry has to fit in what is left.
+        const delayMs = Number(process.env.BITACORA_FAKE_SKILL_WRITE_DELAY || 0);
+        const later = (fn) => (delayMs > 0 ? setTimeout(fn, delayMs) : fn());
         // Fails only the first attempt for that path: a transient Windows lock
         // on `config.toml`, which the engine must retry once and not report.
         const failOncePath = process.env.BITACORA_FAKE_SKILL_WRITE_FAIL_ONCE;
@@ -306,17 +310,17 @@ async function handle(line) {
           !existsSync(setupFile + ".write-failed-once")
         ) {
           writeFileSync(setupFile + ".write-failed-once", "1");
-          send({ id: m.id, error: { code: -32603, message: "failed to persist config" } });
+          later(() => send({ id: m.id, error: { code: -32603, message: "failed to persist config" } }));
           break;
         }
         const failPath = process.env.BITACORA_FAKE_SKILL_WRITE_FAIL;
         if (failPath && (failPath === "*" || m.params?.path === failPath)) {
-          send({ id: m.id, error: { code: -32603, message: "skills write failed" } });
+          later(() => send({ id: m.id, error: { code: -32603, message: "skills write failed" } }));
           break;
         }
         const keepEnabled = process.env.BITACORA_FAKE_SKILL_KEEP_ENABLED;
         if (keepEnabled && (keepEnabled === "*" || m.params?.path === keepEnabled)) {
-          reply({ effectiveEnabled: true });
+          later(() => reply({ effectiveEnabled: true }));
           break;
         }
         let current;

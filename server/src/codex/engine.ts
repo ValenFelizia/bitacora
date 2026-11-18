@@ -1380,12 +1380,12 @@ export class CodexEngine implements Engine {
     }
     for (const target of disable.values()) {
       if (this.child !== child || this.stopping || stopForTime()) return result;
-      target.failure = await this.writeSkill(child, target.path, false, timeLimit);
+      target.failure = await this.writeSkill(child, target.path, false, timeLimit, deadline);
       if (this.child !== child || this.stopping) return result;
     }
     for (const target of enable.values()) {
       if (this.child !== child || this.stopping || stopForTime()) return result;
-      target.failure = await this.writeSkill(child, target.path, true, timeLimit);
+      target.failure = await this.writeSkill(child, target.path, true, timeLimit, deadline);
       if (this.child !== child || this.stopping) return result;
     }
     // Ask again: an accepted write is not a skill that is off (or on). When this
@@ -1494,13 +1494,15 @@ export class CodexEngine implements Engine {
   /**
    * One skill switch, with a single retry. A write that fails twice is returned
    * so the caller names it in the work detail instead of the user seeing a
-   * transient Windows lock as a problem.
+   * transient Windows lock as a problem. The retry never sleeps past the
+   * cycle's deadline: a request never waits longer than the shared limit.
    */
   private async writeSkill(
     child: ChildProcessWithoutNullStreams,
     path: string,
     enabled: boolean,
     timeLimit: () => number | undefined,
+    deadline?: number,
   ): Promise<string | undefined> {
     for (let attempt = 0; ; attempt++) {
       try {
@@ -1509,7 +1511,11 @@ export class CodexEngine implements Engine {
       } catch (error) {
         if (this.child !== child || this.stopping) return undefined;
         if (attempt >= 1) return String(error);
-        await new Promise((resolve) => setTimeout(resolve, SKILL_WRITE_RETRY_MS));
+        const remaining = deadline === undefined ? SKILL_WRITE_RETRY_MS : deadline - Date.now();
+        if (remaining <= 0) return String(error);
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.min(SKILL_WRITE_RETRY_MS, remaining)),
+        );
       }
     }
   }

@@ -1624,6 +1624,61 @@ test("a skills/config/write that fails once is retried and never reported", asyn
   }
 });
 
+test("a write retry never stretches a cycle past its deadline", async () => {
+  await mkdir(".local", { recursive: true });
+  const dir = await mkdtemp(resolve(".local/skills-write-deadline-"));
+  const home = join(dir, "home");
+  const workspace = join(dir, "workspace");
+  const skillsFile = join(dir, "skills.json");
+  await mkdir(home, { recursive: true });
+  await mkdir(workspace, { recursive: true });
+  const skillPath = join(home, "skills", "external-skill", "SKILL.md");
+  await writeSkillsFile(skillsFile, [
+    { name: "external-skill", description: "Not from the kit", path: skillPath, scope: "user", enabled: true },
+  ]);
+  process.env.BITACORA_FAKE_SKILLS_FILE = skillsFile;
+  // The write fails late, when most of the cycle's 150 ms is already gone: the
+  // retry cannot sleep its 150 ms and push the request past the deadline.
+  process.env.BITACORA_FAKE_SKILL_WRITE_FAIL = "*";
+  process.env.BITACORA_FAKE_SKILL_WRITE_DELAY = "120";
+  const engine = new CodexEngine({
+    home,
+    workspace,
+    binary: process.execPath,
+    args: fakeAppServerArgs,
+    restartDelayMs: 30,
+    probeProtection: async () => false,
+    skillsSyncTimeoutMs: 150,
+  });
+  const details: string[] = [];
+  const off = engine.subscribe((event) => {
+    if (event.type === "detail") details.push(event.text);
+  });
+  try {
+    await engine.start();
+    // The startup cycle may already have used the deadline: this one is fresh.
+    await engine.createWork();
+    const started = Date.now();
+    await engine.createWork();
+    const waited = Date.now() - started;
+    assert.ok(waited < 240, `the cycle stopped at its deadline (${waited}ms)`);
+    assert.equal(
+      details.some((text) =>
+        text.includes("No pude comprobar si los complementos quedaron como tienen que estar"),
+      ),
+      true,
+      "the failed batch is still reported",
+    );
+  } finally {
+    off();
+    delete process.env.BITACORA_FAKE_SKILLS_FILE;
+    delete process.env.BITACORA_FAKE_SKILL_WRITE_FAIL;
+    delete process.env.BITACORA_FAKE_SKILL_WRITE_DELAY;
+    await engine.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
+});
+
 test("a pass that runs out of time before verifying does not clear its notice", async () => {
   await mkdir(".local", { recursive: true });
   const dir = await mkdtemp(resolve(".local/skills-verify-key-"));
