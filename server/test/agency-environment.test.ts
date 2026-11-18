@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -12,11 +12,14 @@ import { setTimeout as delay } from "node:timers/promises";
 import {
   AGENCY_DEVELOPER_INSTRUCTIONS,
   AGENCY_ENVIRONMENT,
+  isAllowedSkill,
 } from "../src/agency-environment";
+import { App } from "../src/app";
 import { CodexEngine, PERMISSIONS_PROFILE, appServerArgs } from "../src/codex/engine";
 import { codexEnvironmentArgs } from "../src/codex/environment";
 import { registerKit } from "../src/codex/kit";
 import { codexBinary } from "../../scripts/codex-runtime.mjs";
+import { WorkspaceFiles } from "../src/workspace-files";
 import { fakeAppServerArgs } from "./fake-app-server";
 
 /**
@@ -44,7 +47,6 @@ const EXPECTED_ENABLED_FEATURES = [
   "deferred_tool_world_state",
   "enable_request_compression",
   "fast_mode",
-  "goals",
   "guardian_approval",
   "guardian_include_additional_context",
   "guardian_reuse_parent_compaction",
@@ -189,10 +191,30 @@ test("agency environment policy and developer instructions match DEC-011", () =>
   assert.equal(AGENCY_ENVIRONMENT.aiImages, true);
   assert.equal(AGENCY_ENVIRONMENT.webSearch, "disabled");
   assert.equal(AGENCY_ENVIRONMENT.subagents, false);
+  assert.equal(AGENCY_ENVIRONMENT.goals, false);
   assert.equal(AGENCY_ENVIRONMENT.bundledSkills, false);
+  assert.deepEqual(AGENCY_ENVIRONMENT.allowedSkills, []);
   assert.equal(AGENCY_ENVIRONMENT.pluginSuggestions, false);
   assert.deepEqual(AGENCY_ENVIRONMENT.allowedPlugins, []);
   assert.deepEqual(AGENCY_ENVIRONMENT.allowedConnectors, []);
+
+  for (const scope of ["user", "repo", "system", "admin"]) {
+    assert.equal(isAllowedSkill({ name: "any-skill", scope }), false);
+  }
+  assert.equal(
+    isAllowedSkill(
+      { name: "kit-skill", scope: "repo" },
+      { ...AGENCY_ENVIRONMENT, allowedSkills: ["kit-skill"] },
+    ),
+    true,
+  );
+  assert.equal(
+    isAllowedSkill(
+      { name: "kit-skill", scope: "user" },
+      { ...AGENCY_ENVIRONMENT, allowedSkills: ["kit-skill"] },
+    ),
+    false,
+  );
 
   assert.doesNotMatch(AGENCY_DEVELOPER_INSTRUCTIONS, /No generes imágenes con IA/i);
   assert.match(AGENCY_DEVELOPER_INSTRUCTIONS, /castellano rioplatense/i);
@@ -349,6 +371,7 @@ test("real codex features list matches the exact expected enabled feature set fo
       "multi_agent",
       "multi_agent_v2",
       "runtime_agent_instances",
+      "goals",
     ]) {
       assert.equal(features.get(off), false, `expected feature ${off} to be false`);
     }
@@ -403,7 +426,7 @@ test(
           plugins?: Record<string, { enabled?: boolean }>;
           apps?: Record<string, { enabled?: boolean }>;
           agents?: { enabled?: boolean };
-          skills?: { bundled?: { enabled?: boolean } };
+          skills?: { bundled?: { enabled?: boolean }; include_instructions?: boolean };
         };
       }>("config/read", { includeLayers: false });
 
@@ -418,10 +441,12 @@ test(
       assert.equal(config.features?.apps, false);
       assert.equal(config.features?.multi_agent, false);
       assert.equal(config.features?.multi_agent_v2, false);
+      assert.equal(config.features?.goals, false);
       assert.equal(config.plugins?._default?.enabled, false);
       assert.equal(config.apps?._default?.enabled, false);
       assert.equal(config.agents?.enabled, false);
       assert.equal(config.skills?.bundled?.enabled, false);
+      assert.equal(config.skills?.include_instructions, false);
 
       const skills = await curated.rpc<{
         data: Array<{ skills: Array<{ name: string; scope: string; enabled: boolean }> }>;
@@ -480,3 +505,768 @@ test(
     }
   },
 );
+
+test(
+  "CodexEngine disables user and repo skills on the real Codex binary without touching HOME/USERPROFILE",
+  { timeout: 90_000 },
+  async () => {
+    const base = await mkdtemp(join(tmpdir(), "bitacora-real-skills-"));
+    const home = join(base, "codex");
+    const workspace = join(base, "workspace");
+    await mkdir(join(home, "skills", "fake-user-skill"), { recursive: true });
+    await mkdir(join(workspace, ".agents", "skills", "fake-repo-skill"), { recursive: true });
+    await writeFile(
+      join(home, "skills", "fake-user-skill", "SKILL.md"),
+      "---\nname: fake-user-skill\ndescription: Synthetic user skill for test.\n---\n",
+      "utf8",
+    );
+    await writeFile(
+      join(workspace, ".agents", "skills", "fake-repo-skill", "SKILL.md"),
+      "---\nname: fake-repo-skill\ndescription: Synthetic repo skill for test.\n---\n",
+      "utf8",
+    );
+    await writeFile(join(home, "config.toml"), 'windows.sandbox = "elevated"\n', "utf8");
+
+    const beforeHome = process.env.HOME;
+    const beforeUserProfile = process.env.USERPROFILE;
+    const engine = new CodexEngine({
+      home,
+      workspace,
+      requestTimeoutMs: 60_000,
+      probeProtection: async () => false,
+    });
+    const details: string[] = [];
+    const unsubscribe = engine.subscribe((event) => {
+      if (event.type === "detail") details.push(event.text);
+    });
+
+    try {
+      await engine.start();
+      const created = await engine.createWork();
+      assert.ok(created.conversationId);
+      // Only the synthetic skills are this test's business: the machine may
+      // have its own skills in `~/.agents/skills`, and the test must not depend
+      // on what they are or whether they can be turned off.
+      assert.deepEqual(
+        details.filter((text) => /fake-(user|repo)-skill/.test(text)),
+        [],
+        "the synthetic skills must be turned off without a notice",
+      );
+      assert.equal(process.env.HOME, beforeHome);
+      assert.equal(process.env.USERPROFILE, beforeUserProfile);
+    } finally {
+      unsubscribe();
+      await engine.close();
+    }
+
+    // Verify with a fresh app-server reading the same CODEX_HOME and workspace
+    // that the synthetic user/repo skills were persisted as disabled, and that
+    // any host skill discovered on this machine is off too.
+    const verifier = startRealAppServer(appServerArgs("elevated"), workspace, home);
+    try {
+      await verifier.rpc("initialize", {
+        clientInfo: { name: "bitacora_skills_verify", version: "0.1.0" },
+        capabilities: { experimentalApi: true, requestAttestation: false },
+      });
+      verifier.child.stdin.write('{"method":"initialized"}\n');
+
+      const { data } = await verifier.rpc<{
+        data: Array<{ skills: Array<{ name: string; scope: string; enabled: boolean }> }>;
+      }>("skills/list", { cwds: [workspace], forceReload: true });
+      const listed = data.flatMap((entry) => entry.skills);
+
+      const userSkill = listed.find((s) => s.name === "fake-user-skill");
+      const repoSkill = listed.find((s) => s.name === "fake-repo-skill");
+      assert.ok(userSkill, "synthetic user skill should be listed");
+      assert.equal(userSkill.scope, "user");
+      assert.equal(userSkill.enabled, false);
+      assert.ok(repoSkill, "synthetic repo skill should be listed");
+      assert.equal(repoSkill.scope, "repo");
+      assert.equal(repoSkill.enabled, false);
+    } finally {
+      await verifier.close();
+      await rm(base, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+    }
+  },
+);
+
+test("CodexEngine re-disables a skill that appears while a turn runs (skills/changed)", async () => {
+  await mkdir(".local", { recursive: true });
+  const dir = await mkdtemp(resolve(".local/skills-changed-"));
+  const home = join(dir, "home");
+  const workspace = join(dir, "workspace");
+  const skillsFile = join(dir, "skills.json");
+  await mkdir(home, { recursive: true });
+  await mkdir(workspace, { recursive: true });
+  const initialPath = join(home, "skills", "initial-user-skill", "SKILL.md");
+  await writeFile(
+    skillsFile,
+    JSON.stringify([{ name: "initial-user-skill", description: "Initial", path: initialPath, scope: "user", enabled: true }]),
+    "utf8",
+  );
+  process.env.BITACORA_FAKE_SKILLS_FILE = skillsFile;
+
+  const engine = new CodexEngine({
+    home,
+    workspace,
+    binary: process.execPath,
+    args: fakeAppServerArgs,
+    restartDelayMs: 30,
+    probeProtection: async () => false,
+  });
+  const finished = new Promise<void>((resolveDone) => {
+    const off = engine.subscribe((event) => {
+      if (event.type === "finished") {
+        off();
+        resolveDone();
+      }
+    });
+  });
+  const readSkills = async () =>
+    JSON.parse(await readFile(skillsFile, "utf8")) as Array<{ name: string; enabled: boolean }>;
+
+  try {
+    await engine.start();
+    // The skill that existed at startup is turned off by the check that runs in
+    // the background, and the work exists before the new one appears: only the
+    // notification can turn that one off.
+    await until(async () => (await readSkills()).every((skill) => !skill.enabled));
+    const afterStart = await readSkills();
+    assert.equal(afterStart.length, 1);
+
+    const { conversationId } = await engine.createWork();
+    assert.equal((await readSkills()).length, 1);
+    await engine.send(conversationId, "skills-changed");
+    await finished;
+
+    const deadline = Date.now() + 5000;
+    let updated: Array<{ name: string; enabled: boolean }> = [];
+    while (Date.now() < deadline) {
+      updated = await readSkills();
+      if (updated.length === 2 && updated.every((skill) => !skill.enabled)) break;
+      await delay(25);
+    }
+    assert.equal(updated.length, 2);
+    assert.equal(updated.every((skill) => skill.enabled === false), true);
+  } finally {
+    delete process.env.BITACORA_FAKE_SKILLS_FILE;
+    await engine.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
+});
+
+/**
+ * Waits until `predicate` is true. The tests that only look at what the app
+ * shows cannot be written as a single await: the event they wait for arrives
+ * while another promise is still open.
+ */
+async function until(predicate: () => boolean | Promise<boolean>, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) return;
+    await delay(20);
+  }
+  assert.fail(`condition timed out after ${timeoutMs}ms`);
+}
+
+/**
+ * One fake app-server per test, with a skill that cannot be turned off in the
+ * way the test asks for. Errors land in `work.details`, never in the app.
+ */
+async function withBrokenSkill(
+  key: "BITACORA_FAKE_SKILL_WRITE_FAIL" | "BITACORA_FAKE_SKILL_KEEP_ENABLED",
+  body: (details: () => Promise<string>) => Promise<void>,
+) {
+  await mkdir(".local", { recursive: true });
+  const dir = await mkdtemp(resolve(".local/skills-error-"));
+  const home = join(dir, "home");
+  const workspace = join(dir, "workspace");
+  const data = join(dir, "data");
+  await mkdir(home, { recursive: true });
+  await mkdir(workspace, { recursive: true });
+  const skillPath = join(home, "skills", "broken-skill", "SKILL.md");
+  process.env.BITACORA_FAKE_SKILLS = JSON.stringify([
+    { name: "broken-skill", description: "Cannot be toggled", path: skillPath, scope: "user", enabled: true },
+  ]);
+  process.env[key] = skillPath;
+
+  const engine = new CodexEngine({
+    home,
+    workspace,
+    binary: process.execPath,
+    args: fakeAppServerArgs,
+    restartDelayMs: 30,
+    probeProtection: async () => false,
+  });
+  const app = new App(engine, data, () => {});
+  const details = async (): Promise<string> => {
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      const work = app.snapshot().works[0];
+      if (work && !work.busy) return work.details;
+      await delay(25);
+    }
+    return app.snapshot().works[0]?.details ?? "";
+  };
+
+  try {
+    await app.start();
+    const reply = await new Promise<{ type: string; workId?: string }>((resolveReply) => {
+      void app.command({ type: "send", text: "race" }, (message) => resolveReply(message));
+    });
+    assert.equal(reply.type, "selected");
+    await body(details);
+    // The failure is a detail: the work ends well and nothing blocks it.
+    const work = app.snapshot().works[0];
+    assert.ok(work);
+    assert.equal(work.busy, false);
+    assert.equal(work.problem, undefined);
+  } finally {
+    delete process.env.BITACORA_FAKE_SKILLS;
+    delete process.env[key];
+    await app.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
+}
+
+/**
+ * The sentence the user reads before the technical detail: the part of each
+ * notice up to the first colon. That is where wording matters; after it comes
+ * the path or the error, which is allowed to name internals.
+ */
+function notices(text: string) {
+  return text
+    .split("\n")
+    .filter((line) => line.startsWith("No pude") || line.startsWith("No terminé"))
+    .map((line) => line.split(":")[0])
+    .join("\n");
+}
+
+test("App records a failed disable in work.details without blocking work", async () => {
+  await withBrokenSkill("BITACORA_FAKE_SKILL_WRITE_FAIL", async (details) => {
+    const text = await details();
+    assert.match(text, /No pude desactivar un complemento que no es del kit:/);
+    assert.doesNotMatch(notices(text), /\bskills?\b|\bentorno\b|\bmotor\b/i);
+  });
+});
+
+test("App records a disable that only claimed to work, because the list is asked again", async () => {
+  // The write answers `effectiveEnabled: true` for what was asked and changes
+  // nothing: only a new list can tell that the skill is still on.
+  await withBrokenSkill("BITACORA_FAKE_SKILL_KEEP_ENABLED", async (details) => {
+    const text = await details();
+    assert.match(text, /No pude desactivar un complemento que no es del kit:/);
+    // The words the user sees name what happened, never the internals.
+    assert.doesNotMatch(notices(text), /\bskills?\b|\bentorno\b|\bmotor\b/i);
+  });
+});
+
+test("App keeps working and says so when the skills list fails", async () => {
+  await mkdir(".local", { recursive: true });
+  const dir = await mkdtemp(resolve(".local/skills-list-fail-"));
+  const home = join(dir, "home");
+  const workspace = join(dir, "workspace");
+  const data = join(dir, "data");
+  await mkdir(home, { recursive: true });
+  await mkdir(workspace, { recursive: true });
+  process.env.BITACORA_FAKE_SKILLS_LIST_FAIL = "1";
+
+  const engine = new CodexEngine({
+    home,
+    workspace,
+    binary: process.execPath,
+    args: fakeAppServerArgs,
+    restartDelayMs: 30,
+    probeProtection: async () => false,
+  });
+  const app = new App(engine, data, () => {});
+
+  try {
+    await app.start();
+    const reply = await new Promise<{ type: string; workId?: string }>((resolveReply) => {
+      void app.command({ type: "send", text: "race" }, (message) => resolveReply(message));
+    });
+    assert.equal(reply.type, "selected");
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      const work = app.snapshot().works[0];
+      if (work && !work.busy) break;
+      await delay(25);
+    }
+    const work = app.snapshot().works[0];
+    assert.ok(work);
+    assert.equal(work.busy, false);
+    assert.equal(work.problem, undefined);
+    assert.match(work.details, /No pude revisar los complementos del kit/);
+    assert.doesNotMatch(notices(work.details), /\bskills?\b|\bentorno\b|\bmotor\b/i);
+  } finally {
+    delete process.env.BITACORA_FAKE_SKILLS_LIST_FAIL;
+    await app.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
+});
+
+test("CodexEngine turns off a skill that appeared since the last turn before sending", async () => {
+  await mkdir(".local", { recursive: true });
+  const dir = await mkdtemp(resolve(".local/skills-before-turn-"));
+  const home = join(dir, "home");
+  const workspace = join(dir, "workspace");
+  const skillsFile = join(dir, "skills.json");
+  await mkdir(home, { recursive: true });
+  await mkdir(workspace, { recursive: true });
+  await writeFile(skillsFile, JSON.stringify([]), "utf8");
+  process.env.BITACORA_FAKE_SKILLS_FILE = skillsFile;
+  const engine = new CodexEngine({
+    home,
+    workspace,
+    binary: process.execPath,
+    args: fakeAppServerArgs,
+    restartDelayMs: 30,
+    probeProtection: async () => false,
+  });
+  const readSkills = async () =>
+    JSON.parse(await readFile(skillsFile, "utf8")) as Array<{ name: string; enabled: boolean }>;
+  try {
+    await engine.start();
+    const { conversationId } = await engine.createWork();
+    // No notification this time: the next turn must not see the new skill.
+    await writeFile(
+      skillsFile,
+      JSON.stringify([
+        { name: "late-skill", description: "Appeared after the last turn", path: join(home, "skills", "late-skill", "SKILL.md"), scope: "user", enabled: true },
+      ]),
+      "utf8",
+    );
+    await engine.send(conversationId, "race");
+    const after = await readSkills();
+    assert.equal(after.length, 1);
+    assert.equal(after[0]?.enabled, false);
+  } finally {
+    delete process.env.BITACORA_FAKE_SKILLS_FILE;
+    await engine.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
+});
+
+test("App is available as soon as the protection is ready, even with a slow skill list", async () => {
+  await mkdir(".local", { recursive: true });
+  const dir = await mkdtemp(resolve(".local/slow-skills-"));
+  const home = join(dir, "home");
+  const workspace = join(dir, "workspace");
+  const data = join(dir, "data");
+  await mkdir(home, { recursive: true });
+  await mkdir(workspace, { recursive: true });
+  // The check takes longer than the whole startup: the app must be usable while
+  // it runs, or the user reads "Bitácora está detenida" with a ready engine.
+  process.env.BITACORA_FAKE_SKILLS_DELAY = "1500";
+  const engine = new CodexEngine({
+    home,
+    workspace,
+    binary: process.execPath,
+    args: fakeAppServerArgs,
+    restartDelayMs: 30,
+    probeProtection: async () => false,
+  });
+  const app = new App(engine, data, () => {});
+  let reply: { type: string; text?: string } | undefined;
+  try {
+    const starting = app.start();
+    await until(() => app.snapshot().engine.safety.allowed, 10_000);
+    assert.equal(
+      app.snapshot().engine.available,
+      true,
+      "the app must not show a ready engine as stopped",
+    );
+    await app.command({ type: "send", text: "race" }, (message) => {
+      reply = message as { type: string; text?: string };
+    });
+    assert.equal(reply?.type, "selected");
+    assert.doesNotMatch(reply?.text ?? "", /detenid/i);
+    await starting;
+    await until(() => app.snapshot().works[0]?.busy === false, 15_000);
+  } finally {
+    delete process.env.BITACORA_FAKE_SKILLS_DELAY;
+    await app.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
+});
+
+test("a skill check that never answers stops at its own limit and says so", async () => {
+  await mkdir(".local", { recursive: true });
+  const dir = await mkdtemp(resolve(".local/skills-hang-"));
+  const home = join(dir, "home");
+  const workspace = join(dir, "workspace");
+  await mkdir(home, { recursive: true });
+  await mkdir(workspace, { recursive: true });
+  process.env.BITACORA_FAKE_SKILLS_HANG = "1";
+  const engine = new CodexEngine({
+    home,
+    workspace,
+    binary: process.execPath,
+    args: fakeAppServerArgs,
+    restartDelayMs: 30,
+    probeProtection: async () => false,
+    skillsSyncTimeoutMs: 150,
+  });
+  const details: string[] = [];
+  const off = engine.subscribe((event) => {
+    if (event.type === "detail") details.push(event.text);
+  });
+  try {
+    await engine.start();
+    // Without the limit the check would wait for the request timeout and say
+    // something else: only the limit produces this sentence.
+    await until(() =>
+      details.some((text) => text.includes("No terminé de revisar los complementos a tiempo")),
+    );
+    assert.equal(engine.executionSafety().allowed, true);
+  } finally {
+    off();
+    delete process.env.BITACORA_FAKE_SKILLS_HANG;
+    await engine.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
+});
+
+for (const verify of ["fail", "hang", "shape"] as const) {
+  test(`a batch that cannot be verified is reported with what was written (${verify})`, async () => {
+    await mkdir(".local", { recursive: true });
+    const dir = await mkdtemp(resolve(`.local/skills-verify-${verify}-`));
+    const home = join(dir, "home");
+    const workspace = join(dir, "workspace");
+    await mkdir(home, { recursive: true });
+    await mkdir(workspace, { recursive: true });
+    const skillPath = join(home, "skills", "external-skill", "SKILL.md");
+    process.env.BITACORA_FAKE_SKILLS = JSON.stringify([
+      { name: "external-skill", description: "Not from the kit", path: skillPath, scope: "user", enabled: true },
+    ]);
+    process.env.BITACORA_FAKE_SKILLS_VERIFY = verify;
+    const engine = new CodexEngine({
+      home,
+      workspace,
+      binary: process.execPath,
+      args: fakeAppServerArgs,
+      restartDelayMs: 30,
+      probeProtection: async () => false,
+      skillsSyncTimeoutMs: 400,
+    });
+    const details: string[] = [];
+    const off = engine.subscribe((event) => {
+      if (event.type === "detail") details.push(event.text);
+    });
+    try {
+      await engine.start();
+      await until(() =>
+        details.some((text) => text.includes("No pude comprobar si quedaron desactivados los complementos")),
+      );
+      const message = details.find((text) =>
+        text.includes("No pude comprobar si quedaron desactivados los complementos"),
+      );
+      assert.match(message ?? "", /external-skill/, "the notice names what was written");
+      const timedOut = details.some((text) =>
+        text.includes("No terminé de revisar los complementos a tiempo"),
+      );
+      // Only the one that never answers runs out of time.
+      assert.equal(timedOut, verify === "hang");
+    } finally {
+      off();
+      delete process.env.BITACORA_FAKE_SKILLS;
+      delete process.env.BITACORA_FAKE_SKILLS_VERIFY;
+      await engine.close();
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+    }
+  });
+}
+
+test("a pause asked while the turn is prepared does not arm its deadline early", async () => {
+  await mkdir(".local", { recursive: true });
+  const dir = await mkdtemp(resolve(".local/skills-pause-"));
+  const home = join(dir, "home");
+  const workspace = join(dir, "workspace");
+  await mkdir(home, { recursive: true });
+  await mkdir(workspace, { recursive: true });
+  // The pause deadline is shorter than the skill check: a deadline that starts
+  // counting with the pause instead of with the turn would kill the engine on
+  // the way, before the turn is even sent.
+  process.env.BITACORA_FAKE_SKILLS_DELAY = "400";
+  const engine = new CodexEngine({
+    home,
+    workspace,
+    binary: process.execPath,
+    args: fakeAppServerArgs,
+    restartDelayMs: 30,
+    probeProtection: async () => false,
+    pauseTimeoutMs: 100,
+  });
+  const events: Array<{ type: string; status?: string }> = [];
+  const off = engine.subscribe((event) => events.push(event as { type: string; status?: string }));
+  try {
+    await engine.start();
+    const { conversationId } = await engine.createWork();
+    const sending = engine.send(conversationId, "race");
+    await delay(50);
+    await engine.interrupt(conversationId);
+    await sending;
+    // The turn was sent anyway, so the request ends the way the turn ends.
+    assert.equal(
+      events.some((event) => event.type === "finished" && event.status === "completed"),
+      true,
+      "the turn was sent and completed",
+    );
+    assert.equal(events.some((event) => event.type === "problem"), false);
+    assert.equal(engine.executionSafety().allowed, true);
+  } finally {
+    off();
+    delete process.env.BITACORA_FAKE_SKILLS_DELAY;
+    await engine.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
+});
+
+test("a pause asked while the request is prepared still sends the turn with its notice", async () => {
+  await mkdir(".local", { recursive: true });
+  const dir = await mkdtemp(resolve(".local/pause-notice-"));
+  const home = join(dir, "home");
+  const root = join(dir, "agency");
+  const data = join(dir, "data");
+  const log = join(dir, "protocol.jsonl");
+  await mkdir(home, { recursive: true });
+  const files = new WorkspaceFiles(root);
+  await files.initialize();
+  process.env.BITACORA_FAKE_LOG = log;
+  // The skill check is slow, so the pause asked for the second request lands
+  // while the engine is still preparing it, before turn/start.
+  process.env.BITACORA_FAKE_SKILLS_DELAY = "400";
+  // The first turn lasts long enough for the test to create a file while it
+  // runs: Deshacer then has something to restore and leaves its notice.
+  process.env.BITACORA_FAKE_TURN_DELAY = "600";
+  const engine = new CodexEngine({
+    home,
+    workspace: root,
+    binary: process.execPath,
+    args: fakeAppServerArgs,
+    restartDelayMs: 30,
+    probeProtection: async () => false,
+  });
+  const app = new App(engine, data, () => {}, undefined, files);
+  try {
+    await app.start();
+    const first = app.command({ type: "send", text: "slow-start" }, () => {});
+    await until(() => app.snapshot().works[0]?.busy === true);
+    await writeFile(join(root, "creado.txt"), "hola");
+    await first;
+    await until(() => app.snapshot().works[0]?.busy === false, 10_000);
+    const undo = app.snapshot().undo;
+    assert.ok(undo, "Deshacer has something to restore");
+    await app.command({ type: "undo", id: undo.id }, () => {});
+
+    // The second request is prepared while the engine checks the skills: the
+    // pause lands before turn/start.
+    const workId = app.snapshot().works[0].id;
+    const second = app.command({ type: "send", text: "pause", workId }, () => {});
+    await until(() => app.snapshot().works[0]?.progress === "Preparando la respuesta…");
+    await app.command({ type: "interrupt", workId }, () => {});
+    await second;
+
+    const calls = (await readFile(log, "utf8"))
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as {
+        method?: string;
+        params?: { input?: Array<{ type: string; text?: string }> };
+      });
+    const turns = calls.filter((call) => call.method === "turn/start");
+    assert.equal(turns.length, 2, "both requests reached the agent");
+    const input = turns[1]?.params?.input ?? [];
+    assert.equal(input[0]?.text, "pause");
+    assert.equal(
+      input.some((item) => item.type === "text" && /se deshicieron los cambios/.test(item.text ?? "")),
+      true,
+      "the notice about the reverted files went with the turn",
+    );
+  } finally {
+    delete process.env.BITACORA_FAKE_LOG;
+    delete process.env.BITACORA_FAKE_TURN_DELAY;
+    delete process.env.BITACORA_FAKE_SKILLS_DELAY;
+    await app.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
+});
+
+test("a request that fails before its work exists does not leave its notices behind", async () => {
+  await mkdir(".local", { recursive: true });
+  const dir = await mkdtemp(resolve(".local/skills-pending-"));
+  const home = join(dir, "home");
+  const workspace = join(dir, "workspace");
+  const data = join(dir, "data");
+  const skillsFile = join(dir, "skills.json");
+  await mkdir(home, { recursive: true });
+  await mkdir(workspace, { recursive: true });
+  const first = join(home, "skills", "first-skill", "SKILL.md");
+  const second = join(home, "skills", "second-skill", "SKILL.md");
+  await writeFile(
+    skillsFile,
+    JSON.stringify([{ name: "first-skill", description: "At startup", path: first, scope: "user", enabled: true }]),
+    "utf8",
+  );
+  process.env.BITACORA_FAKE_SKILLS_FILE = skillsFile;
+  // Neither skill can be turned off, so every list that sees one says so once.
+  process.env.BITACORA_FAKE_SKILL_KEEP_ENABLED = "*";
+  process.env.BITACORA_FAKE_THREAD_START_FAIL_ONCE = "1";
+
+  const engine = new CodexEngine({
+    home,
+    workspace,
+    binary: process.execPath,
+    args: fakeAppServerArgs,
+    restartDelayMs: 30,
+    probeProtection: async () => false,
+  });
+  const app = new App(engine, data, () => {});
+  const details: string[] = [];
+  const off = engine.subscribe((event) => {
+    if (event.type === "detail") details.push(event.text);
+  });
+  /**
+   * Sends through the app and returns the reply the app selected the work with.
+   * The command rejects only when the request could not be committed.
+   */
+  let selected: { type: string; workId?: string; text?: string } | undefined;
+  const sendCommand = (text: string) =>
+    app.command({ type: "send", text }, (message) => {
+      selected = message as { type: string; workId?: string; text?: string };
+    });
+
+  try {
+    await app.start();
+    // The startup check runs in the background: wait until it saw the first
+    // skill before the file changes under it.
+    await until(() => details.some((text) => text.includes("first-skill")));
+    // A second skill appears: the failed request is the one that sees it, so
+    // its notice belongs to that request and nowhere else.
+    await writeFile(
+      skillsFile,
+      JSON.stringify([
+        { name: "first-skill", description: "At startup", path: first, scope: "user", enabled: true },
+        { name: "second-skill", description: "During the failed request", path: second, scope: "user", enabled: true },
+      ]),
+      "utf8",
+    );
+    await assert.rejects(sendCommand("primer pedido"));
+    assert.equal(app.snapshot().works.length, 0);
+
+    // The text of a request is the scenario the fake app-server runs: "race"
+    // answers and ends the turn in one step.
+    await sendCommand("race");
+    assert.equal(
+      selected?.type,
+      "selected",
+      `${selected?.text} | ${JSON.stringify(app.snapshot().engine)}`,
+    );
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      const work = app.snapshot().works[0];
+      if (work && !work.busy) break;
+      await delay(25);
+    }
+    const work = app.snapshot().works[0];
+    assert.ok(work);
+    assert.match(work.details, /No pude desactivar un complemento/);
+    // The notice the failed request queued was never delivered, so the engine
+    // has to say it again for the work that is really sent: dropping it must
+    // not make the failure silent from then on.
+    assert.equal(work.details.includes("first-skill"), true);
+    assert.equal(
+      work.details.includes("second-skill"),
+      true,
+      "the notice that was thrown away is said again",
+    );
+    assert.equal(
+      work.details.split("second-skill").length - 1,
+      1,
+      "and said once",
+    );
+  } finally {
+    off();
+    delete process.env.BITACORA_FAKE_SKILLS_FILE;
+    delete process.env.BITACORA_FAKE_SKILL_KEEP_ENABLED;
+    delete process.env.BITACORA_FAKE_THREAD_START_FAIL_ONCE;
+    await app.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
+});
+
+test("an unexpected skills/list shape does not keep the engine from starting", async () => {
+  for (const shape of ["missing", "skills"]) {
+    await mkdir(".local", { recursive: true });
+    const dir = await mkdtemp(resolve(`.local/skills-shape-${shape}-`));
+    const home = join(dir, "home");
+    const workspace = join(dir, "workspace");
+    await mkdir(home, { recursive: true });
+    await mkdir(workspace, { recursive: true });
+    process.env.BITACORA_FAKE_SKILLS_SHAPE = shape;
+    const engine = new CodexEngine({
+      home,
+      workspace,
+      binary: process.execPath,
+      args: fakeAppServerArgs,
+      restartDelayMs: 30,
+      probeProtection: async () => false,
+    });
+    const details: string[] = [];
+    const off = engine.subscribe((event) => {
+      if (event.type === "detail") details.push(event.text);
+    });
+    try {
+      await engine.start();
+      assert.equal(engine.executionSafety().allowed, true);
+      const created = await engine.createWork();
+      assert.ok(created.conversationId);
+      await engine.send(created.conversationId, "race");
+      assert.equal(details.length, 1, shape);
+      assert.match(details[0] ?? "", /No pude revisar los complementos del kit/);
+    } finally {
+      off();
+      delete process.env.BITACORA_FAKE_SKILLS_SHAPE;
+      await engine.close();
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+    }
+  }
+});
+
+test("skills/list errors are reported once, not on every sync", async () => {
+  await mkdir(".local", { recursive: true });
+  const dir = await mkdtemp(resolve(".local/skills-entry-error-"));
+  const home = join(dir, "home");
+  const workspace = join(dir, "workspace");
+  await mkdir(home, { recursive: true });
+  await mkdir(workspace, { recursive: true });
+  const brokenPath = join(home, "skills", "broken", "SKILL.md");
+  process.env.BITACORA_FAKE_SKILL_ERRORS = brokenPath;
+  const engine = new CodexEngine({
+    home,
+    workspace,
+    binary: process.execPath,
+    args: fakeAppServerArgs,
+    restartDelayMs: 30,
+    probeProtection: async () => false,
+  });
+  const details: string[] = [];
+  const off = engine.subscribe((event) => {
+    if (event.type === "detail") details.push(event.text);
+  });
+  try {
+    await engine.start();
+    const created = await engine.createWork();
+    await engine.send(created.conversationId, "race");
+    const reported = details.filter((text) => text.includes(brokenPath));
+    assert.equal(reported.length, 1);
+    assert.match(reported[0] ?? "", /No pude leer un complemento/);
+  } finally {
+    off();
+    delete process.env.BITACORA_FAKE_SKILL_ERRORS;
+    await engine.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
+});

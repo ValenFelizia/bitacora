@@ -522,6 +522,9 @@ for (const scenario of ["success", "failure", "restart", "mxc"] as const) {
     process.env.BITACORA_FAKE_SAFETY = "notConfigured";
     if (scenario === "failure") process.env.BITACORA_FAKE_SETUP_FAIL = "1";
     if (scenario === "restart") process.env.BITACORA_FAKE_SETUP_CRASH = "1";
+    // The skills list of the restarted process is slow: the check it runs on
+    // the way back must not publish `allowed` before the engine takes work.
+    if (scenario === "restart") process.env.BITACORA_FAKE_SKILLS_DELAY = "150";
     if (scenario === "mxc") process.env.BITACORA_FAKE_MXC = "1";
     const f = await fixture();
     try {
@@ -548,7 +551,7 @@ for (const scenario of ["success", "failure", "restart", "mxc"] as const) {
       assert.equal(records.filter(m => m.method === "turn/start").length, scenario === "failure" ? 0 : 1);
       assert.ok(f.events.some(e => e.type === "protection" && e.safety.status === "preparing"));
     } finally {
-      for (const key of ["BITACORA_FAKE_SAFETY", "BITACORA_FAKE_SETUP_FAIL", "BITACORA_FAKE_SETUP_CRASH", "BITACORA_FAKE_MXC"]) delete process.env[key];
+      for (const key of ["BITACORA_FAKE_SAFETY", "BITACORA_FAKE_SETUP_FAIL", "BITACORA_FAKE_SETUP_CRASH", "BITACORA_FAKE_MXC", "BITACORA_FAKE_SKILLS_DELAY"]) delete process.env[key];
       await f.close();
     }
   });

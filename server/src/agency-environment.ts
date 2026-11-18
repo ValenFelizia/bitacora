@@ -17,8 +17,19 @@ export type AgencyEnvironment = {
   webSearch: "disabled";
   /** Multi-agent / subagent spawning; disabled to preserve the single-work UX. */
   subagents: boolean;
+  /**
+   * Autonomous thread goals (`create_goal`, `get_goal`, `update_goal`);
+   * disabled so the agent cannot continue on its own and spend quota unasked.
+   */
+  goals: boolean;
   /** Provider bundled skills unrelated to travel agencies (skill/plugin creators, review, docs). */
   bundledSkills: boolean;
+  /**
+   * Allowlisted skill names provided by Bitácora's kit. Empty because the kit
+   * currently ships no skills; every other skill (user, admin, system, and
+   * repo/ancestor) is disabled so host or external skills never leak in.
+   */
+  allowedSkills: readonly string[];
   /** Automatic install prompts for provider plugins/connectors. */
   pluginSuggestions: boolean;
   /**
@@ -44,8 +55,17 @@ export const AGENCY_ENVIRONMENT: AgencyEnvironment = {
   aiImages: true,
   webSearch: "disabled",
   subagents: false,
+  goals: false,
   bundledSkills: false,
+  allowedSkills: [],
   pluginSuggestions: false,
   allowedPlugins: [],
   allowedConnectors: [],
 };
+
+export function isAllowedSkill(
+  skill: { name: string; scope: string },
+  environment: AgencyEnvironment = AGENCY_ENVIRONMENT,
+): boolean {
+  return skill.scope === "repo" && environment.allowedSkills.includes(skill.name);
+}
