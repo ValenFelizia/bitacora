@@ -19,6 +19,7 @@ import { CodexEngine, PERMISSIONS_PROFILE, appServerArgs } from "../src/codex/en
 import { codexEnvironmentArgs } from "../src/codex/environment";
 import { registerKit } from "../src/codex/kit";
 import { codexBinary } from "../../scripts/codex-runtime.mjs";
+import { WorkspaceFiles } from "../src/workspace-files";
 import { fakeAppServerArgs } from "./fake-app-server";
 
 /**
@@ -977,15 +978,16 @@ for (const verify of ["fail", "hang", "shape"] as const) {
   });
 }
 
-test("a pause asked while the turn is being prepared does not start it", async () => {
+test("a pause asked while the turn is prepared does not arm its deadline early", async () => {
   await mkdir(".local", { recursive: true });
   const dir = await mkdtemp(resolve(".local/skills-pause-"));
   const home = join(dir, "home");
   const workspace = join(dir, "workspace");
   await mkdir(home, { recursive: true });
   await mkdir(workspace, { recursive: true });
-  // The pause deadline is shorter than the skill check, so a pause that starts
-  // counting before the turn is requested would kill the engine on the way.
+  // The pause deadline is shorter than the skill check: a deadline that starts
+  // counting with the pause instead of with the turn would kill the engine on
+  // the way, before the turn is even sent.
   process.env.BITACORA_FAKE_SKILLS_DELAY = "400";
   const engine = new CodexEngine({
     home,
@@ -1005,15 +1007,11 @@ test("a pause asked while the turn is being prepared does not start it", async (
     await delay(50);
     await engine.interrupt(conversationId);
     await sending;
-    assert.equal(
-      events.some((event) => event.type === "finished" && event.status === "interrupted"),
-      true,
-      "the pause ends the request",
-    );
+    // The turn was sent anyway, so the request ends the way the turn ends.
     assert.equal(
       events.some((event) => event.type === "finished" && event.status === "completed"),
-      false,
-      "the turn never ran",
+      true,
+      "the turn was sent and completed",
     );
     assert.equal(events.some((event) => event.type === "problem"), false);
     assert.equal(engine.executionSafety().allowed, true);
@@ -1021,6 +1019,77 @@ test("a pause asked while the turn is being prepared does not start it", async (
     off();
     delete process.env.BITACORA_FAKE_SKILLS_DELAY;
     await engine.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
+});
+
+test("a pause asked while the request is prepared still sends the turn with its notice", async () => {
+  await mkdir(".local", { recursive: true });
+  const dir = await mkdtemp(resolve(".local/pause-notice-"));
+  const home = join(dir, "home");
+  const root = join(dir, "agency");
+  const data = join(dir, "data");
+  const log = join(dir, "protocol.jsonl");
+  await mkdir(home, { recursive: true });
+  const files = new WorkspaceFiles(root);
+  await files.initialize();
+  process.env.BITACORA_FAKE_LOG = log;
+  // The skill check is slow, so the pause asked for the second request lands
+  // while the engine is still preparing it, before turn/start.
+  process.env.BITACORA_FAKE_SKILLS_DELAY = "400";
+  // The first turn lasts long enough for the test to create a file while it
+  // runs: Deshacer then has something to restore and leaves its notice.
+  process.env.BITACORA_FAKE_TURN_DELAY = "600";
+  const engine = new CodexEngine({
+    home,
+    workspace: root,
+    binary: process.execPath,
+    args: fakeAppServerArgs,
+    restartDelayMs: 30,
+    probeProtection: async () => false,
+  });
+  const app = new App(engine, data, () => {}, undefined, files);
+  try {
+    await app.start();
+    const first = app.command({ type: "send", text: "slow-start" }, () => {});
+    await until(() => app.snapshot().works[0]?.busy === true);
+    await writeFile(join(root, "creado.txt"), "hola");
+    await first;
+    await until(() => app.snapshot().works[0]?.busy === false, 10_000);
+    const undo = app.snapshot().undo;
+    assert.ok(undo, "Deshacer has something to restore");
+    await app.command({ type: "undo", id: undo.id }, () => {});
+
+    // The second request is prepared while the engine checks the skills: the
+    // pause lands before turn/start.
+    const workId = app.snapshot().works[0].id;
+    const second = app.command({ type: "send", text: "pause", workId }, () => {});
+    await until(() => app.snapshot().works[0]?.progress === "Preparando la respuesta…");
+    await app.command({ type: "interrupt", workId }, () => {});
+    await second;
+
+    const calls = (await readFile(log, "utf8"))
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as {
+        method?: string;
+        params?: { input?: Array<{ type: string; text?: string }> };
+      });
+    const turns = calls.filter((call) => call.method === "turn/start");
+    assert.equal(turns.length, 2, "both requests reached the agent");
+    const input = turns[1]?.params?.input ?? [];
+    assert.equal(input[0]?.text, "pause");
+    assert.equal(
+      input.some((item) => item.type === "text" && /se deshicieron los cambios/.test(item.text ?? "")),
+      true,
+      "the notice about the reverted files went with the turn",
+    );
+  } finally {
+    delete process.env.BITACORA_FAKE_LOG;
+    delete process.env.BITACORA_FAKE_TURN_DELAY;
+    delete process.env.BITACORA_FAKE_SKILLS_DELAY;
+    await app.close();
     await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   }
 });

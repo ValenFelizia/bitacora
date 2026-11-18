@@ -1477,12 +1477,10 @@ export class CodexEngine implements Engine {
       state.preparing = false;
       if (!this.available || !this.safety.allowed)
         throw new EngineFailure("other", this.safety.detail);
-      // The pause arrived before the turn existed, so there is no turn to
-      // interrupt: nothing was sent and the request ends like any other pause.
-      if (state.interrupt) {
-        this.emit({ type: "finished", conversationId, status: "interrupted" });
-        return;
-      }
+      // The pause may have been asked while the request was being prepared: the
+      // turn is sent anyway, with its text, and the pause is delivered to it.
+      // The deadline starts with the request, never during the preparation.
+      if (state.interrupt) this.watchPause(conversationId);
       const turn = await this.startTurn(conversationId, {
         threadId: conversationId,
         input: [
