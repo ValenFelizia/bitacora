@@ -375,3 +375,53 @@ accepted direction from implementation alone.
   - La cuenta se muestra con el mail. Si no hay cuenta, una invitación con una sola acción. Sin indicadores que laten.
 - Rationale: la personalidad sale del nombre (un cuaderno de a bordo es un registro con hora), no de adornos. Atkinson Hyperlegible está hecha para leerse fácil, y eso le sirve a una usuaria no técnica. El naranja se reserva para lo que está pasando ahora, para que la atención vaya ahí.
 - Consequences: todo cambio visual en `web/` sigue `design.md`. Si hace falta algo que no está, se agrega ahí. Aplicarlo a la interfaz es parte de #25. Las ideas de producto de la investigación (generar en segundo plano, editar señalando, historial, elegir qué placas mandar) quedan para después del MVP.
+
+## DEC-014 — Modelo a la vista, elegido para toda la app
+
+- Status: accepted (2026-11-18; predeterminado y exclusión decididos por Valentín, issue #57)
+- Context: Bitácora no elegía modelo. `thread/start` y `turn/start` salían sin
+  `model` y la pantalla no lo mostraba, así que trabajaba el que Codex trajera
+  por defecto: un `CODEX_HOME` sin cuenta arranca con `gpt-6.1-sol` y la cuenta
+  Plus de Valentín con `gpt-6.2-sol` en razonamiento `low`. Valentín: «esconder el
+  selector de modelos es una muy mala decisión. Onboarding, acompañamiento y UI
+  sencilla no significa perder transparencia».
+- Decision:
+  - **Predeterminado:** `gpt-6.2-sol` con razonamiento `high`. Verificado el
+    18/11 contra el binario 0.168.0 con `model/list`, que no gasta cupo
+    (`docs/verification/issue57/model-list.json`, `scripts/verify-models.ts`).
+  - **Lista:** la de `model/list` sin los modelos ocultos y sin ninguno que diga
+    «Astra» en el id o el nombre. Cada uno lleva un nombre legible
+    («GPT-6.2 Sol») y una línea en castellano sobre para qué conviene
+    (`server/src/models.ts`); un modelo nuevo sin línea propia toma la de su
+    familia (Sol, Terra o Luna).
+  - **Si falta:** si el modelo elegido o el predeterminado no está en la cuenta,
+    se usa el predeterminado; si tampoco está, el que Codex marca como suyo, y
+    si ese es Astra o no hay ninguno marcado, el primero de la lista. La pantalla
+    lo avisa en una línea debajo del cuadro de texto. Mientras la lista no llegó
+    (Codex arrancando o sin respuesta), el pedido sale igual con el modelo
+    elegido.
+  - **Una elección para toda la app, no por trabajo.** Se guarda en
+    `settings.json`, en la carpeta de datos de Bitácora, y vale desde el próximo
+    pedido en todos los trabajos, también en los que se retoman.
+  - **Cómo viaja:** `thread/start` y `thread/resume` llevan `model` y, como no
+    tienen campo de esfuerzo, `config: { model_reasoning_effort }`; cada
+    `turn/start` lleva `model` y `effort`. Verificado sin inferencia con un
+    `thread/start` efímero: devuelve `model: "gpt-6.2-sol"` y
+    `reasoningEffort: "high"`. Si un modelo no ofrece `high`, usa el suyo.
+  - **El título automático no depende de la elección del esfuerzo:**
+    `thread/sample` corre con `effort: "low"`. En 0.168.0 no tiene parámetro de
+    modelo, porque reusa la caché del trabajo, que es del modelo del trabajo.
+    Por eso el título usa el mismo modelo, pero con el esfuerzo más bajo.
+- Rationale: una sola elección es lo más fácil de entender para alguien que no
+  es técnica. Se ve siempre en el mismo lugar, junto al cuadro de texto como en
+  Codex, y no cambia sola al pasar de un trabajo a otro. Elegir por trabajo
+  obligaría a mirar el selector cada vez que se abre otro trabajo, sin una
+  ganancia clara para una agencia. El predeterminado viene elegido para que no
+  haga falta saber cuál conviene, pero queda a la vista.
+- Consequences: actualizar Codex o cambiar el catálogo de la cuenta exige volver
+  a correr `scripts/verify-models.ts` y revisar los ids y las líneas de
+  `server/src/models.ts`. `settings.json` también guarda el ancho del panel de
+  entregables: el instalador sirve la pantalla en un puerto distinto cada vez y
+  el navegador no lo recordaría. Si se quiere que el título use otro modelo,
+  hace falta un pedido aparte en lugar de `thread/sample`: un hilo efímero con
+  un modelo barato, sin la caché del trabajo.

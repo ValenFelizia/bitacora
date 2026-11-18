@@ -11,6 +11,11 @@ import { problemText, EngineFailure, activityText, questionEndText } from "./eng
 import { fallbackTitle, MAX_TITLE } from "./titles";
 import { agentAnswer, answerRecord } from "./questions";
 import type { FileRef, Message, Work, Snapshot, ClientCommand, ServerMessage, PendingQuestion } from "./contracts";
+import { PANEL_WIDTH } from "./contracts";
+import { resolveModel, type EngineModel } from "./models";
+
+/** Choices kept for the whole app in `settings.json`, not per work (DEC-014). */
+type Settings = { model?: string; panelWidth?: number };
 
 type SavedWork = Work & { conversationId: string; titlePending?: boolean; renamedByUser?: boolean; pendingFiles?: { messageId: string; before?: Record<string, string> } };
 const isText = (value: unknown) => typeof value === "string";
@@ -103,6 +108,11 @@ export class App {
    * one at a time, in order, like its own client does.
    */
   private queuedQuestions = new Map<string, PendingQuestion[]>();
+  private settings: Settings = {};
+  private settingsWrites: Promise<void> = Promise.resolve();
+  /** The account's models; undefined until the engine answers. */
+  private catalogue?: EngineModel[];
+  private catalogueRequest = 0;
   constructor(
     private engine: Engine,
     private data: string,
@@ -219,6 +229,45 @@ export class App {
       if (this.backups?.restoring) this.notice = "Quedó un Deshacer pendiente. Podés reintentarlo o dejar la carpeta como está.";
     }
     for (const work of this.works) if (work.pendingFiles) { await this.collectResults(work); this.dirty = true; }
+    await this.loadSettings();
+  }
+  /** A missing or unreadable file only means nothing was chosen yet. */
+  private async loadSettings() {
+    try {
+      const saved = JSON.parse(await readFile(join(this.data, "settings.json"), "utf8"));
+      if (saved?.version !== 1) return;
+      if (typeof saved.model === "string" && saved.model) this.settings.model = saved.model;
+      if (typeof saved.panelWidth === "number" && Number.isFinite(saved.panelWidth))
+        this.settings.panelWidth = Math.round(Math.min(PANEL_WIDTH.max, Math.max(PANEL_WIDTH.min, saved.panelWidth)));
+    } catch {
+      // Defaults stay: the recommended model and the usual panel width.
+    }
+  }
+  private saveSettings() {
+    const content = JSON.stringify({ version: 1, ...this.settings }, null, 2);
+    this.settingsWrites = this.settingsWrites
+      .catch(() => {})
+      .then(async () => {
+        await writeFile(join(this.data, "settings.json.tmp"), content, "utf8");
+        await this.renameWithRetry(join(this.data, "settings.json.tmp"), join(this.data, "settings.json"));
+      });
+    return this.settingsWrites;
+  }
+  /**
+   * Asks the engine which models the account has. It runs again when the
+   * engine restarts or the account changes; only the latest answer counts,
+   * and a failure keeps the list it had.
+   */
+  private async refreshModels() {
+    const request = ++this.catalogueRequest;
+    try {
+      const catalogue = await this.engine.models();
+      if (request !== this.catalogueRequest) return;
+      this.catalogue = catalogue;
+      this.publish({ type: "snapshot", state: this.snapshot() });
+    } catch {
+      // Without a list the next request still asks for the chosen model.
+    }
   }
   async startEngine() {
     this.unsubscribe = this.engine.subscribe((event) => this.event(event));
@@ -228,6 +277,7 @@ export class App {
     this.available = true;
     this.starting = false;
     this.publish({ type: "snapshot", state: this.snapshot() });
+    void this.refreshModels();
     // Codex reports the account during start. Avoid a second read racing the
     // automatic MXC setup, which can replace the app-server.
     this.accountState ??= await this.engine.account();
@@ -246,6 +296,8 @@ export class App {
       notice: this.notice,
       undo: !this.submitting && !this.works.some(w => w.busy) ? this.backups?.target : undefined,
       fileRevision: this.fileRevision,
+      model: resolveModel(this.catalogue, this.settings.model).state,
+      panelWidth: this.settings.panelWidth,
       works: this.works.map(({ conversationId: _, pendingFiles: __, titlePending: ___, renamedByUser: ____, ...work }) => work),
     };
   }
@@ -422,11 +474,14 @@ export class App {
       }
       if (!event.available) for (const work of this.works) this.finishFiles(work);
       this.changed();
+      if (event.available) void this.refreshModels();
       return;
     }
     if (event.type === "account") {
       this.accountState = event.account;
       this.publish({ type: "snapshot", state: this.snapshot() });
+      // Another account can offer other models.
+      if (this.available) void this.refreshModels();
       return;
     }
     const work =
@@ -616,6 +671,28 @@ export class App {
       }
       return;
     }
+    if (command.type === "chooseModel") {
+      const choices = resolveModel(this.catalogue, this.settings.model).state.choices;
+      if (!choices.some((choice) => choice.id === command.model)) {
+        reply({ type: "problem", text: "Ese modelo no está disponible en tu cuenta. Elegí otro de la lista." });
+        return;
+      }
+      this.settings.model = command.model;
+      this.publish({ type: "snapshot", state: this.snapshot() });
+      try { await this.saveSettings(); }
+      catch (error) {
+        reply({ type: "problem", text: "Cambié el modelo, pero no pude guardarlo para la próxima vez.", detail: String(error) });
+      }
+      return;
+    }
+    if (command.type === "panelWidth") {
+      if (typeof command.width !== "number" || !Number.isFinite(command.width)) throw new Error("Invalid width");
+      this.settings.panelWidth = Math.round(Math.min(PANEL_WIDTH.max, Math.max(PANEL_WIDTH.min, command.width)));
+      // Not published: the window that dragged it already shows it, and the
+      // next snapshot carries it to any other window.
+      await this.saveSettings().catch(() => {});
+      return;
+    }
     if (command.type === "interrupt") {
       const work = this.works.find((w) => w.id === command.workId);
       if (!work) throw new Error("Unknown work");
@@ -712,6 +789,8 @@ export class App {
     // before it commits leaves the queue exactly as it found it: the notices it
     // queued are dropped and the older ones stay for the work that is sent.
     const queuedDetails = [...this.pendingDetails];
+    // The same choice for the whole request, even if the user changes it meanwhile.
+    const model = resolveModel(this.catalogue, this.settings.model).selection;
     try {
       this.accountState = await this.engine.account();
       this.publish({ type: "snapshot", state: this.snapshot() });
@@ -723,11 +802,11 @@ export class App {
         work = this.works.find((w) => w.id === command.workId);
         if (!work) throw new Error("Unknown work");
         if (!this.resumed.has(work.id)) {
-          await this.engine.resumeWork(work.conversationId);
+          await this.engine.resumeWork(work.conversationId, model);
           this.resumed.add(work.id);
         }
       } else {
-        const created = await this.engine.createWork();
+        const created = await this.engine.createWork(model);
         const now = new Date().toISOString();
         work = {
           id: randomUUID(),
@@ -788,7 +867,7 @@ export class App {
       await rememberUserUrls(this.data, command.text);
       const engineFiles = await Promise.all((attachments || []).map(async f => ({ path: await this.workspace!.safePath(f.path), mime: f.mime })));
       this.unsent.delete(work.id);
-      const sending = this.engine.send(work.conversationId, command.text.trim(), engineFiles, { filesReverted: this.backups?.hasNotice(work.id) });
+      const sending = this.engine.send(work.conversationId, command.text.trim(), engineFiles, { filesReverted: this.backups?.hasNotice(work.id), model });
       if (this.pauseRequested.delete(work.id)) await this.engine.interrupt(work.conversationId);
       await sending;
       if (this.backups?.hasNotice(work.id)) {
@@ -871,6 +950,7 @@ export class App {
     // retry it before closing.
     await this.writes.catch(() => {});
     if (this.dirty) this.changed();
+    await this.settingsWrites.catch(() => {});
     await this.writes;
   }
 }

@@ -1,4 +1,5 @@
 import { toolProgress } from './tools/progress';
+import type { EngineModel, ModelSelection } from './models';
 export type Account = { connected: boolean; email?: string };
 export type ExecutionSafety = {
   allowed: boolean;
@@ -82,8 +83,10 @@ export interface Engine {
   prepareProtection(): Promise<void>;
   connectAccount(): Promise<{ url: string }>;
   account(): Promise<Account>;
-  createWork(): Promise<{ conversationId: string; title?: string }>;
-  resumeWork(conversationId: string): Promise<void>;
+  /** The models the account offers, without hidden ones. Asking costs no quota. */
+  models(): Promise<EngineModel[]>;
+  createWork(model?: ModelSelection): Promise<{ conversationId: string; title?: string }>;
+  resumeWork(conversationId: string, model?: ModelSelection): Promise<void>;
   /**
    * Cheap name for a work whose last request already finished. Resolves with
    * undefined when the sample ran but produced no usable text; rejects when it
@@ -93,7 +96,12 @@ export interface Engine {
   suggestTitle(conversationId: string): Promise<SuggestedTitle | undefined>;
   /** Stores the name in the engine so both sides show the same one. */
   renameWork(conversationId: string, title: string): Promise<void>;
-  send(conversationId: string, text: string, files?: EngineFile[], context?: { filesReverted?: boolean }): Promise<void>;
+  send(
+    conversationId: string,
+    text: string,
+    files?: EngineFile[],
+    context?: { filesReverted?: boolean; model?: ModelSelection },
+  ): Promise<void>;
   interrupt(conversationId: string): Promise<void>;
   /**
    * Answers a question the agent is waiting on. Keys are question ids and each

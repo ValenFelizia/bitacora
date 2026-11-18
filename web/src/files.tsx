@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ArrowDownToLine,
   ChevronLeft,
@@ -67,6 +67,120 @@ function useFetchedFile(file: FileRef | undefined, token?: string, fileRevision?
   return state;
 }
 
+type Box = { width: number; height: number; density: number };
+
+/**
+ * Size of an image on screen in device pixels. It follows the panel being
+ * dragged and the window moving to a screen with another scale.
+ */
+function useDeviceBox(element: React.RefObject<HTMLElement | null>) {
+  const [box, setBox] = useState<Box>();
+  useEffect(() => {
+    const target = element.current;
+    if (!target) return;
+    const measure = () => {
+      const { width, height } = target.getBoundingClientRect();
+      const density = window.devicePixelRatio || 1;
+      setBox((previous) =>
+        previous && previous.width === width && previous.height === height && previous.density === density
+          ? previous
+          : { width, height, density },
+      );
+    };
+    const observer = new ResizeObserver(measure);
+    observer.observe(target);
+    window.addEventListener("resize", measure);
+    measure();
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [element]);
+  return box;
+}
+
+/**
+ * A copy of the image at the exact device size it is shown at. A 1080×1920
+ * plate squeezed into a thumbnail by the browser loses its thin lines and
+ * small text; resized once with the high-quality filter it stays sharp.
+ * Undefined until it is ready, or when the original is already small enough.
+ */
+function useSharpCopy(blob: Blob | undefined, box: Box | undefined, fit: "cover" | "contain") {
+  const [sharp, setSharp] = useState<string>();
+  useEffect(() => {
+    if (!blob || !box || box.width < 1 || box.height < 1) return;
+    let cancelled = false;
+    let made: string | undefined;
+    // Waits for the size to settle while the panel is being dragged.
+    const timer = setTimeout(async () => {
+      try {
+        const source = await createImageBitmap(blob);
+        try {
+          const scale =
+            fit === "cover"
+              ? Math.max(box.width / source.width, box.height / source.height)
+              : Math.min(box.width / source.width, box.height / source.height);
+          const cropWidth = fit === "cover" ? box.width / scale : source.width;
+          const cropHeight = fit === "cover" ? box.height / scale : source.height;
+          const width = Math.max(1, Math.round(cropWidth * scale * box.density));
+          const height = Math.max(1, Math.round(cropHeight * scale * box.density));
+          if (width >= cropWidth) {
+            if (!cancelled) setSharp(undefined);
+            return;
+          }
+          const resized = await createImageBitmap(
+            source,
+            (source.width - cropWidth) / 2,
+            (source.height - cropHeight) / 2,
+            cropWidth,
+            cropHeight,
+            { resizeWidth: width, resizeHeight: height, resizeQuality: "high" },
+          );
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+          canvas.getContext("2d")!.drawImage(resized, 0, 0);
+          resized.close();
+          const png = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+          if (cancelled || !png) return;
+          made = URL.createObjectURL(png);
+          setSharp(made);
+        } finally {
+          source.close();
+        }
+      } catch {
+        // The original stays: blurrier, but it is the same image.
+      }
+    }, 120);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      // The copy on screen is kept until the next one replaces it.
+      if (made) setTimeout(() => URL.revokeObjectURL(made!), 1000);
+    };
+  }, [blob, box?.width, box?.height, box?.density, fit]);
+  return sharp;
+}
+
+/** An `<img>` that shows a copy resized for the screen once it is ready. */
+function SharpImage({
+  blob,
+  url,
+  alt,
+  className,
+  fit,
+}: {
+  blob?: Blob;
+  url: string;
+  alt: string;
+  className: string;
+  fit: "cover" | "contain";
+}) {
+  const element = useRef<HTMLImageElement>(null);
+  const sharp = useSharpCopy(blob, useDeviceBox(element), fit);
+  return <img ref={element} src={sharp || url} alt={alt} className={className} />;
+}
+
 async function copyImageBlob(blob: Blob): Promise<boolean> {
   try {
     const png = (async () => {
@@ -130,10 +244,12 @@ export function FileCard({
     return (
       <figure className="min-w-0 rounded-[6px] border border-line bg-surface p-2.5 flex items-center gap-3">
         {image && !fetched.missing && fetched.url ? (
-          <img
+          <SharpImage
             className="w-12 h-12 shrink-0 rounded-[3px] object-cover border border-line bg-paper"
-            src={fetched.url}
+            blob={fetched.blob}
+            url={fetched.url}
             alt={file.name}
+            fit="cover"
           />
         ) : (
           <span className="w-12 h-12 shrink-0 rounded-[3px] border border-line bg-paper grid place-items-center text-muted">
@@ -190,10 +306,12 @@ export function FileCard({
           title={`Ver ${file.name}`}
           aria-label={`Ver ${file.name}`}
         >
-          <img
+          <SharpImage
             className="max-h-56 w-full object-contain"
-            src={fetched.url}
+            blob={fetched.blob}
+            url={fetched.url}
             alt={file.name}
+            fit="contain"
           />
         </button>
       )}
@@ -314,10 +432,12 @@ function PlateThumbnail({
       }`}
     >
       {fetched.url && !fetched.missing ? (
-        <img
-          src={fetched.url}
+        <SharpImage
+          blob={fetched.blob}
+          url={fetched.url}
           alt={file.name}
           className={compact ? "w-full h-full object-cover" : "w-full max-h-[240px] object-contain"}
+          fit={compact ? "cover" : "contain"}
         />
       ) : (
         <span className="w-full h-full min-h-[72px] grid place-items-center text-muted">

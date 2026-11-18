@@ -110,7 +110,7 @@ test('fake engine sees pre-request copy; global undo survives restart, results r
     await assert.rejects(files.openResult(ref)); assert.equal(app.snapshot().undo, undefined);
     await app.command({ type: 'send', workId, text: 'segundo' }, () => {});
     await waitIdle();
-    assert.deepEqual(contexts[1], { filesReverted: true }); assert.equal(engine.sent[1], 'segundo');
+    assert.deepEqual(contexts[1], { filesReverted: true, model: { model: 'gpt-6.2-sol', effort: 'high' } }); assert.equal(engine.sent[1], 'segundo');
     const opened = await files.openResult(ref); await opened.handle.close();
     const denied = join(f.root, 'denied'); await mkdir(denied); const restore = denyRead(denied);
     try { await app.command({ type: 'send', text: 'sin copia' }, () => {}); }

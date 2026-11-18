@@ -55,7 +55,7 @@ Bitácora es el cuaderno de a bordo de la agencia: un registro de lo que se hizo
 - **Esquinas:** radio de 6 px en todo; 3 px en las miniaturas de placas. Nada de esquinas muy redondeadas.
 - **Líneas, no sombras:** divisores de 1 px en `--line`, sin sombras.
 - **Espacios:** escala de 4 px (4, 8, 12, 16, 20, 24, 32).
-- **Disposición:** tres columnas. Trabajos (unos 220 px), conversación (flexible), entregables (unos 300 px).
+- **Disposición:** tres columnas. Trabajos (unos 220 px), conversación (flexible), entregables (300 px de entrada; se ensancha arrastrando, ver «Entregable»).
 
 ## Íconos
 
@@ -72,9 +72,14 @@ Bitácora es el cuaderno de a bordo de la agencia: un registro de lo que se hizo
   - **Paso en curso:** «ahora» con `pen-line`, en `--accent-ink`.
   - **Detalle:** cada respuesta puede abrir su detalle técnico con el botón de ícono `info` (`16 px`).
   - Sin porcentajes ni pasos técnicos visibles por defecto.
-- **Trabajos:** en la barra izquierda, el nombre ocupa la línea completa y debajo va la fecha corta en `--muted` (junto al punto naranja si está en curso). El activo va en `--surface`, con un filete naranja a la izquierda.
+- **Trabajos:** en la barra izquierda, bajo el título de sección «Trabajos» (`13 px`, `--muted`). Cada trabajo es una fila separada por líneas de `1 px` en `--line`: el nombre en `--ink` ocupa la línea y debajo va la fecha corta en `--muted` (junto al punto naranja si está en curso). Los que no están abiertos llevan `chevron-right` (`16 px`, `--muted`) a la derecha, para que se vean tocables sin pasar el mouse. El activo va en `--surface`, en negrita y con un filete naranja a la izquierda, sin flecha.
+- **Mensajes de Bitácora:** debajo de cada respuesta terminada, el botón de ícono `copy` («Copiar mensaje») copia el texto tal cual. Al copiar, el ícono pasa a `check` y al lado aparece «Copiado» en `13 px` `--muted` durante 2 segundos, en una región `status`.
+- **Cuadro de texto:** arriba el texto; abajo, en una fila, adjuntar, el modelo y enviar. Enter envía y Shift+Enter hace un párrafo nuevo. Enter no envía mientras se compone un carácter (acentos, métodos de entrada) ni cuando el botón de enviar está apagado.
+- **Modelo:** junto a adjuntar, el nombre del modelo en negrita de `13 px` con `chevron-down` (`16 px`). Abre hacia arriba un menú en `--surface` con borde de `1 px` en `--line`: «Con qué modelo trabajo» en `--muted`, una fila por modelo con `check` en el elegido, el nombre en negrita (y «· Recomendado» en `--muted` en el predeterminado) y una línea en `13 px` `--muted` sobre para qué conviene. Abajo, separado por una línea, el razonamiento con que trabaja y que el cambio vale para todos los trabajos desde el próximo pedido. Flechas para moverse, Enter para elegir, Escape para cerrar. Si el modelo elegido no está en la cuenta, una línea con `alert-circle` en `--accent-ink` debajo del cuadro de texto dice cuál se usa.
 - **Entregable:**
+  - **Ancho del panel:** en escritorio, la línea divisoria se arrastra entre 280 y 640 px, y nunca deja la conversación con menos de 420 px. Una pastilla de `3 × 40 px` en `--line` en el medio de la línea la hace visible; con el mouse encima pasa a `--muted` y, al arrastrar o con el foco, la línea entera va en `--accent`. Con el teclado es un separador: flechas de a 16 px (64 px con Shift), Inicio y Fin. El ancho se recuerda entre sesiones. Por debajo de 960 px el panel sigue siendo el cajón de siempre.
   - Grilla de placas con `gap` de 8 px: 2 columnas hasta 4 placas, 3 columnas con 5 o más (muestra hasta 6 miniaturas y un tile `+N` en la sexta para abrir desde la placa 7).
+  - **Miniaturas nítidas:** cada miniatura se vuelve a dibujar al tamaño que ocupa en pantalla por la densidad de la pantalla, con el filtro de alta calidad del navegador. Achicar una placa de 1080 × 1920 de una sola vez dentro de una celda chica borra las líneas finas y la letra chica.
   - Debajo, la línea de meta («4 placas · 14:05»); no se repite el nombre del trabajo si coincide con el encabezado.
   - **Descargar:** texto con ícono `arrow-down-to-line`, subrayado en `--accent`, indicando la cantidad cuando el lote tiene varias placas o imágenes («Descargar 4 placas») y solo «Descargar» para un único archivo. No es un botón relleno.
   - Si el lote trae un PDF junto a las placas, va dentro de la misma tarjeta debajo de una línea fina en `--line`, como fila con el ícono `file-text` y su nombre.
