@@ -55,6 +55,9 @@ export function codexEnvironmentArgs(
     ...c(`agents.enabled=${environment.subagents}`),
     ...c(`features.goals=${environment.goals}`),
   );
+  // `request_user_input` is registered in every mode, but outside Plan it only
+  // answers when this flag is on ("under development" and off in 0.168.0).
+  args.push(...c(`features.default_mode_request_user_input=${environment.questions}`));
   args.push(
     ...c(`skills.bundled.enabled=${environment.bundledSkills}`),
     ...c(`skills.include_instructions=${environment.allowedSkills.length > 0}`),

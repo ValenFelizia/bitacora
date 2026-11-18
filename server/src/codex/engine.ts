@@ -4,6 +4,7 @@ import {
   type ChildProcessWithoutNullStreams,
 } from "node:child_process";
 import { promisify } from "node:util";
+import { randomUUID } from "node:crypto";
 import { join, relative, basename } from "node:path";
 import { codexBinary, codexVersion } from "../../../scripts/codex-runtime.mjs";
 import { createInterface } from "node:readline";
@@ -12,10 +13,12 @@ import { registerKit } from './kit';
 import { cleanTitle, TITLE_PROMPT } from "../titles";
 import { AGENCY_ENVIRONMENT, isAllowedSkill, type AgencyEnvironment } from "../agency-environment";
 import { codexEnvironmentArgs } from "./environment";
-import type { Engine, EngineEvent, Account, ExecutionSafety } from "../engine";
+import type { Engine, EngineEvent, Account, ExecutionSafety, Question } from "../engine";
 import { EngineFailure } from "../engine";
 import type { ClientRequest } from "./generated/ClientRequest";
+import type { RequestId } from "./generated/RequestId";
 import type { ServerNotification } from "./generated/ServerNotification";
+import type { ToolRequestUserInputResponse } from "./generated/v2/ToolRequestUserInputResponse";
 import type { GetAccountResponse } from "./generated/v2/GetAccountResponse";
 import type { LoginAccountResponse } from "./generated/v2/LoginAccountResponse";
 import type { ThreadStartResponse } from "./generated/v2/ThreadStartResponse";
@@ -114,6 +117,49 @@ export function classifyProblem(
     return "disconnected";
   if (/rateLimitExceeded|serverOverloaded/.test(text)) return "temporary";
   return "other";
+}
+
+/**
+ * Reads the `item/tool/requestUserInput` params (`ToolRequestUserInputParams`,
+ * experimental in 0.168.0). Undefined when they cannot be shown to the user:
+ * the request is then answered empty instead of left waiting.
+ */
+export function readQuestions(
+  params: unknown,
+): { conversationId: string; questions: Question[] } | undefined {
+  const value = params as { threadId?: unknown; questions?: unknown } | null;
+  if (!value || typeof value.threadId !== "string" || !Array.isArray(value.questions) || !value.questions.length)
+    return undefined;
+  const questions: Question[] = [];
+  const ids = new Set<string>();
+  for (const raw of value.questions as Record<string, unknown>[]) {
+    if (!raw || typeof raw.id !== "string" || !raw.id || ids.has(raw.id) || typeof raw.question !== "string" || !raw.question.trim())
+      return undefined;
+    ids.add(raw.id);
+    const rawOptions = raw.options ?? [];
+    if (!Array.isArray(rawOptions)) return undefined;
+    const options: Question["options"] = [];
+    for (const option of rawOptions as Record<string, unknown>[]) {
+      if (!option || typeof option.label !== "string" || !option.label.trim()) return undefined;
+      // The answer is the label: a repeated one could not be told apart.
+      if (options.some((existing) => existing.label === option.label)) continue;
+      options.push({
+        label: option.label,
+        description: typeof option.description === "string" ? option.description : "",
+      });
+    }
+    const other = raw.isOther === true;
+    if (!options.length && !other) return undefined;
+    questions.push({
+      id: raw.id,
+      header: typeof raw.header === "string" ? raw.header : "",
+      text: raw.question,
+      options,
+      other,
+      secret: raw.isSecret === true,
+    });
+  }
+  return { conversationId: value.threadId, questions };
 }
 
 /** Schedules `run` and returns a cancel function. Defaults to `setTimeout`. */
@@ -218,6 +264,15 @@ export class CodexEngine implements Engine {
     }
   >();
   private listeners = new Set<(event: EngineEvent) => void>();
+  /**
+   * Questions waiting for the user, by the id the app sees. The request id is
+   * only valid for the process that asked: a restarted app-server numbers its
+   * requests again, so an old answer must never reach the new one.
+   */
+  private questions = new Map<
+    string,
+    { conversationId: string; requestId: RequestId; child: ChildProcessWithoutNullStreams }
+  >();
   private turns = new Map<string, string>();
   /** Last finished turn of each conversation: the only source `thread/sample` accepts. */
   private lastTurn = new Map<string, string>();
@@ -805,6 +860,7 @@ export class CodexEngine implements Engine {
     this.loginId = undefined;
     this.safety = { ...this.safety, allowed: false };
     this.cancelPending(new Error("Engine reloading protection"));
+    this.closeQuestions("stopped");
     clearTimeout(this.setupTimer);
     this.stableTimer?.();
     this.emit({ type: "availability", available: false, safety: this.safety });
@@ -859,6 +915,8 @@ export class CodexEngine implements Engine {
     clearTimeout(this.setupTimer);
     this.stableTimer?.();
     this.clearPause();
+    // The process that asked is gone: its questions cannot be answered.
+    this.closeQuestions("stopped");
     if (!this.stopping) {
       this.emit({
         type: "availability",
@@ -914,7 +972,9 @@ export class CodexEngine implements Engine {
         );
       else pending.resolve(message.result);
     } else if (message.method && message.id !== undefined) {
-      // Never approve an escalation or surface an interactive request to the user.
+      // A question with options waits for the user's answer on the screen.
+      if (message.method === "item/tool/requestUserInput" && this.ask(message.id, message.params)) return;
+      // Never approve an escalation; any other interactive request is declined.
       const responses: Record<string, unknown> = {
         "item/commandExecution/requestApproval": { decision: "decline" },
         "item/fileChange/requestApproval": { decision: "decline" },
@@ -928,6 +988,43 @@ export class CodexEngine implements Engine {
       if (Object.hasOwn(responses, message.method)) this.write({ id: message.id, result: responses[message.method] });
       else this.write({ id: message.id, error: { code: -32601, message: "Interactive requests are not supported by Bitacora." } });
     } else if (message.method) this.notification(message as ServerNotification);
+  }
+  /** Shows a question to the user. False when it cannot be shown. */
+  private ask(requestId: RequestId, params: unknown) {
+    const asked = readQuestions(params);
+    if (!asked || !this.child) return false;
+    const id = randomUUID();
+    this.questions.set(id, { conversationId: asked.conversationId, requestId, child: this.child });
+    this.emit({ type: "question", id, ...asked });
+    return true;
+  }
+  /**
+   * Stops waiting for the questions that match, and says why: one event per
+   * conversation, so the app closes them together instead of showing the next
+   * one in line just before it is closed too.
+   */
+  private closeQuestions(
+    reason: Extract<EngineEvent, { type: "questionClosed" }>["reason"],
+    match: (question: { conversationId: string; requestId: RequestId }) => boolean = () => true,
+  ) {
+    const closed = new Map<string, string[]>();
+    for (const [id, question] of this.questions) {
+      if (!match(question)) continue;
+      this.questions.delete(id);
+      closed.set(question.conversationId, [...(closed.get(question.conversationId) ?? []), id]);
+    }
+    if (this.stopping) return;
+    for (const [conversationId, ids] of closed) this.emit({ type: "questionClosed", conversationId, ids, reason });
+  }
+  async answer(conversationId: string, questionId: string, answers: Record<string, string[]>) {
+    const question = this.questions.get(questionId);
+    if (!question || question.conversationId !== conversationId || question.child !== this.child)
+      throw new EngineFailure("other", "The question is no longer waiting for an answer");
+    this.questions.delete(questionId);
+    const result: ToolRequestUserInputResponse = {
+      answers: Object.fromEntries(Object.entries(answers).map(([id, values]) => [id, { answers: values }])),
+    };
+    this.write({ id: question.requestId, result });
   }
   private notification(n: ServerNotification) {
     switch (n.method) {
@@ -961,6 +1058,16 @@ export class CodexEngine implements Engine {
       case "skills/changed":
         if (this.available) void this.syncSkills().catch(() => {});
         break;
+      case "serverRequest/resolved": {
+        // The app-server stopped waiting (a pause or another turn change) for a
+        // question the user had not answered yet.
+        const { threadId, requestId } = n.params;
+        this.closeQuestions(
+          this.interrupted.has(threadId) ? "paused" : "finished",
+          (question) => question.conversationId === threadId && question.requestId === requestId,
+        );
+        break;
+      }
       case "thread/name/updated":
         if (n.params.threadName)
           this.emit({
@@ -1014,7 +1121,11 @@ export class CodexEngine implements Engine {
               text: item.text,
               delta: false,
             });
-        } else if (item.type !== "userMessage") {
+        } else if (
+          item.type !== "userMessage" &&
+          // The user's answers, secret ones included, never go to the detail.
+          !(item.type === "functionCallOutput" && item.name === "request_user_input")
+        ) {
           const activity =
             item.type === "commandExecution"
               ? item.commandActions.length > 0 &&
@@ -1061,6 +1172,11 @@ export class CodexEngine implements Engine {
         break;
       case "turn/completed": {
         const { threadId: conversationId, turn } = n.params;
+        // A question of a turn that ended can no longer be answered.
+        this.closeQuestions(
+          turn.status === "interrupted" || this.interrupted.has(conversationId) ? "paused" : "finished",
+          (question) => question.conversationId === conversationId,
+        );
         this.turns.delete(conversationId);
         this.lastTurn.set(conversationId, turn.id);
         this.interrupted.delete(conversationId);
@@ -1545,6 +1661,7 @@ export class CodexEngine implements Engine {
   }
   async close() {
     this.stopping = true;
+    this.closeQuestions("stopped");
     clearTimeout(this.setupTimer);
     this.restartTimer?.();
     this.stableTimer?.();

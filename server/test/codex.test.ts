@@ -574,7 +574,9 @@ test("generic files become local images and named relative document mentions", a
   } finally { await f.close(); }
 });
 
- test("all server initiated requests resolve without user approvals or hangs", async () => {
+// A valid question goes to the screen (questions.test.ts); one that cannot be
+// shown, like the empty params here, is answered empty like the rest.
+test("every other server initiated request resolves without user approvals or hangs", async () => {
   const f = await fixture();
   try {
     await f.engine.send('thread-1', 'interactive');

@@ -5,6 +5,12 @@ invitación. Conversá: una o dos preguntas por mensaje y esperá la respuesta.
 No mandes un cuestionario entero ni elijas por ella. Si ya hay marca, leela y
 preguntá qué quiere completar. Nunca reemplaces acuerdos previos sin avisar.
 
+Cuando la respuesta sea elegir entre pocas opciones, preguntá con opciones
+(`request_user_input`): Bitácora le muestra una tarjeta para tocar una y
+siempre suma «Otra» para que escriba lo suyo. Usalas donde se marcan abajo.
+Los datos abiertos (nombre, firma, contactos, frases) preguntalos en el
+mensaje, sin opciones: no le propongas datos para que elija.
+
 ## Conocernos
 
 1. «¿Cómo se llama tu agencia y cómo te gusta firmar los mensajes?»
@@ -16,11 +22,13 @@ preguntá qué quiere completar. Nunca reemplaces acuerdos previos sin avisar.
 4. «¿Me mostrás algo que les mandes hoy? Puede ser una captura, una foto o un
    PDF.» Mirá el adjunto para inferir composición, colores y tono. Confirmá lo
    que inferiste. Si no tiene, seguí desde cero.
-5. «¿Dónde lo mandás más: WhatsApp, historias, publicaciones o PDF?» Siempre
-   dejá al menos una plantilla vertical de 1080 × 1920 para WhatsApp e historias;
-   sumá otros formatos solo si los necesita.
-6. «¿Les hablás de vos o de usted? ¿Preferís algo cálido o más formal?» Después
-   preguntá si usa emojis y si hay frases que usa o prefiere evitar. Podés
+5. «¿Dónde lo mandás más?» Preguntalo con opciones: «WhatsApp», «Historias»
+   y «Publicaciones»; si es otro (por ejemplo PDF), lo escribe en «Otra».
+   Siempre dejá al menos una plantilla vertical de 1080 × 1920 para WhatsApp e
+   historias; sumá otros formatos solo si los necesita.
+6. «¿Les hablás de vos o de usted?» y «¿Preferís algo cálido o más formal?»
+   Preguntalas con opciones, en la misma tarjeta. Después preguntá en el
+   mensaje si usa emojis y si hay frases que usa o prefiere evitar. Podés
    proponer ejemplos de redacción para que confirme, sin atribuirle experiencia.
 
 ## Elegir mirando
@@ -45,8 +53,10 @@ Usá HTML estático con `data-piece`, tamaño explícito y sin scripts. Cargá
 `fuentes/fuentes.css` con una ruta relativa desde el HTML; el kit ya lo copia
 a la agencia. No uses URLs ni fuentes instaladas en la compu. Llamá `dibujar`
 con width 1080, height 1920 y destinos nuevos. Mirá los PNG y corregí desbordes.
-Decile: «¿Cuál te gusta más: la 1, la 2 o la 3? También podemos mezclar.»
-Esperá su elección. Si pide una mezcla, dibujala y pedile que la confirme.
+Preguntale con opciones «¿Cuál te gusta más?»: «La 1», «La 2» y «La 3», cada
+una con una frase corta que la describa; si quiere mezclar, lo escribe en
+«Otra». Esperá su elección. Si pide una mezcla, dibujala y pedile que la
+confirme.
 
 ## Guardar lo elegido
 

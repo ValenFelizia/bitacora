@@ -33,6 +33,7 @@ import type {
 import { MAX_TITLE } from "../../server/src/titles";
 import "./style.css";
 import { DeliverablesPanel, FileCard, FilePreviewModal } from "./files";
+import { QuestionCard } from "./question";
 import { formatTime, formatWorkDate, undoSummary } from "./format";
 import { protectionText, protectionWarning } from "./protection-text";
 import {
@@ -144,7 +145,11 @@ function App() {
   const [text, setText] = useState("");
   const [online, setOnline] = useState(false);
   const [pending, setPending] = useState(false);
-  const [problem, setProblem] = useState<{ text: string; detail?: string }>();
+  // The question whose answer was sent and not yet confirmed by a snapshot. The
+  // ref stops a second click before the state updates.
+  const [answering, setAnswering] = useState<string>();
+  const answeringRef = useRef<string | undefined>(undefined);
+  const [problem, setProblem] = useState<{ text: string; detail?: string; workId?: string }>();
   const [login, setLogin] = useState<string>();
   const loginWindow = useRef<Window | null>(null);
   const socket = useRef<WebSocket | null>(null);
@@ -216,6 +221,8 @@ function App() {
         if (message.type === "problem") {
           setProblem(message);
           setPending(false);
+          answeringRef.current = undefined;
+          setAnswering(undefined);
           // A rename that was refused keeps its form open with the message.
           setSavingName(undefined);
         }
@@ -230,6 +237,9 @@ function App() {
       ws.onclose = () => {
         setOnline(false);
         setPending(false);
+        // An answer in flight may never arrive: the card can send it again.
+        answeringRef.current = undefined;
+        setAnswering(undefined);
         // A rename in flight may never be answered: the form stays open with
         // the typed name so it can be saved again.
         setSavingName(undefined);
@@ -300,7 +310,25 @@ function App() {
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: "end" });
-  }, [selected, work?.messages.length, work?.messages.at(-1)?.text]);
+  }, [selected, work?.messages.length, work?.messages.at(-1)?.text, work?.question?.id, work?.question?.closed]);
+
+  useEffect(() => {
+    const sent = answeringRef.current;
+    if (!sent || (work?.question?.id === sent && !work.question.closed)) return;
+    // The answer was taken. With no other question in line the card is gone,
+    // so the focus goes to the text box instead of falling to the page; a
+    // next question or a closed card takes it themselves.
+    answeringRef.current = undefined;
+    setAnswering(undefined);
+    if (!work?.question) composerInput.current?.focus();
+  }, [work?.question?.id, work?.question?.closed]);
+
+  function respond(questionId: string, command: ClientCommand) {
+    if (answeringRef.current === questionId) return;
+    answeringRef.current = questionId;
+    setAnswering(questionId);
+    send(command);
+  }
 
   useEffect(() => {
     const resize = () => {
@@ -1268,6 +1296,23 @@ function App() {
 
               {!gallery && work && lastUserIndex === -1 && (inProgressBlock || pausedProgressBlock)}
 
+              {!gallery && work?.question && (
+                <QuestionCard
+                  key={work.question.id}
+                  question={work.question}
+                  disabled={!online}
+                  sending={answering === work.question.id}
+                  onAnswer={(answers) => {
+                    const questionId = work.question!.id;
+                    respond(questionId, { type: "answer", workId: work.id, questionId, answers });
+                  }}
+                  onSkip={() => {
+                    const questionId = work.question!.id;
+                    respond(questionId, { type: "skipQuestion", workId: work.id, questionId });
+                  }}
+                />
+              )}
+
               {/* Details toggle inside conversation log when not shown in an active error banner */}
               {!gallery && !showProblemBanner && work?.details && (
                 <DetailsToggle text={work.details} className="pl-4 -mt-2" />
@@ -1473,7 +1518,22 @@ function App() {
                         </>
                       }
                       trailing={
-                        state.engine.exhausted && (
+                        problem?.workId && problem.workId !== selected && state.works.some((w) => w.id === problem.workId) ? (
+                          <button
+                            type="button"
+                            className={buttonQuiet}
+                            onClick={() => {
+                              setGallery(false);
+                              setRenaming(false);
+                              setFocusedMessageId(undefined);
+                              setSelected(problem.workId);
+                              setProblem(undefined);
+                            }}
+                          >
+                            <ArrowRight size={18} strokeWidth={1.75} aria-hidden="true" />
+                            Ir a la pregunta
+                          </button>
+                        ) : state.engine.exhausted && (
                           <button
                             type="button"
                             className={buttonQuiet}

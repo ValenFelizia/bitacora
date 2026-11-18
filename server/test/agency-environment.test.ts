@@ -4,6 +4,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -44,9 +46,11 @@ const EXPECTED_ENABLED_FEATURES = [
   "computer_use",
   "content_item_kinds",
   "daemon_auto_start",
+  "default_mode_request_user_input",
   "deferred_tool_world_state",
   "enable_request_compression",
   "fast_mode",
+  "goals",
   "guardian_approval",
   "guardian_include_additional_context",
   "guardian_reuse_parent_compaction",
@@ -137,6 +141,8 @@ function startRealAppServer(args: string[], cwd: string, home: string) {
     stdio: "pipe",
   });
   const pending = new Map<number, (message: { result?: unknown; error?: { message: string } }) => void>();
+  /** Requests and notifications the app-server sent, in order. */
+  const incoming: { id?: number | string; method: string; params: any }[] = [];
   let nextId = 0;
   let stderr = "";
   child.stderr.on("data", (chunk) => {
@@ -144,6 +150,10 @@ function startRealAppServer(args: string[], cwd: string, home: string) {
   });
   createInterface({ input: child.stdout }).on("line", (line) => {
     const message = JSON.parse(line);
+    if (message.method) {
+      incoming.push(message);
+      return;
+    }
     if (message.id !== undefined) {
       const resolvePending = pending.get(message.id);
       if (resolvePending) {
@@ -184,14 +194,58 @@ function startRealAppServer(args: string[], cwd: string, home: string) {
       }
     }
   };
-  return { child, rpc, close };
+  const respond = (id: number | string, result: unknown) =>
+    child.stdin.write(JSON.stringify({ id, result }) + "\n");
+  return { child, rpc, close, incoming, respond };
+}
+
+/**
+ * A local stand-in for the model API: it answers each Responses request with
+ * the next scripted reply and keeps the request bodies. No inference and no
+ * account: the real app-server is pointed at it with a custom provider.
+ */
+async function mockResponses(replies: Array<(body: any) => object[]>) {
+  const bodies: any[] = [];
+  const server = createServer((req, res) => {
+    let raw = "";
+    req.on("data", (chunk) => (raw += chunk));
+    req.on("end", () => {
+      if (req.method !== "POST" || !req.url?.endsWith("/responses")) {
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+      const body = JSON.parse(raw);
+      bodies.push(body);
+      const id = `resp-${bodies.length}`;
+      const events = [
+        { type: "response.created", response: { id } },
+        ...(replies[bodies.length - 1] ?? replies.at(-1)!)(body),
+        { type: "response.completed", response: { id, usage: { input_tokens: 0, input_tokens_details: null, output_tokens: 0, output_tokens_details: null, total_tokens: 0 } } },
+      ];
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.end(events.map((event) => `event: ${(event as { type: string }).type}\ndata: ${JSON.stringify(event)}\n\n`).join(""));
+    });
+  });
+  await new Promise<void>((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+  const { port } = server.address() as AddressInfo;
+  return {
+    bodies,
+    args: [
+      "-c", 'model="mock-model"',
+      "-c", 'model_provider="bitacora_mock"',
+      "-c", `model_providers.bitacora_mock={name="bitacora_mock",base_url="http://127.0.0.1:${port}/v1",wire_api="responses",request_max_retries=0,stream_max_retries=0,supports_websockets=false}`,
+    ],
+    close: () => new Promise<void>((resolveClose) => server.close(() => resolveClose())),
+  };
 }
 
 test("agency environment policy and developer instructions match DEC-011", () => {
   assert.equal(AGENCY_ENVIRONMENT.aiImages, true);
-  assert.equal(AGENCY_ENVIRONMENT.webSearch, "disabled");
+  assert.equal(AGENCY_ENVIRONMENT.webSearch, "cached");
   assert.equal(AGENCY_ENVIRONMENT.subagents, false);
-  assert.equal(AGENCY_ENVIRONMENT.goals, false);
+  assert.equal(AGENCY_ENVIRONMENT.goals, true);
+  assert.equal(AGENCY_ENVIRONMENT.questions, true);
   assert.equal(AGENCY_ENVIRONMENT.bundledSkills, false);
   assert.deepEqual(AGENCY_ENVIRONMENT.allowedSkills, []);
   assert.equal(AGENCY_ENVIRONMENT.pluginSuggestions, false);
@@ -355,6 +409,8 @@ test("real codex features list matches the exact expected enabled feature set fo
     assert.equal(features.get("view_image"), true);
     assert.equal(features.get("shell_tool"), true);
     assert.equal(features.get("unified_exec"), true);
+    assert.equal(features.get("goals"), true);
+    assert.equal(features.get("default_mode_request_user_input"), true);
 
     for (const off of [
       "plugins",
@@ -371,7 +427,6 @@ test("real codex features list matches the exact expected enabled feature set fo
       "multi_agent",
       "multi_agent_v2",
       "runtime_agent_instances",
-      "goals",
     ]) {
       assert.equal(features.get(off), false, `expected feature ${off} to be false`);
     }
@@ -430,7 +485,7 @@ test(
         };
       }>("config/read", { includeLayers: false });
 
-      assert.equal(config.web_search, "disabled");
+      assert.equal(config.web_search, "cached");
       assert.equal(config.include_apps_instructions, false);
       assert.equal(config.features?.image_generation, true);
       assert.equal(config.features?.plugins, false);
@@ -441,7 +496,8 @@ test(
       assert.equal(config.features?.apps, false);
       assert.equal(config.features?.multi_agent, false);
       assert.equal(config.features?.multi_agent_v2, false);
-      assert.equal(config.features?.goals, false);
+      assert.equal(config.features?.goals, true);
+      assert.equal(config.features?.default_mode_request_user_input, true);
       assert.equal(config.plugins?._default?.enabled, false);
       assert.equal(config.apps?._default?.enabled, false);
       assert.equal(config.agents?.enabled, false);
@@ -501,6 +557,150 @@ test(
       assert.doesNotMatch(configToml, /web_search|image_generation|multi_agent|tool_suggest|bundled/i);
     } finally {
       await Promise.all([curated.close(), control.close()]);
+      await rm(base, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+    }
+  },
+);
+
+test(
+  "real codex app-server offers goals, web search and questions outside Plan, and waits for the answer (no inference)",
+  { timeout: 90_000 },
+  async () => {
+    const base = await mkdtemp(join(tmpdir(), "bitacora-questions-real-"));
+    const home = join(base, "home");
+    const workspace = join(base, "workspace");
+    await mkdir(home, { recursive: true });
+    await mkdir(workspace, { recursive: true });
+    const ask = (callId: string) => () => [{
+      type: "response.output_item.done",
+      item: {
+        type: "function_call",
+        call_id: callId,
+        name: "request_user_input",
+        arguments: JSON.stringify({
+          questions: [{
+            id: "trato",
+            header: "Trato",
+            question: "¿Les hablás de vos o de usted?",
+            options: [
+              { label: "Vos (Recommended)", description: "Más cercano." },
+              { label: "Usted", description: "Más formal." },
+            ],
+          }],
+        }),
+      },
+    }];
+    const say = () => [{
+      type: "response.output_item.done",
+      item: { type: "message", role: "assistant", id: "msg", content: [{ type: "output_text", text: "Listo." }] },
+    }];
+    const model = await mockResponses([ask("call-1"), say, ask("call-2"), say, ask("call-3"), say]);
+    // The arguments Bitácora gives a machine without MXC: no profile, so no
+    // sandbox is needed for a turn that runs no command.
+    const server = startRealAppServer([...appServerArgs("elevated"), ...model.args], workspace, home);
+    const next = (predicate: (message: { method: string; params: any }) => boolean, label: string) =>
+      (async () => {
+        const deadline = Date.now() + 30_000;
+        while (Date.now() < deadline) {
+          const found = server.incoming.find(predicate);
+          if (found) return found;
+          await delay(25);
+        }
+        assert.fail(`timed out waiting for ${label}`);
+      })();
+    try {
+      await server.rpc("initialize", {
+        clientInfo: { name: "bitacora_questions_test", version: "0.1.0" },
+        capabilities: { experimentalApi: true, requestAttestation: false },
+      });
+      server.child.stdin.write('{"method":"initialized"}\n');
+      const { config } = await server.rpc<{
+        config: { web_search: string | null; features?: Record<string, boolean | null> };
+      }>("config/read", { includeLayers: false });
+      assert.equal(config.web_search, "cached");
+      assert.equal(config.features?.goals, true);
+      assert.equal(config.features?.default_mode_request_user_input, true);
+
+      const { thread } = await server.rpc<{ thread: { id: string } }>("thread/start", {
+        cwd: workspace,
+        approvalPolicy: "never",
+        sandbox: "workspace-write",
+        developerInstructions: AGENCY_DEVELOPER_INSTRUCTIONS,
+      });
+      const text = (value: string) => [{ type: "text", text: value, text_elements: [] }];
+      await server.rpc("turn/start", { threadId: thread.id, input: text("Armemos la marca") });
+
+      // The question reaches the client and the turn waits for it.
+      const request = await next((m) => m.method === "item/tool/requestUserInput", "the question");
+      assert.equal(request.params.threadId, thread.id);
+      assert.equal(request.params.isBlocking, false);
+      assert.equal(request.params.questions[0].isOther, true);
+      assert.deepEqual(request.params.questions[0].options.map((o: { label: string }) => o.label), ["Vos (Recommended)", "Usted"]);
+      await delay(300);
+      assert.equal(server.incoming.some((m) => m.method === "turn/completed"), false);
+      assert.equal(model.bodies.length, 1);
+
+      // What the model is offered in the default mode, with the agency's arguments.
+      const tools = model.bodies[0].tools as Array<{ type: string; name?: string }>;
+      const names = tools.map((tool) => tool.name ?? tool.type);
+      for (const tool of ["request_user_input", "create_goal", "get_goal", "update_goal", "web_search"])
+        assert.ok(names.includes(tool), `${tool} missing from ${names.join(", ")}`);
+
+      // «Otra» goes back as Codex's own client sends it, and reaches the model
+      // as the tool's output.
+      const written = "nota-escrita-7391";
+      const otherAnswer = { answers: { trato: { answers: ["None of the above", `user_note: ${written}`] } } };
+      server.respond(request.id!, otherAnswer);
+      const completed = await next((m) => m.method === "turn/completed", "the first turn");
+      assert.equal(completed.params.turn.status, "completed");
+      const outputOf = (body: any, callId: string) =>
+        JSON.parse((body.input as Array<{ type: string; call_id?: string; output?: string }>)
+          .find((item) => item.type === "function_call_output" && item.call_id === callId)!.output!);
+      assert.deepEqual(outputOf(model.bodies[1], "call-1"), otherAnswer);
+      const resolved = server.incoming.findIndex((m) => m.method === "serverRequest/resolved" && m.params.requestId === request.id);
+      assert.ok(resolved >= 0 && resolved < server.incoming.indexOf(completed), "resolved before the turn ends");
+      // 0.168.0 sends no thread item with the answer: nothing the client could
+      // copy into a work's detail carries what the user wrote.
+      assert.equal(server.incoming.some((m) => JSON.stringify(m).includes(written)), false);
+
+      // «Ahora no»: an empty answer. The model gets `{"answers":{}}` and
+      // nothing else, and the turn goes on.
+      const afterFirst = server.incoming.length;
+      await server.rpc("turn/start", { threadId: thread.id, input: text("Seguimos") });
+      const skipped = await next(
+        (m) => server.incoming.indexOf(m as never) >= afterFirst && m.method === "item/tool/requestUserInput",
+        "the second question",
+      );
+      server.respond(skipped.id!, { answers: {} });
+      const skippedTurn = await next(
+        (m) => server.incoming.indexOf(m as never) >= afterFirst && m.method === "turn/completed",
+        "the second turn",
+      );
+      assert.equal(skippedTurn.params.turn.status, "completed");
+      assert.deepEqual(outputOf(model.bodies[3], "call-2"), { answers: {} });
+
+      // A pause while the question waits ends the turn as interrupted and the
+      // app-server stops waiting for the answer (in 0.168.0 it says so after
+      // the turn ends). Nothing is left hanging.
+      const seen = server.incoming.length;
+      const second = await server.rpc<{ turn: { id: string } }>("turn/start", { threadId: thread.id, input: text("Otra cosa") });
+      const pausedRequest = await next(
+        (m) => server.incoming.indexOf(m as never) >= seen && m.method === "item/tool/requestUserInput",
+        "the third question",
+      );
+      await server.rpc("turn/interrupt", { threadId: thread.id, turnId: second.turn.id });
+      const interrupted = await next(
+        (m) => server.incoming.indexOf(m as never) >= seen && m.method === "turn/completed",
+        "the interrupted turn",
+      );
+      assert.equal(interrupted.params.turn.status, "interrupted");
+      await next(
+        (m) => m.method === "serverRequest/resolved" && m.params.requestId === pausedRequest.id,
+        "the paused question to be resolved",
+      );
+    } finally {
+      await server.close();
+      await model.close();
       await rm(base, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
     }
   },
