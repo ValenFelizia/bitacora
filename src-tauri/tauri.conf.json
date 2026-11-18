@@ -10,7 +10,7 @@
   "app": {
     "windows": [],
     "security": {
-      "csp": "default-src 'none'; style-src 'unsafe-inline'"
+      "csp": "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'"
     }
   },
   "bundle": {
@@ -19,7 +19,7 @@
     "icon": ["icons/icon.ico"],
     "resources": { "payload/runtime/": "runtime/" },
     "windows": {
-      "webviewInstallMode": { "type": "offlineInstaller", "silent": true },
+      "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true },
       "nsis": {
         "languages": ["Spanish"],
         "installMode": "currentUser"

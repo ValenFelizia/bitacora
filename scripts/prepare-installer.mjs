@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { copyFile, cp, mkdir, rm } from "node:fs/promises";
+import { copyFile, cp, mkdir, rename, rm, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
@@ -33,6 +33,16 @@ async function download(url, destination) {
   await pipeline(response.body, createWriteStream(destination));
 }
 
+async function cachedLicense(directory, name, url) {
+  await mkdir(directory, { recursive: true });
+  const file = join(directory, name);
+  if ((await stat(file).catch(() => undefined))?.size) return file;
+  const partial = `${file}.download`;
+  await download(url, partial);
+  await rename(partial, file);
+  return file;
+}
+
 const cache = join(root, ".local", `node-${nodeVersion}-${process.arch}`);
 await mkdir(cache, { recursive: true });
 const node = join(cache, "node.exe");
@@ -41,12 +51,26 @@ if (await sha256(node).catch(() => "") !== hash) {
   else await download(`https://nodejs.org/dist/v${nodeVersion}/win-${process.arch}/node.exe`, node);
   if (await sha256(node) !== hash) throw new Error("Unexpected SHA-256 for Node.js");
 }
-const nodeLicense = join(cache, "NODE-LICENSE.txt");
-await download(`https://raw.githubusercontent.com/nodejs/node/v${nodeVersion}/LICENSE`, nodeLicense);
+const nodeLicense = await cachedLicense(cache, "NODE-LICENSE.txt",
+  `https://raw.githubusercontent.com/nodejs/node/v${nodeVersion}/LICENSE`);
 
 const codex = codexBinary();
-const actualVersion = execFileSync(codex, ["--version"], { encoding: "utf8", windowsHide: true }).trim();
+const actualVersion = execFileSync(codex, ["--version"], {
+  encoding: "utf8", windowsHide: true, timeout: 5000,
+}).trim();
 if (actualVersion !== codexVersion) throw new Error(`Expected ${codexVersion}, got ${actualVersion}`);
+
+const codexRelease = codexVersion.split(" ")[1];
+const codexLicense = await cachedLicense(join(root, ".local", `codex-${codexRelease}`),
+  "LICENSE", `https://raw.githubusercontent.com/openai/codex/rust-v${codexRelease}/LICENSE`);
+const codexSource = dirname(dirname(codex));
+const codexFiles = [
+  "codex-package.json",
+  "bin/codex.exe",
+  "codex-path/rg.exe",
+  "codex-resources/codex-command-runner.exe",
+  "codex-resources/codex-windows-sandbox-setup.exe",
+];
 
 // Install the server workspace from the repository lock. npm ci resets its
 // dependency tree. The workspace link lives only in this temporary directory.
@@ -65,7 +89,11 @@ await mkdir(runtime, { recursive: true });
 await Promise.all([
   copyFile(node, join(runtime, "node.exe")),
   copyFile(nodeLicense, join(runtime, "NODE-LICENSE.txt")),
-  cp(dirname(dirname(codex)), join(runtime, "codex"), { recursive: true }),
+  ...codexFiles.map(async (file) => {
+    const target = join(runtime, "codex", file);
+    await mkdir(dirname(target), { recursive: true });
+    await copyFile(join(codexSource, file), target);
+  }),
   cp(join(root, "kit", "turismo"), join(runtime, "kit", "turismo"), { recursive: true }),
   cp(join(root, "web", "dist"), join(runtime, "web"), { recursive: true }),
   cp(join(stage, "node_modules"), join(runtime, "node_modules"), {
@@ -98,8 +126,7 @@ await build({
   }],
 });
 
-await download(`https://raw.githubusercontent.com/openai/codex/rust-v${codexVersion.split(" ")[1]}/LICENSE`,
-  join(runtime, "codex", "LICENSE"));
+await copyFile(codexLicense, join(runtime, "codex", "LICENSE"));
 const fontLicenses = join(runtime, "licenses");
 await mkdir(fontLicenses);
 for (const font of ["atkinson-hyperlegible", "young-serif"]) {

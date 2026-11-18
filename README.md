@@ -7,17 +7,18 @@ ya paga. Pensada para personas no técnicas.
 ## Instalación en Windows
 
 Ejecutá **Bitácora … setup** y abrí **Bitácora** desde el menú Inicio.
-El instalador trae lo necesario para abrir la app. Para dibujar las piezas,
-Bitácora usa Microsoft Edge, que viene con Windows.
+Si a tu compu le falta WebView2, el instalador lo descarga. Para dibujar las
+piezas, Bitácora usa Microsoft Edge, que viene con Windows.
 Tocá **Conectar cuenta** y seguí los pasos de ChatGPT en tu navegador.
-Si ya tenés Bitácora abierta, abrir el ícono de nuevo vuelve a esa ventana.
+Si ya tenés Bitácora abierta, abrir el ícono de nuevo vuelve a esa ventana
+y reintenta la conexión si se cortó.
 Si desinstalás la app, se conservan tus trabajos, tu cuenta y la carpeta de la agencia.
 
 Para **generar el instalador** en Windows, instalá Rust con el destino MSVC
 de tu equipo y Visual Studio Build Tools con la carga de trabajo de C++ de
 escritorio. Con Node.js 24 y npm, corré `npm ci` y `npm run build:installer`.
 El instalador queda en `src-tauri/target/release/bundle/nsis/`. El armado
-descarga dependencias y WebView2, y verifica el ejecutable de Node contra el
+descarga las dependencias y verifica el ejecutable de Node contra el
 SHA-256 de su versión oficial. La instalación es por usuario. Ver
 [DEC-013](docs/DEC-013-windows-installer.md).
 
@@ -89,9 +90,13 @@ Un archivo de trabajos dañado se conserva como `works.corrupt-<fecha>.json` y
 la app abre una lista vacía con un aviso. Si falla un guardado, muestra un aviso
 y el siguiente guardado puede recuperarse.
 
-Las copias y Deshacer están implementados. El perfil beta de lecturas se probó
-por separado y queda desactivado en la app. El kit está integrado con adjuntos,
-galería y Deshacer.
+Las copias y Deshacer están implementados. Con MXC, el perfil `agencia`
+bloquea las lecturas fuera de la carpeta de la agencia. Si Windows no tiene
+MXC, Bitácora avisa que el agente puede leer archivos de afuera, aunque no
+puede cambiarlos ni borrarlos. El instalador mantiene esta protección
+([DEC-010](.csdd/decisions.md#dec-010--cada-pedido-corre-con-un-perfil-de-permisos-que-no-deja-leer-afuera)
+y [DEC-013](docs/DEC-013-windows-installer.md)). El kit está integrado con
+adjuntos, galería y Deshacer.
 
 ## Kit de turismo
 
