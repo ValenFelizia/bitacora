@@ -36,7 +36,7 @@ export type EngineEvent =
       text: string;
       delta: boolean;
     }
-  | { type: "detail"; conversationId: string; text: string }
+  | { type: "detail"; conversationId?: string; text: string; key?: string }
   | {
       type: "finished";
       conversationId: string;
@@ -77,6 +77,11 @@ export interface Engine {
   renameWork(conversationId: string, title: string): Promise<void>;
   send(conversationId: string, text: string, files?: EngineFile[], context?: { filesReverted?: boolean }): Promise<void>;
   interrupt(conversationId: string): Promise<void>;
+  /**
+   * Drops the memory of notices that were emitted but never delivered to a
+   * work, so the next check says them again instead of treating them as said.
+   */
+  forgetDetails(keys: readonly string[]): void;
   subscribe(listener: (event: EngineEvent) => void): () => void;
   close(): Promise<void>;
 }

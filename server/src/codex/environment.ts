@@ -53,8 +53,12 @@ export function codexEnvironmentArgs(
     ...c(`features.multi_agent=${environment.subagents}`),
     ...c(`features.multi_agent_v2=${environment.subagents}`),
     ...c(`agents.enabled=${environment.subagents}`),
+    ...c(`features.goals=${environment.goals}`),
   );
-  args.push(...c(`skills.bundled.enabled=${environment.bundledSkills}`));
+  args.push(
+    ...c(`skills.bundled.enabled=${environment.bundledSkills}`),
+    ...c(`skills.include_instructions=${environment.allowedSkills.length > 0}`),
+  );
   args.push(...c(`features.tool_suggest=${environment.pluginSuggestions}`));
 
   args.push(

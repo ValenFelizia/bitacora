@@ -74,6 +74,11 @@ export class FakeEngine implements Engine {
     this.calls.push(`interrupt:${id}`);
     this.emit({ type: "finished", conversationId: id, status: "interrupted" });
   }
+  /** Keys the app asked to forget, so a test can tell a dropped notice apart. */
+  forgotten: string[] = [];
+  forgetDetails(keys: readonly string[]) {
+    this.forgotten.push(...keys);
+  }
   subscribe(fn: (event: EngineEvent) => void) {
     this.listeners.add(fn);
     return () => {
