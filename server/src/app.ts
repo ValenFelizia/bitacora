@@ -63,6 +63,7 @@ export class App {
   private titlePending = new Set<string>();
   private renamed = new Set<string>();
   private titleTasks = new Set<Promise<void>>();
+  private pendingDetails: string[] = [];
   constructor(
     private engine: Engine,
     private data: string,
@@ -298,11 +299,16 @@ export class App {
       return;
     }
     const work =
-      "conversationId" in event
+      "conversationId" in event && event.conversationId
         ? this.works.find((w) => w.conversationId === event.conversationId)
-        : undefined;
+        : event.type === "detail"
+          ? this.works.find((w) => w.busy)
+          : undefined;
     if (!work) {
-      if (event.type === "problem")
+      if (event.type === "detail" && !event.conversationId) {
+        this.pendingDetails.push(event.text);
+        if (this.pendingDetails.length > 50) this.pendingDetails.shift();
+      } else if (event.type === "problem")
         this.publish({
           type: "problem",
           text: !this.available ? "Bitácora se detuvo. Tus trabajos siguen guardados." : problemText(event.kind),
@@ -546,6 +552,9 @@ export class App {
         work.pendingFiles = { messageId };
       }
       if (newWork) { this.works.unshift(work); this.resumed.add(work.id); }
+      if (this.pendingDetails.length) {
+        work.details = (work.details + this.pendingDetails.splice(0).join("\n") + "\n").slice(-100000);
+      }
       committed = true;
       work.messages.push({
         id: messageId,

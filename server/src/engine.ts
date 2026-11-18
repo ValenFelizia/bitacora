@@ -36,7 +36,7 @@ export type EngineEvent =
       text: string;
       delta: boolean;
     }
-  | { type: "detail"; conversationId: string; text: string }
+  | { type: "detail"; conversationId?: string; text: string }
   | {
       type: "finished";
       conversationId: string;

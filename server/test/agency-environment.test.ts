@@ -4,7 +4,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -12,7 +12,9 @@ import { setTimeout as delay } from "node:timers/promises";
 import {
   AGENCY_DEVELOPER_INSTRUCTIONS,
   AGENCY_ENVIRONMENT,
+  isAllowedSkill,
 } from "../src/agency-environment";
+import { App } from "../src/app";
 import { CodexEngine, PERMISSIONS_PROFILE, appServerArgs } from "../src/codex/engine";
 import { codexEnvironmentArgs } from "../src/codex/environment";
 import { registerKit } from "../src/codex/kit";
@@ -44,7 +46,6 @@ const EXPECTED_ENABLED_FEATURES = [
   "deferred_tool_world_state",
   "enable_request_compression",
   "fast_mode",
-  "goals",
   "guardian_approval",
   "guardian_include_additional_context",
   "guardian_reuse_parent_compaction",
@@ -189,10 +190,30 @@ test("agency environment policy and developer instructions match DEC-011", () =>
   assert.equal(AGENCY_ENVIRONMENT.aiImages, true);
   assert.equal(AGENCY_ENVIRONMENT.webSearch, "disabled");
   assert.equal(AGENCY_ENVIRONMENT.subagents, false);
+  assert.equal(AGENCY_ENVIRONMENT.goals, false);
   assert.equal(AGENCY_ENVIRONMENT.bundledSkills, false);
+  assert.deepEqual(AGENCY_ENVIRONMENT.allowedSkills, []);
   assert.equal(AGENCY_ENVIRONMENT.pluginSuggestions, false);
   assert.deepEqual(AGENCY_ENVIRONMENT.allowedPlugins, []);
   assert.deepEqual(AGENCY_ENVIRONMENT.allowedConnectors, []);
+
+  for (const scope of ["user", "repo", "system", "admin"]) {
+    assert.equal(isAllowedSkill({ name: "any-skill", scope }), false);
+  }
+  assert.equal(
+    isAllowedSkill(
+      { name: "kit-skill", scope: "repo" },
+      { ...AGENCY_ENVIRONMENT, allowedSkills: ["kit-skill"] },
+    ),
+    true,
+  );
+  assert.equal(
+    isAllowedSkill(
+      { name: "kit-skill", scope: "user" },
+      { ...AGENCY_ENVIRONMENT, allowedSkills: ["kit-skill"] },
+    ),
+    false,
+  );
 
   assert.doesNotMatch(AGENCY_DEVELOPER_INSTRUCTIONS, /No generes imágenes con IA/i);
   assert.match(AGENCY_DEVELOPER_INSTRUCTIONS, /castellano rioplatense/i);
@@ -349,6 +370,7 @@ test("real codex features list matches the exact expected enabled feature set fo
       "multi_agent",
       "multi_agent_v2",
       "runtime_agent_instances",
+      "goals",
     ]) {
       assert.equal(features.get(off), false, `expected feature ${off} to be false`);
     }
@@ -403,7 +425,7 @@ test(
           plugins?: Record<string, { enabled?: boolean }>;
           apps?: Record<string, { enabled?: boolean }>;
           agents?: { enabled?: boolean };
-          skills?: { bundled?: { enabled?: boolean } };
+          skills?: { bundled?: { enabled?: boolean }; include_instructions?: boolean };
         };
       }>("config/read", { includeLayers: false });
 
@@ -418,10 +440,12 @@ test(
       assert.equal(config.features?.apps, false);
       assert.equal(config.features?.multi_agent, false);
       assert.equal(config.features?.multi_agent_v2, false);
+      assert.equal(config.features?.goals, false);
       assert.equal(config.plugins?._default?.enabled, false);
       assert.equal(config.apps?._default?.enabled, false);
       assert.equal(config.agents?.enabled, false);
       assert.equal(config.skills?.bundled?.enabled, false);
+      assert.equal(config.skills?.include_instructions, false);
 
       const skills = await curated.rpc<{
         data: Array<{ skills: Array<{ name: string; scope: string; enabled: boolean }> }>;
@@ -480,3 +504,220 @@ test(
     }
   },
 );
+
+test(
+  "CodexEngine disables user and repo skills on the real Codex binary without touching HOME/USERPROFILE",
+  { timeout: 90_000 },
+  async () => {
+    const base = await mkdtemp(join(tmpdir(), "bitacora-real-skills-"));
+    const home = join(base, "codex");
+    const workspace = join(base, "workspace");
+    await mkdir(join(home, "skills", "fake-user-skill"), { recursive: true });
+    await mkdir(join(workspace, ".agents", "skills", "fake-repo-skill"), { recursive: true });
+    await writeFile(
+      join(home, "skills", "fake-user-skill", "SKILL.md"),
+      "---\nname: fake-user-skill\ndescription: Synthetic user skill for test.\n---\n",
+      "utf8",
+    );
+    await writeFile(
+      join(workspace, ".agents", "skills", "fake-repo-skill", "SKILL.md"),
+      "---\nname: fake-repo-skill\ndescription: Synthetic repo skill for test.\n---\n",
+      "utf8",
+    );
+    await writeFile(join(home, "config.toml"), 'windows.sandbox = "elevated"\n', "utf8");
+
+    const beforeHome = process.env.HOME;
+    const beforeUserProfile = process.env.USERPROFILE;
+    const engine = new CodexEngine({
+      home,
+      workspace,
+      requestTimeoutMs: 60_000,
+      probeProtection: async () => false,
+    });
+    const details: string[] = [];
+    const unsubscribe = engine.subscribe((event) => {
+      if (event.type === "detail") details.push(event.text);
+    });
+
+    try {
+      await engine.start();
+      const created = await engine.createWork();
+      assert.ok(created.conversationId);
+      assert.deepEqual(details, []);
+      assert.equal(process.env.HOME, beforeHome);
+      assert.equal(process.env.USERPROFILE, beforeUserProfile);
+    } finally {
+      unsubscribe();
+      await engine.close();
+    }
+
+    // Verify with a fresh app-server reading the same CODEX_HOME and workspace
+    // that the synthetic user/repo skills and any host skills discovered on
+    // this machine were persisted as disabled.
+    const verifier = startRealAppServer(appServerArgs("elevated"), workspace, home);
+    try {
+      await verifier.rpc("initialize", {
+        clientInfo: { name: "bitacora_skills_verify", version: "0.1.0" },
+        capabilities: { experimentalApi: true, requestAttestation: false },
+      });
+      verifier.child.stdin.write('{"method":"initialized"}\n');
+
+      const { data } = await verifier.rpc<{
+        data: Array<{ skills: Array<{ name: string; scope: string; enabled: boolean }> }>;
+      }>("skills/list", { cwds: [workspace], forceReload: true });
+      const listed = data.flatMap((entry) => entry.skills);
+
+      const userSkill = listed.find((s) => s.name === "fake-user-skill");
+      const repoSkill = listed.find((s) => s.name === "fake-repo-skill");
+      assert.ok(userSkill, "synthetic user skill should be listed");
+      assert.equal(userSkill.scope, "user");
+      assert.equal(userSkill.enabled, false);
+      assert.ok(repoSkill, "synthetic repo skill should be listed");
+      assert.equal(repoSkill.scope, "repo");
+      assert.equal(repoSkill.enabled, false);
+      for (const skill of listed) {
+        assert.equal(skill.enabled, false, `expected skill ${skill.name} (${skill.scope}) to be disabled`);
+      }
+    } finally {
+      await verifier.close();
+      await rm(base, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+    }
+  },
+);
+
+test("CodexEngine re-disables newly enabled skills when skills/changed arrives", async () => {
+  await mkdir(".local", { recursive: true });
+  const dir = await mkdtemp(resolve(".local/skills-changed-"));
+  const home = join(dir, "home");
+  const workspace = join(dir, "workspace");
+  const skillsFile = join(dir, "skills.json");
+  await mkdir(home, { recursive: true });
+  await mkdir(workspace, { recursive: true });
+  await writeFile(
+    skillsFile,
+    JSON.stringify([
+      {
+        name: "initial-user-skill",
+        description: "Initial",
+        path: join(home, "skills", "initial-user-skill", "SKILL.md"),
+        scope: "user",
+        enabled: true,
+      },
+    ]),
+    "utf8",
+  );
+  process.env.BITACORA_FAKE_SKILLS_FILE = skillsFile;
+
+  const engine = new CodexEngine({
+    home,
+    workspace,
+    binary: process.execPath,
+    args: fakeAppServerArgs,
+    restartDelayMs: 30,
+    probeProtection: async () => false,
+  });
+  const finished = new Promise<void>((resolveDone) => {
+    const off = engine.subscribe((event) => {
+      if (event.type === "finished") {
+        off();
+        resolveDone();
+      }
+    });
+  });
+
+  try {
+    await engine.start();
+    const afterStart = JSON.parse(await readFile(skillsFile, "utf8")) as Array<{ name: string; enabled: boolean }>;
+    assert.equal(afterStart[0]?.enabled, false);
+
+    await writeFile(
+      skillsFile,
+      JSON.stringify([
+        ...afterStart,
+        {
+          name: "added-user-skill",
+          description: "Added mid-session",
+          path: join(home, "skills", "added-user-skill", "SKILL.md"),
+          scope: "user",
+          enabled: true,
+        },
+      ]),
+      "utf8",
+    );
+
+    const { conversationId } = await engine.createWork();
+    await engine.send(conversationId, "skills-changed");
+    await finished;
+
+    const deadline = Date.now() + 5000;
+    let updated: Array<{ name: string; enabled: boolean }> = [];
+    while (Date.now() < deadline) {
+      updated = JSON.parse(await readFile(skillsFile, "utf8")) as Array<{ name: string; enabled: boolean }>;
+      if (updated.every((skill) => skill.enabled === false)) break;
+      await delay(25);
+    }
+    assert.equal(updated.length, 2);
+    assert.equal(updated.every((skill) => skill.enabled === false), true);
+  } finally {
+    delete process.env.BITACORA_FAKE_SKILLS_FILE;
+    await engine.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
+});
+
+test("App records skill-disable failures in work.details without blocking work", async () => {
+  await mkdir(".local", { recursive: true });
+  const dir = await mkdtemp(resolve(".local/skills-error-"));
+  const home = join(dir, "home");
+  const workspace = join(dir, "workspace");
+  const data = join(dir, "data");
+  await mkdir(home, { recursive: true });
+  await mkdir(workspace, { recursive: true });
+  const badSkillPath = join(home, "skills", "broken-skill", "SKILL.md");
+  process.env.BITACORA_FAKE_SKILLS = JSON.stringify([
+    {
+      name: "broken-skill",
+      description: "Cannot be toggled",
+      path: badSkillPath,
+      scope: "user",
+      enabled: true,
+    },
+  ]);
+  process.env.BITACORA_FAKE_SKILL_WRITE_FAIL = badSkillPath;
+
+  const engine = new CodexEngine({
+    home,
+    workspace,
+    binary: process.execPath,
+    args: fakeAppServerArgs,
+    restartDelayMs: 30,
+    probeProtection: async () => false,
+  });
+  const app = new App(engine, data, () => {});
+
+  try {
+    await app.start();
+    const reply = await new Promise<{ type: string; workId?: string }>((resolveReply) => {
+      void app.command({ type: "send", text: "race" }, (message) => resolveReply(message));
+    });
+    assert.equal(reply.type, "selected");
+
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      const work = app.snapshot().works[0];
+      if (work && !work.busy) break;
+      await delay(25);
+    }
+    const work = app.snapshot().works[0];
+    assert.ok(work);
+    assert.equal(work.busy, false);
+    assert.equal(work.problem, undefined);
+    assert.match(work.details, /No pude apagar la skill "broken-skill"/);
+    assert.doesNotMatch(work.details, /\bmotor\b/i);
+  } finally {
+    delete process.env.BITACORA_FAKE_SKILLS;
+    delete process.env.BITACORA_FAKE_SKILL_WRITE_FAIL;
+    await app.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
+});

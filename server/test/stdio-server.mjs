@@ -20,6 +20,18 @@ if (process.env.BITACORA_FAKE_SPAWN)
     process.env.BITACORA_FAKE_SPAWN,
     JSON.stringify({ pid: process.pid, args: process.argv.slice(2) }) + "\n",
   );
+const fakeSkillsFile = process.env.BITACORA_FAKE_SKILLS_FILE;
+let fakeSkills = process.env.BITACORA_FAKE_SKILLS
+  ? JSON.parse(process.env.BITACORA_FAKE_SKILLS)
+  : [];
+const readFakeSkills = () =>
+  fakeSkillsFile && existsSync(fakeSkillsFile)
+    ? JSON.parse(readFileSync(fakeSkillsFile, "utf8"))
+    : fakeSkills;
+const writeFakeSkills = (skills) => {
+  fakeSkills = skills;
+  if (fakeSkillsFile) writeFileSync(fakeSkillsFile, JSON.stringify(skills));
+};
 const turn = (status = "inProgress") => ({ id: "turn-1", status, error: null });
 // The profile a thread reports back. `BITACORA_FAKE_THREAD_PROFILE=none` is an
 // engine that ignored the request and would run with the default profile;
@@ -87,6 +99,34 @@ createInterface({ input: process.stdin })
         writeFileSync(setupFile, configuredMode);
         setTimeout(() => reply({}), Number(process.env.BITACORA_FAKE_CONFIG_DELAY || 0));
         break;
+      case "skills/list":
+        if (process.env.BITACORA_FAKE_SKILLS_LIST_FAIL) {
+          send({ id: m.id, error: { code: -32603, message: "skills list failed" } });
+          break;
+        }
+        reply({ data: [{ cwd: m.params?.cwds?.[0] || "", skills: readFakeSkills(), errors: [] }] });
+        break;
+      case "skills/config/write": {
+        const failPath = process.env.BITACORA_FAKE_SKILL_WRITE_FAIL;
+        if (failPath && (failPath === "*" || m.params?.path === failPath)) {
+          send({ id: m.id, error: { code: -32603, message: "skills write failed" } });
+          break;
+        }
+        const keepEnabled = process.env.BITACORA_FAKE_SKILL_KEEP_ENABLED;
+        if (keepEnabled && (keepEnabled === "*" || m.params?.path === keepEnabled)) {
+          reply({ effectiveEnabled: true });
+          break;
+        }
+        const current = readFakeSkills();
+        for (const skill of current) {
+          if ((m.params?.path && skill.path === m.params.path) || (m.params?.name && skill.name === m.params.name)) {
+            skill.enabled = Boolean(m.params.enabled);
+          }
+        }
+        writeFakeSkills(current);
+        reply({ effectiveEnabled: Boolean(m.params?.enabled) });
+        break;
+      }
       case "windowsSandbox/setupStart":
         if (process.env.BITACORA_FAKE_SETUP_TIMEOUT) break;
         if (process.env.BITACORA_FAKE_SETUP_INTERRUPTED && !existsSync(setupFile + ".interrupted")) { writeFileSync(setupFile + ".interrupted", "1"); reply({ started: true }); setTimeout(() => process.exit(3), 40); break; }
@@ -202,6 +242,10 @@ createInterface({ input: process.stdin })
         }
         if (scenario === "race")
           notify("turn/completed", { threadId, turn: turn("completed") });
+        if (scenario === "skills-changed") {
+          notify("skills/changed", {});
+          notify("turn/completed", { threadId, turn: turn("completed") });
+        }
         if (scenario === "pause-started") notify("turn/started", { threadId, turn: turn() });
         if (scenario === "slow-start") {
           // The turn starts, its reply is late, and it ends on its own.

@@ -11,7 +11,7 @@ import { createInterface } from "node:readline";
 import { mkdir } from "node:fs/promises";
 import { registerKit } from './kit';
 import { cleanTitle, TITLE_PROMPT } from "../titles";
-import { AGENCY_ENVIRONMENT, type AgencyEnvironment } from "../agency-environment";
+import { AGENCY_ENVIRONMENT, isAllowedSkill, type AgencyEnvironment } from "../agency-environment";
 import { codexEnvironmentArgs } from "./environment";
 import type { Engine, EngineEvent, Account, ExecutionSafety } from "../engine";
 import { EngineFailure } from "../engine";
@@ -28,6 +28,8 @@ import type { TurnStartResponse } from "./generated/v2/TurnStartResponse";
 import type { ConfigReadResponse } from "./generated/v2/ConfigReadResponse";
 import type { CommandExecResponse } from "./generated/v2/CommandExecResponse";
 import type { PermissionProfileListResponse } from "./generated/v2/PermissionProfileListResponse";
+import type { SkillsConfigWriteResponse } from "./generated/v2/SkillsConfigWriteResponse";
+import type { SkillsListResponse } from "./generated/v2/SkillsListResponse";
 import type { WindowsSandboxReadinessResponse } from "./generated/v2/WindowsSandboxReadinessResponse";
 
 /**
@@ -84,6 +86,8 @@ type Responses = {
   "command/exec": CommandExecResponse;
   "config/read": ConfigReadResponse;
   "config/value/write": unknown;
+  "skills/list": SkillsListResponse;
+  "skills/config/write": SkillsConfigWriteResponse;
   "windowsSandbox/setupStart": { started: boolean };
   "account/read": GetAccountResponse;
   "account/login/start": LoginAccountResponse;
@@ -208,6 +212,9 @@ export class CodexEngine implements Engine {
   private loginId?: string;
   private stopping = false;
   private startAttempt?: Promise<void>;
+  private skillsSync?: Promise<void>;
+  private skillsDirty = false;
+  private reportedSkillErrors = new Set<string>();
   private stderr = "";
   constructor(
     private options: {
@@ -372,6 +379,12 @@ export class CodexEngine implements Engine {
         await this.stopTree(child);
         return false;
       }
+      this.reportedSkillErrors.clear();
+      this.skillsDirty = false;
+      this.skillsSync = undefined;
+      await this.syncSkills();
+      if (this.child !== child)
+        throw new Error("Engine stopped during skill setup");
       this.available = true;
       this.exhausted = false;
       this.stableTimer?.();
@@ -918,6 +931,9 @@ export class CodexEngine implements Engine {
             }),
           );
         break;
+      case "skills/changed":
+        if (this.available) void this.syncSkills();
+        break;
       case "thread/name/updated":
         if (n.params.threadName)
           this.emit({
@@ -1088,12 +1104,94 @@ export class CodexEngine implements Engine {
     this.setProtection({ allowed: false, status: "failed", detail: refusal, issue: "readBlock" });
     throw new EngineFailure("other", refusal);
   }
+  private reportSkillError(key: string, text: string, conversationId?: string) {
+    if (this.reportedSkillErrors.has(key)) return;
+    this.reportedSkillErrors.add(key);
+    this.emit({ type: "detail", conversationId, text });
+  }
+  private async runSkillSync(
+    child: ChildProcessWithoutNullStreams,
+    conversationId?: string,
+  ) {
+    if (this.child !== child || this.stopping) return;
+    let list: SkillsListResponse;
+    try {
+      list = await this.rpc("skills/list", {
+        cwds: [this.options.workspace],
+        forceReload: true,
+      });
+      this.reportedSkillErrors.delete("list");
+    } catch (error) {
+      if (this.child !== child || this.stopping) return;
+      this.reportSkillError(
+        "list",
+        `No pude revisar las skills del entorno: ${String(error)}`,
+        conversationId,
+      );
+      return;
+    }
+    const seen = new Set<string>();
+    for (const entry of list.data) {
+      for (const skill of entry.skills) {
+        if (seen.has(skill.path)) continue;
+        seen.add(skill.path);
+        if (!skill.enabled || isAllowedSkill(skill)) continue;
+        if (this.child !== child || this.stopping) return;
+        const key = `skill:${skill.path}`;
+        try {
+          const write = await this.rpc("skills/config/write", {
+            path: skill.path,
+            enabled: false,
+          });
+          if (write.effectiveEnabled) {
+            this.reportSkillError(
+              key,
+              `No pude apagar la skill "${skill.name}" (${skill.path}).`,
+              conversationId,
+            );
+          } else {
+            this.reportedSkillErrors.delete(key);
+          }
+        } catch (error) {
+          if (this.child !== child || this.stopping) return;
+          this.reportSkillError(
+            key,
+            `No pude apagar la skill "${skill.name}" (${skill.path}): ${String(error)}`,
+            conversationId,
+          );
+        }
+      }
+    }
+  }
+  private async syncSkills(conversationId?: string) {
+    const child = this.child;
+    if (!child || this.stopping) return;
+    if (this.skillsSync) {
+      this.skillsDirty = true;
+      await this.skillsSync;
+      return;
+    }
+    const sync = (async () => {
+      do {
+        this.skillsDirty = false;
+        await this.runSkillSync(child, conversationId);
+      } while (this.skillsDirty && this.child === child && !this.stopping);
+    })();
+    this.skillsSync = sync;
+    try {
+      await sync;
+    } finally {
+      if (this.skillsSync === sync) this.skillsSync = undefined;
+    }
+  }
   async createWork() {
+    await this.syncSkills();
     const { thread, activePermissionProfile } = await this.rpc("thread/start", this.settings());
     this.checkProfile(activePermissionProfile, true);
     return { conversationId: thread.id, title: thread.name || undefined };
   }
   async resumeWork(conversationId: string) {
+    await this.syncSkills(conversationId);
     const { activePermissionProfile } = await this.rpc("thread/resume", {
       threadId: conversationId,
       ...this.settings(),

@@ -207,6 +207,28 @@ accepted direction from implementation alone.
     `agents.enabled=false` y `skills.bundled.enabled=false`. Siguen prendidos
     el servidor MCP `bitacora` (`traer`, `controlar`, `dibujar`), `view_image`
     y las herramientas base de archivos y consola.
+- Update (2026-11-18, issue #41): el smoke test con un pedido real mostró qué
+  herramientas ve efectivamente el agente (`bitacora`: `traer`, `controlar` y
+  `dibujar`; `view_image`; `image_gen`; `exec_command` / `write_stdin`; y
+  `apply_patch`; sin navegador, uso de computadora, búsqueda web ni subagentes),
+  y detectó que seguían apareciendo las herramientas de metas (`create_goal`,
+  `get_goal`, `update_goal`) y las skills del usuario y del entorno (`$HOME/.agents/skills`,
+  `$CODEX_HOME/skills` y `.agents/skills`). Se suman dos reglas en el entorno
+  curado:
+  - **Metas apagadas:** `goals = false` en `AGENCY_ENVIRONMENT` pasa
+    `-c features.goals=false`.
+  - **Solo skills explícitas del kit (hoy ninguna):** `allowedSkills = []` en
+    `AGENCY_ENVIRONMENT` e `isAllowedSkill` permiten únicamente skills de
+    alcance `repo` incluidas en esa lista. Como Codex `0.168.0` en Windows lee
+    `$HOME/.agents/skills` con la carpeta de perfil del sistema (ignora
+    `HOME`/`USERPROFILE`), y no tiene un interruptor por alcance ni por raíz
+    para skills de usuario, Bitácora pasa `-c skills.include_instructions=false`
+    cuando `allowedSkills` está vacía y, al iniciar, ante `skills/changed` y
+    antes de `thread/start` y `thread/resume`, pide `skills/list` y apaga una
+    por una (`skills/config/write` secuencial con `enabled: false`, porque en
+    paralelo compiten al escribir `config.toml`) toda skill habilitada que no
+    sea permitida. No se modifican `HOME` ni `USERPROFILE`, y si apagar una
+    skill falla se registra en el detalle del trabajo sin frenar la app.
 - Rationale: el objetivo no es cortarle las patas a Codex sino darle a la
   agencia un entorno limpio, sin descargas de catálogos ni herramientas de
   programación o conectores sorpresa, dejando una estructura lista para que
@@ -214,9 +236,9 @@ accepted direction from implementation alone.
 - Consequences: cualquier actualización de `@openai/codex` debe pasar la prueba
   sin inferencia (`server/test/agency-environment.test.ts`), que comprueba bajo
   los argumentos reales de Bitácora que `codex features list`, `config/read`,
-  `skills/list` y `mcpServerStatus/list` mantengan este estado y que no aparezcan
-  `.tmp/plugins` ni `skills/.system`. Queda pendiente el smoke test con pedido
-  real (`turn/start`) cuando vuelva el cupo (18/11).
+  `skills/list` y `mcpServerStatus/list` mantengan este estado, que no aparezcan
+  `.tmp/plugins` ni `skills/.system`, y que las skills de usuario o del espacio
+  de trabajo queden persistidas como apagadas.
 
 ## DEC-012 — Sistema de diseño «De a bordo»
 
