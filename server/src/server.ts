@@ -7,6 +7,7 @@ import type { Engine } from "./engine";
 import { problemText, EngineFailure } from "./engine";
 import type { ClientCommand, ServerMessage } from "./contracts";
 import { App } from "./app";
+import { desktopAssets } from "./desktop-assets";
 
 export async function serve(
   engine: Engine,
@@ -14,15 +15,21 @@ export async function serve(
   port = 4317,
   webOrigin = "http://127.0.0.1:5173",
   workspace?: string,
+  desktop?: { webRoot: string; kitSource: string },
 ) {
+  const sendAsset = desktop && await desktopAssets(desktop.webRoot);
   const files = workspace ? new WorkspaceFiles(workspace) : undefined;
   const token = randomBytes(32).toString("hex");
   const http = createServer((req, res) => {
     void (async () => {
       const url = new URL(req.url || "/", "http://127.0.0.1");
+      if (!localHost(req.headers.host) || (req.headers.origin && !origins.has(req.headers.origin))) {
+        res.writeHead(403); res.end(); return;
+      }
+      if (sendAsset && sendAsset(url.pathname, req.method, res, boundPort())) return;
       const supplied = url.searchParams.get("token") || "";
       const validToken = Buffer.byteLength(supplied) === Buffer.byteLength(token) && timingSafeEqual(Buffer.from(supplied), Buffer.from(token));
-      if (!validToken || !localHost(req.headers.host) || (req.headers.origin && !origins.has(req.headers.origin))) {
+      if (!validToken) {
         res.writeHead(403); res.end(); return;
       }
       if (url.pathname !== "/files" || !["GET", "HEAD"].includes(req.method || "") || !files) { res.writeHead(404); res.end(); return; }
@@ -48,17 +55,19 @@ export async function serve(
       res.writeHead(error instanceof FileProblem ? 413 : 404); res.end();
     });
   });
-  const localHost = (host?: string) => [`127.0.0.1:${(http.address() as { port: number }).port}`, `localhost:${(http.address() as { port: number }).port}`].includes(host || "");
+  const boundPort = () => (http.address() as { port: number }).port;
+  const localHost = (host?: string) => host === `127.0.0.1:${boundPort()}` ||
+    (!desktop && host === `localhost:${boundPort()}`);
   const sockets = new WebSocketServer({ noServer: true, maxPayload: Math.ceil(MAX_REQUEST / 3) * 4 + 100000 });
   const send = (ws: WebSocket, message: ServerMessage) => {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message.type === "snapshot" ? { ...message, state: { ...message.state, fileToken: token } } : message));
   };
   const app = new App(engine, data, (message) => {
     for (const ws of sockets.clients) send(ws, message);
-  }, undefined, files);
-  const origins = new Set([webOrigin]);
+  }, undefined, files, desktop?.kitSource);
+  const origins = new Set(desktop ? [] : [webOrigin]);
   const configured = new URL(webOrigin);
-  if (["127.0.0.1", "localhost"].includes(configured.hostname)) {
+  if (!desktop && ["127.0.0.1", "localhost"].includes(configured.hostname)) {
     const alias = new URL(webOrigin);
     alias.hostname =
       configured.hostname === "localhost" ? "127.0.0.1" : "localhost";
@@ -68,10 +77,7 @@ export async function serve(
     // A public site must not be able to operate a local agent through the browser.
     if (
       !origins.has(req.headers.origin || "") ||
-      ![
-        `127.0.0.1:${(http.address() as { port: number }).port}`,
-        `localhost:${(http.address() as { port: number }).port}`,
-      ].includes(req.headers.host || "") ||
+      !localHost(req.headers.host) ||
       req.url !== "/ws"
     ) {
       socket.on("error", () => {});
@@ -111,7 +117,10 @@ export async function serve(
     await app.start();
     await new Promise<void>((resolve, reject) => {
       http.once("error", reject);
-      http.listen(port, "127.0.0.1", resolve);
+      http.listen(port, "127.0.0.1", () => {
+        if (desktop) origins.add(`http://127.0.0.1:${boundPort()}`);
+        resolve();
+      });
     });
   } catch (error) {
     await app.close();
@@ -120,7 +129,7 @@ export async function serve(
   return {
     // Local lifecycle handle; never serialized or exposed over HTTP/WebSocket.
     app,
-    port: (http.address() as { port: number }).port,
+    port: boundPort(),
     async close() {
       for (const ws of sockets.clients) ws.terminate();
       await new Promise<void>((resolve) => sockets.close(() => resolve()));

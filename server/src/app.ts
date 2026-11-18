@@ -69,11 +69,12 @@ export class App {
     private publish: (message: ServerMessage) => void,
     private files = { rename, copyFile },
     private workspace?: WorkspaceFiles,
+    private kitSource?: string,
   ) {}
   async start() {
     await mkdir(this.data, { recursive: true });
     await this.workspace?.initialize();
-    if (this.workspace) await initializeKit(this.workspace.root, this.data);
+    if (this.workspace) await initializeKit(this.workspace.root, this.data, this.kitSource);
     try {
       const saved = JSON.parse(
         await readFile(join(this.data, "works.json"), "utf8"),

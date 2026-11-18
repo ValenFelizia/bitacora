@@ -211,6 +211,7 @@ export class CodexEngine implements Engine {
   private stderr = "";
   constructor(
     private options: {
+      mcpEntry?: string;
       home: string;
       workspace: string;
       binary?: string;
@@ -279,7 +280,7 @@ export class CodexEngine implements Engine {
     await mkdir(this.options.home, { recursive: true });
     await mkdir(this.options.workspace, { recursive: true });
     if (!this.options.args) {
-      await registerKit(this.options.home, this.options.workspace);
+      await registerKit(this.options.home, this.options.workspace, this.options.mcpEntry);
     }
     if (this.stopping) return true;
     const binary = this.options.binary || codexBinary();

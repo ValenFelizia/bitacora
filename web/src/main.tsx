@@ -47,6 +47,10 @@ import {
 // Matches the server limit for a request (server/src/app.ts).
 const MAX_REQUEST_TEXT = 20000;
 
+function isDesktop() {
+  return (window as Window & { __BITACORA_DESKTOP__?: boolean }).__BITACORA_DESKTOP__ === true;
+}
+
 const SUGGESTED_ROUTES = [
   "Armame una propuesta con este link",
   "Armame una cotización rápida",
@@ -217,7 +221,9 @@ function App() {
         }
         if (message.type === "login") {
           setLogin(message.url);
-          if (loginWindow.current && !loginWindow.current.closed)
+          if (isDesktop())
+            window.location.assign(message.url);
+          else if (loginWindow.current && !loginWindow.current.closed)
             loginWindow.current.location.replace(message.url);
         }
       };
@@ -321,8 +327,10 @@ function App() {
   }
 
   function startConnect() {
-    loginWindow.current = window.open("about:blank", "_blank");
-    if (loginWindow.current) loginWindow.current.opener = null;
+    if (!isDesktop()) {
+      loginWindow.current = window.open("about:blank", "_blank");
+      if (loginWindow.current) loginWindow.current.opener = null;
+    }
     send({ type: "connect" });
   }
 

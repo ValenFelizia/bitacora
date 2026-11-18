@@ -4,7 +4,22 @@ Nombre provisorio. App de escritorio para que una agencia de turismo arme y use
 su propio entorno de trabajo con agentes, usando la suscripción de ChatGPT que
 ya paga. Pensada para personas no técnicas.
 
-Estado: esqueleto local para Windows. Todavía no hay instalador.
+## Instalación en Windows
+
+Ejecutá **Bitácora … setup** y abrí **Bitácora** desde el menú Inicio.
+El instalador trae lo necesario para abrir la app. Para dibujar las piezas,
+Bitácora usa Microsoft Edge, que viene con Windows.
+Tocá **Conectar cuenta** y seguí los pasos de ChatGPT en tu navegador.
+Si ya tenés Bitácora abierta, abrir el ícono de nuevo vuelve a esa ventana.
+Si desinstalás la app, se conservan tus trabajos, tu cuenta y la carpeta de la agencia.
+
+Para **generar el instalador** en Windows, instalá Rust con el destino MSVC
+de tu equipo y Visual Studio Build Tools con la carga de trabajo de C++ de
+escritorio. Con Node.js 24 y npm, corré `npm ci` y `npm run build:installer`.
+El instalador queda en `src-tauri/target/release/bundle/nsis/`. El armado
+descarga dependencias y WebView2, y verifica el ejecutable de Node contra el
+SHA-256 de su versión oficial. La instalación es por usuario. Ver
+[DEC-013](docs/DEC-013-windows-installer.md).
 
 ## Desarrollo
 
@@ -76,7 +91,7 @@ y el siguiente guardado puede recuperarse.
 
 Las copias y Deshacer están implementados. El perfil beta de lecturas se probó
 por separado y queda desactivado en la app. El kit está integrado con adjuntos,
-galería y Deshacer. Todavía no hay instalador.
+galería y Deshacer.
 
 ## Kit de turismo
 
