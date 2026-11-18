@@ -24,7 +24,7 @@ use windows_sys::Win32::System::{
 };
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(90);
-const SAVE_GRACE: Duration = Duration::from_millis(500);
+const SAVE_GRACE: Duration = Duration::from_millis(2_500);
 const LOG_LIMIT: u64 = 1024 * 1024;
 
 pub struct Server {

@@ -23,11 +23,13 @@ arranque por un canal privado del proceso y conoce el origen exacto de su
 ventana. El issue #16 puede usar ese punto para entregar una credencial en
 memoria antes de que se conecte la pantalla.
 
-La cáscara abre Node sin consola y espera hasta 90 segundos para que quede
-listo. Si el proceso se cae, la cáscara lo vuelve a abrir una vez y cambia
-al puerto nuevo. Los errores quedan en `%APPDATA%\Bitacora\logs\servidor.log`.
-Al cerrar la ventana, el servidor dispone de hasta medio segundo para
-guardar. Windows termina el árbol de procesos si vence el plazo o se
+La cáscara abre Node sin consola y espera hasta 90 segundos a que el servidor
+anuncie su puerto. La ventana abre mientras Codex se prepara y los pedidos
+siguen bloqueados hasta que arranque y se compruebe la protección. Si el
+servidor se cae, la cáscara lo vuelve a abrir una vez y cambia al puerto nuevo.
+Los errores quedan en `%APPDATA%\Bitacora\logs\servidor.log`.
+Al cerrar la ventana, el servidor dispone de hasta 2,5 segundos para guardar
+y cerrar Codex. Windows termina el árbol de procesos si vence el plazo o se
 cierra la cáscara de golpe.
 
 Codex registra el MCP por stdio desde su proceso, fuera de los comandos que

@@ -623,6 +623,12 @@ export class App {
     clearTimeout(this.flushTimer);
     // The desktop shell gives us a short grace period. Queue the current
     // transcript before waiting for titles, scans or Codex shutdown.
+    for (const work of this.works) {
+      if (!work.busy || this.scanning.has(work.id)) continue;
+      work.busy = false;
+      work.progress = "El trabajo se detuvo al cerrar la app. Podés continuarlo.";
+      this.dirty = true;
+    }
     if (this.dirty) this.changed();
     // A title already on its way gets a short, bounded chance to finish before
     // the engine stops. If it does not, the work stays pending and the next
