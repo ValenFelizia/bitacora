@@ -10,7 +10,7 @@ import { createInterface } from "node:readline";
 import { mkdir } from "node:fs/promises";
 import { registerKit } from './kit';
 import { cleanTitle, TITLE_PROMPT } from "../titles";
-import { AGENCY_ENVIRONMENT, type AgencyEnvironment } from "../agency-environment";
+import { AGENCY_ENVIRONMENT, isAllowedSkill, type AgencyEnvironment } from "../agency-environment";
 import { codexEnvironmentArgs } from "./environment";
 import type { Engine, EngineEvent, Account, ExecutionSafety } from "../engine";
 import { EngineFailure } from "../engine";
@@ -27,6 +27,8 @@ import type { TurnStartResponse } from "./generated/v2/TurnStartResponse";
 import type { ConfigReadResponse } from "./generated/v2/ConfigReadResponse";
 import type { CommandExecResponse } from "./generated/v2/CommandExecResponse";
 import type { PermissionProfileListResponse } from "./generated/v2/PermissionProfileListResponse";
+import type { SkillsConfigWriteResponse } from "./generated/v2/SkillsConfigWriteResponse";
+import type { SkillsListResponse } from "./generated/v2/SkillsListResponse";
 import type { WindowsSandboxReadinessResponse } from "./generated/v2/WindowsSandboxReadinessResponse";
 
 /**
@@ -52,6 +54,13 @@ export const PROFILE_ARGS = [
 
 /** The Windows sandbox backend the app-server runs with. */
 export type SandboxBackend = "mxc" | "elevated";
+
+/**
+ * Total time one skill sync may take, list and writes included: a machine with
+ * many skills and a slow app-server cannot keep the app from opening or from
+ * answering a request.
+ */
+const SKILL_SYNC_TIMEOUT_MS = 20_000;
 
 /**
  * Arguments for an app-server of a decided backend. A machine without MXC runs
@@ -83,6 +92,8 @@ type Responses = {
   "command/exec": CommandExecResponse;
   "config/read": ConfigReadResponse;
   "config/value/write": unknown;
+  "skills/list": SkillsListResponse;
+  "skills/config/write": SkillsConfigWriteResponse;
   "windowsSandbox/setupStart": { started: boolean };
   "account/read": GetAccountResponse;
   "account/login/start": LoginAccountResponse;
@@ -174,7 +185,13 @@ export class CodexEngine implements Engine {
   private interrupted = new Set<string>();
   private starting = new Map<
     string,
-    { completed: boolean; interrupt: boolean; started: boolean }
+    {
+      completed: boolean;
+      interrupt: boolean;
+      started: boolean;
+      /** True while the skill check before the turn is still running. */
+      preparing?: boolean;
+    }
   >();
   // Conversation whose turn made the engine stop answering: its problem event
   // tells the user the engine was restarted instead of the generic failure.
@@ -207,6 +224,9 @@ export class CodexEngine implements Engine {
   private loginId?: string;
   private stopping = false;
   private startAttempt?: Promise<void>;
+  private skillsSync?: { promise: Promise<void> };
+  private skillsDirty = false;
+  private reportedSkillErrors = new Set<string>();
   private stderr = "";
   constructor(
     private options: {
@@ -229,6 +249,8 @@ export class CodexEngine implements Engine {
       turnStartTimeoutMs?: number;
       pauseTimeoutMs?: number;
       killTimeoutMs?: number;
+      /** Total limit of one skill check, its lists and writes included. */
+      skillsSyncTimeoutMs?: number;
       /** Test seam: replaces the `taskkill` call. */
       killProcessTree?: KillProcessTree;
       setupTimeoutMs?: number;
@@ -374,14 +396,23 @@ export class CodexEngine implements Engine {
         await this.stopTree(child);
         return false;
       }
+      // The protection state and the availability are published in the same
+      // step, and nothing is awaited between them: `start()` returns at once and
+      // no later wait can leave the app refusing work with a ready engine. The
+      // skill check runs in the background; `createWork`, `resumeWork` and
+      // `send` wait for it before a turn, and it never rejects.
       this.available = true;
       this.exhausted = false;
       this.stableTimer?.();
       this.stableTimer = this.scheduleTimer(() => { this.attempts = 0; }, this.options.stableAfterMs ?? 60_000);
+      this.reportedSkillErrors.clear();
+      this.skillsDirty = false;
+      this.skillsSync = undefined;
+      this.emit({ type: "availability", available: true, safety: this.safety });
+      void this.syncSkills();
       const account = await this.account();
       if (this.child !== child)
         throw new Error("Engine stopped during account read");
-      this.emit({ type: "availability", available: true, safety: this.safety });
       this.emit({ type: "account", account });
       if (this.safety.status === "needed" && !this.safety.needsPermission) void this.prepareProtection();
       return true;
@@ -730,9 +761,15 @@ export class CodexEngine implements Engine {
   /** A pause that does not end the turn within the pause timeout kills the
    *  engine: the turn could keep writing files the app already scanned. The
    *  deadline starts when the pause is requested, even before the turn exists,
-   *  so a silent engine cannot keep it waiting for the request timeout. */
+   *  so a silent engine cannot keep it waiting for the request timeout. While
+   *  the turn is still being prepared there is nothing to interrupt yet: the
+   *  deadline starts when the turn is really requested. */
   private watchPause(conversationId: string) {
     if (this.pauseTimers.has(conversationId)) return;
+    // A pause asked for while the turn is still being prepared is delivered
+    // when the turn is requested, and its deadline starts then: the skill check
+    // before the turn is not a turn that does not end.
+    if (this.starting.get(conversationId)?.preparing) return;
     const timer = setTimeout(() => {
       this.pauseTimers.delete(conversationId);
       if (!this.running(conversationId)) return;
@@ -785,6 +822,7 @@ export class CodexEngine implements Engine {
   private rpc<M extends keyof Responses>(
     method: M,
     params: Extract<ClientRequest, { method: M }>["params"],
+    timeoutMs?: number,
   ): Promise<Responses[M]> {
     const id = ++this.nextId;
     return new Promise((resolve, reject) => {
@@ -795,7 +833,7 @@ export class CodexEngine implements Engine {
             `Engine request timed out: ${method}. Do not automatically retry.`,
           ),
         );
-      }, this.options.requestTimeoutMs ?? 45000);
+      }, timeoutMs ?? this.options.requestTimeoutMs ?? 45000);
       this.pending.set(id, {
         resolve: resolve as (value: unknown) => void,
         reject,
@@ -919,6 +957,9 @@ export class CodexEngine implements Engine {
               detail: String(error),
             }),
           );
+        break;
+      case "skills/changed":
+        if (this.available) void this.syncSkills().catch(() => {});
         break;
       case "thread/name/updated":
         if (n.params.threadName)
@@ -1090,12 +1131,227 @@ export class CodexEngine implements Engine {
     this.setProtection({ allowed: false, status: "failed", detail: refusal, issue: "readBlock" });
     throw new EngineFailure("other", refusal);
   }
+  private reportSkillError(key: string, text: string, conversationId?: string) {
+    if (this.reportedSkillErrors.has(key)) return;
+    this.reportedSkillErrors.add(key);
+    this.emit({ type: "detail", conversationId, text, key });
+  }
+  /**
+   * Forgets notices the app never delivered: a notice that was dropped is not
+   * a notice that was said, so the next check has to say it again.
+   */
+  forgetDetails(keys: readonly string[]) {
+    for (const key of keys) this.reportedSkillErrors.delete(key);
+  }
+  /**
+   * Lists the skills Codex can see and turns off every one the kit does not
+   * provide. The batch of writes is verified with a new list: `effectiveEnabled`
+   * of 0.168.0 repeats what the request asked for, so only the list says which
+   * ones are really off.
+   *
+   * Every call is bounded by `deadline`, so a slow engine can never keep the
+   * app from opening or from sending a request.
+   */
+  private async runSkillSync(
+    child: ChildProcessWithoutNullStreams,
+    conversationId?: string,
+    deadline?: number,
+  ): Promise<{ timedOut: boolean; verified: boolean }> {
+    if (this.child !== child || this.stopping)
+      return { timedOut: false, verified: true };
+    const result = { timedOut: false, verified: true };
+    const outOfTime = () => deadline !== undefined && Date.now() >= deadline;
+    const timeLimit = () =>
+      deadline === undefined ? undefined : Math.max(1, deadline - Date.now());
+    const stopForTime = () => {
+      if (!outOfTime()) return false;
+      result.timedOut = true;
+      this.reportSkillError(
+        "timeout",
+        "No terminé de revisar los complementos a tiempo.",
+        conversationId,
+      );
+      return true;
+    };
+    let list: SkillsListResponse;
+    try {
+      list = await this.rpc(
+        "skills/list",
+        { cwds: [this.options.workspace], forceReload: true },
+        timeLimit(),
+      );
+    } catch (error) {
+      if (this.child !== child || this.stopping || stopForTime()) return result;
+      this.reportSkillError(
+        "list",
+        `No pude revisar los complementos del kit: ${String(error)}`,
+        conversationId,
+      );
+      return result;
+    }
+    // The list also carries the skills it could not read: they stay invisible to
+    // the agent, but a broken file is worth saying once instead of silently.
+    for (const entry of Array.isArray(list?.data) ? list.data : [])
+      for (const problem of entry?.errors ?? [])
+        this.reportSkillError(
+          `error:${problem.path}`,
+          `No pude leer un complemento (${problem.path}): ${problem.message}`,
+          conversationId,
+        );
+    if (!Array.isArray(list?.data)) {
+      this.reportSkillError(
+        "list",
+        "No pude revisar los complementos del kit: la lista llegó incompleta.",
+        conversationId,
+      );
+      return result;
+    }
+    // An entry without a list of skills is an incomplete answer too: what it
+    // omits could be a skill that stays on, so it is said instead of guessed.
+    const entries = list.data.filter((entry) => Array.isArray(entry?.skills));
+    if (entries.length === list.data.length) this.reportedSkillErrors.delete("list");
+    else
+      this.reportSkillError(
+        "list",
+        "No pude revisar los complementos del kit: la lista llegó incompleta.",
+        conversationId,
+      );
+    // One at a time lets the loop stop and say so when the time runs out. The
+    // app-server serializes these writes itself, so the order is not about
+    // avoiding a race on `config.toml`.
+    const targets = new Map<string, { path: string; failure?: string }>();
+    for (const entry of entries)
+      for (const skill of entry.skills)
+        if (skill?.path && skill.enabled && !isAllowedSkill(skill))
+          targets.set(skill.path, { path: skill.path });
+    if (!targets.size) return result;
+    for (const target of targets.values()) {
+      if (this.child !== child || this.stopping || stopForTime()) return result;
+      try {
+        await this.rpc(
+          "skills/config/write",
+          { path: target.path, enabled: false },
+          timeLimit(),
+        );
+      } catch (error) {
+        if (this.child !== child || this.stopping || stopForTime()) return result;
+        target.failure = String(error);
+      }
+    }
+    // Ask again: an accepted write is not a skill that is off. When this list
+    // fails, runs out of time or comes back incomplete, nothing proves the
+    // batch worked, so the app says it could not check and names every skill it
+    // tried to turn off.
+    const written = [...targets.keys()];
+    let after: SkillsListResponse | undefined;
+    try {
+      after = await this.rpc(
+        "skills/list",
+        { cwds: [this.options.workspace], forceReload: true },
+        timeLimit(),
+      );
+    } catch {
+      after = undefined;
+    }
+    if (this.child !== child || this.stopping) return result;
+    const verified =
+      Array.isArray(after?.data) &&
+      after.data.every((entry) => Array.isArray(entry?.skills));
+    if (!verified) {
+      stopForTime();
+      result.verified = false;
+      this.reportSkillError(
+        "verify",
+        `No pude comprobar si quedaron desactivados los complementos: ${written.join(", ")}.`,
+        conversationId,
+      );
+      return result;
+    }
+    this.reportedSkillErrors.delete("verify");
+    const stillOn = new Set<string>();
+    for (const entry of after?.data ?? [])
+      for (const skill of entry?.skills ?? [])
+        if (skill?.path && skill.enabled && !isAllowedSkill(skill))
+          stillOn.add(skill.path);
+    for (const target of targets.values()) {
+      const key = `skill:${target.path}`;
+      if (!stillOn.has(target.path)) {
+        this.reportedSkillErrors.delete(key);
+        continue;
+      }
+      const detail = target.failure ? ` ${target.failure}` : "";
+      this.reportSkillError(
+        key,
+        `No pude desactivar un complemento que no es del kit: ${target.path}.${detail}`,
+        conversationId,
+      );
+    }
+    return result;
+  }
+  /**
+   * Runs the skill sync, coalescing concurrent requests and never rejecting:
+   * the app keeps working and the failure is reported as a work detail. It
+   * never takes longer than `timeoutMs`, because a long list of writes cannot
+   * decide whether the app opens or answers a request.
+   */
+  private syncSkills(
+    conversationId?: string,
+    timeoutMs = this.options.skillsSyncTimeoutMs ?? SKILL_SYNC_TIMEOUT_MS,
+  ): Promise<void> {
+    const child = this.child;
+    if (!child || this.stopping) return Promise.resolve();
+    const running = this.skillsSync;
+    if (running) {
+      // A change arrived while a sync was running: the loop lists once more
+      // before it ends, and this caller waits for that second pass.
+      this.skillsDirty = true;
+      return running.promise;
+    }
+    const slot: { promise: Promise<void> } = { promise: Promise.resolve() };
+    slot.promise = (async () => {
+      try {
+        do {
+          this.skillsDirty = false;
+          // Each pass has its own limit: a change that arrives while the first
+          // one runs gets a full chance instead of what was left of the other.
+          const pass = await this.runSkillSync(
+            child,
+            conversationId,
+            Date.now() + timeoutMs,
+          );
+          // A check that ended in time is the only one that proves the next
+          // failure is new, so the notices it would repeat are allowed again.
+          if (!pass.timedOut) {
+            this.reportedSkillErrors.delete("timeout");
+            this.reportedSkillErrors.delete("sync");
+          }
+          if (pass.verified) this.reportedSkillErrors.delete("verify");
+        } while (this.skillsDirty && this.child === child && !this.stopping);
+      } catch (error) {
+        if (this.child !== child || this.stopping) return;
+        this.reportSkillError(
+          "sync",
+          `No pude revisar los complementos del kit: ${String(error)}`,
+          conversationId,
+        );
+      } finally {
+        // Released in the same step the loop ends: a caller that arrives right
+        // after starts a fresh list instead of waiting for a promise that
+        // already resolved without seeing the skills that just appeared.
+        if (this.skillsSync === slot) this.skillsSync = undefined;
+      }
+    })();
+    this.skillsSync = slot;
+    return slot.promise;
+  }
   async createWork() {
+    await this.syncSkills();
     const { thread, activePermissionProfile } = await this.rpc("thread/start", this.settings());
     this.checkProfile(activePermissionProfile, true);
     return { conversationId: thread.id, title: thread.name || undefined };
   }
   async resumeWork(conversationId: string) {
+    await this.syncSkills(conversationId);
     const { activePermissionProfile } = await this.rpc("thread/resume", {
       threadId: conversationId,
       ...this.settings(),
@@ -1212,9 +1468,21 @@ export class CodexEngine implements Engine {
     if (!this.available || !this.safety.allowed)
       throw new EngineFailure("other", this.safety.detail);
     this.interrupted.delete(conversationId);
-    const state = { completed: false, interrupt: false, started: false };
+    // The turn is registered before the skill check, so a pause asked for while
+    // that check runs reaches this turn instead of being lost.
+    const state = { completed: false, interrupt: false, started: false, preparing: true };
     this.starting.set(conversationId, state);
     try {
+      // A skill that appeared after the last turn is turned off before this one
+      // starts: the turn never sees one the kit does not provide.
+      await this.syncSkills(conversationId);
+      state.preparing = false;
+      if (!this.available || !this.safety.allowed)
+        throw new EngineFailure("other", this.safety.detail);
+      // The pause may have been asked while the request was being prepared: the
+      // turn is sent anyway, with its text, and the pause is delivered to it.
+      // The deadline starts with the request, never during the preparation.
+      if (state.interrupt) this.watchPause(conversationId);
       const turn = await this.startTurn(conversationId, {
         threadId: conversationId,
         input: [
