@@ -21,6 +21,8 @@ use windows_core::{w, Interface};
 
 const SPLASH: &str = "http://tauri.localhost/index.html";
 const ERROR: &str = "http://tauri.localhost/error.html";
+const CONNECTION_ERROR: &str = "http://tauri.localhost/error.html?reason=connection";
+const VIEWER_ERROR: &str = "http://tauri.localhost/error.html?reason=viewer";
 
 fn external_link(url: &Url) {
     if matches!(url.scheme(), "https" | "http") {
@@ -104,6 +106,7 @@ fn supervise(
     endpoint: Arc<Mutex<Option<Url>>>,
     reopen: mpsc::Receiver<()>,
 ) {
+    let mut has_connected = false;
     while !server.exiting() {
         let mut retried_start = false;
         let mut recovering = false;
@@ -113,6 +116,7 @@ fn supervise(
                 return;
             }
             let retry = if let Ok(port) = result {
+                has_connected = true;
                 let url = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
                 *endpoint.lock().unwrap() = Some(url.clone());
                 let _ = window.navigate(url);
@@ -151,7 +155,12 @@ fn supervise(
             let _ = window.navigate(Url::parse(SPLASH).unwrap());
         }
         while reopen.try_recv().is_ok() {}
-        let _ = window.navigate(Url::parse(ERROR).unwrap());
+        let error_page = if has_connected {
+            CONNECTION_ERROR
+        } else {
+            ERROR
+        };
+        let _ = window.navigate(Url::parse(error_page).unwrap());
         if reopen.recv().is_err() || server.exiting() {
             return;
         }
@@ -217,7 +226,7 @@ fn run() -> tauri::Result<()> {
             window.with_webview(move |webview| {
                 if let Err(error) = restrict_webview(webview, Arc::clone(&endpoint)) {
                     server.log(&format!("No se pudo proteger el visor: {error}"));
-                    let _ = worker_window.navigate(Url::parse(ERROR).unwrap());
+                    let _ = worker_window.navigate(Url::parse(VIEWER_ERROR).unwrap());
                     return;
                 }
                 std::thread::spawn(move || {

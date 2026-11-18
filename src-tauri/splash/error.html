@@ -2,15 +2,16 @@
 <html lang="es-AR">
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>No se pudo abrir Bitácora</title>
+  <title>No pude abrir Bitácora</title>
   <style>
     body { margin: 0; min-height: 100vh; display: grid; place-items: center; color: #1d2838; background: #f4efe4; font: 17px "Segoe UI", sans-serif; }
     main { max-width: 28rem; padding: 24px; }
     h1 { font-family: Georgia, serif; font-weight: normal; }
   </style>
   <main>
-    <h1>No se pudo abrir Bitácora</h1>
-    <p>No pude volver a conectar Bitácora. Abrila de nuevo desde su ícono para reintentar.</p>
+    <h1 id="error-title">No pude abrir Bitácora</h1>
+    <p id="retry-help">Abrila de nuevo desde su ícono para reintentar.</p>
     <p>Para salir, cerrá esta ventana con la cruz de arriba. Si necesitás ayuda, el registro está en <code>%APPDATA%\Bitacora\logs\servidor.log</code>.</p>
   </main>
+  <script src="error.js"></script>
 </html>
