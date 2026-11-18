@@ -17,7 +17,7 @@ export type Snapshot = {
   hasBrand?: boolean;
   account: Account;
   works: Work[];
-  engine: { available: boolean; exhausted?: boolean; safety: ExecutionSafety };
+  engine: { available: boolean; starting?: boolean; exhausted?: boolean; safety: ExecutionSafety };
   notice?: string;
   fileToken?: string;
   undo?: import("./backups").UndoTarget;

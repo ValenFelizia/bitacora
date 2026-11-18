@@ -32,7 +32,7 @@ import type {
 } from "../../server/src/contracts";
 import { MAX_TITLE } from "../../server/src/titles";
 import "./style.css";
-import { DeliverablesPanel, FileCard, ImagePreviewModal } from "./files";
+import { DeliverablesPanel, FileCard, FilePreviewModal } from "./files";
 import { formatTime, formatWorkDate, undoSummary } from "./format";
 import { protectionText, protectionWarning } from "./protection-text";
 import {
@@ -46,6 +46,10 @@ import {
 
 // Matches the server limit for a request (server/src/app.ts).
 const MAX_REQUEST_TEXT = 20000;
+
+function isDesktop() {
+  return (window as Window & { __BITACORA_DESKTOP__?: boolean }).__BITACORA_DESKTOP__ === true;
+}
 
 const SUGGESTED_ROUTES = [
   "Armame una propuesta con este link",
@@ -217,7 +221,9 @@ function App() {
         }
         if (message.type === "login") {
           setLogin(message.url);
-          if (loginWindow.current && !loginWindow.current.closed)
+          if (isDesktop())
+            window.location.assign(message.url);
+          else if (loginWindow.current && !loginWindow.current.closed)
             loginWindow.current.location.replace(message.url);
         }
       };
@@ -243,8 +249,11 @@ function App() {
       }
       if (!disposed && socket.current?.readyState !== WebSocket.OPEN) connect();
     };
+    const reopen = () => reconnectRef.current();
+    window.addEventListener("bitacora-reopen", reopen);
     connect();
     return () => {
+      window.removeEventListener("bitacora-reopen", reopen);
       disposed = true;
       clearTimeout(timer);
       socket.current?.close();
@@ -321,8 +330,10 @@ function App() {
   }
 
   function startConnect() {
-    loginWindow.current = window.open("about:blank", "_blank");
-    if (loginWindow.current) loginWindow.current.opener = null;
+    if (!isDesktop()) {
+      loginWindow.current = window.open("about:blank", "_blank");
+      if (loginWindow.current) loginWindow.current.opener = null;
+    }
     send({ type: "connect" });
   }
 
@@ -448,6 +459,11 @@ function App() {
     : -1;
 
   const showEngineStoppedBanner = online && !state.engine.available;
+  const engineStatusText = state.engine.starting
+    ? "Estoy preparando Bitácora y la protección de tu carpeta."
+    : state.engine.exhausted
+      ? "Bitácora se detuvo y no pudo volver a iniciarse."
+      : "Bitácora se detuvo. Estoy intentando volver a iniciarla.";
   const showProblemBanner =
     !showEngineStoppedBanner && (!!problem || !!work?.problem);
   const hasErrorBanner =
@@ -817,10 +833,10 @@ function App() {
                   </button>
                 ) : !state.engine.available && gallery ? (
                   <span
-                    className="w-[36px] h-[36px] max-[959px]:w-[40px] max-[959px]:h-[40px] inline-grid place-items-center text-danger"
+                    className={`w-[36px] h-[36px] max-[959px]:w-[40px] max-[959px]:h-[40px] inline-grid place-items-center ${state.engine.starting ? "text-muted" : "text-danger"}`}
                     role="img"
-                    title="Bitácora se detuvo"
-                    aria-label="Bitácora se detuvo"
+                    title={engineStatusText}
+                    aria-label={engineStatusText}
                   >
                     <AlertCircle size={18} strokeWidth={1.75} aria-hidden="true" />
                   </span>
@@ -1223,6 +1239,7 @@ function App() {
                                 file={f}
                                 token={state.fileToken}
                                 fileRevision={state.fileRevision}
+                                onPreview={(file) => setPreview({ file, list: [file] })}
                               />
                             ))}
                           </div>
@@ -1302,22 +1319,20 @@ function App() {
 
                 {/* Engine stopped / error state */}
                 {showEngineStoppedBanner && (
-                  <section className="rounded-[6px] border border-danger bg-surface px-4 py-3">
+                  <section className={`rounded-[6px] border ${state.engine.starting ? "border-line" : "border-danger"} bg-surface px-4 py-3`}>
                     <DetailsToggle
-                      text={state.engine.safety.detail}
+                      text={state.engine.starting ? undefined : state.engine.safety.detail}
                       prefix={
                         <>
                           <AlertCircle
                             size={18}
                             strokeWidth={1.75}
-                            className="text-danger shrink-0"
+                            className={`${state.engine.starting ? "text-muted" : "text-danger"} shrink-0`}
                             aria-hidden="true"
                           />
                           <div role="status" className="text-[14px] text-ink">
                             <p>
-                              {state.engine.exhausted
-                                ? "Bitácora se detuvo y no pudo volver a iniciarse."
-                                : "Bitácora se detuvo. Estoy intentando volver a iniciarla."}
+                              {engineStatusText}
                             </p>
                             {/* Keep the work's own problem visible: this banner replaces the problem banner. */}
                             {(problem?.text || work?.problem) && (
@@ -1626,7 +1641,7 @@ function App() {
       )}
 
       {preview && (
-        <ImagePreviewModal
+        <FilePreviewModal
           file={preview.file}
           list={preview.list}
           token={state.fileToken}

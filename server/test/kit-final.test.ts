@@ -49,7 +49,9 @@ test('production server declares its MCP runtime dependencies', async () => {
   const root=JSON.parse(await readFile('package.json','utf8'));
   const server=JSON.parse(await readFile('server/package.json','utf8'));
   const require=createRequire(join(process.cwd(),'server/package.json'));
-  for (const dep of ['tsx','playwright-core','@modelcontextprotocol/sdk','koffi']) {
+  assert.ok(root.devDependencies.tsx);
+  assert.equal(server.dependencies.tsx, undefined);
+  for (const dep of ['playwright-core','@modelcontextprotocol/sdk','koffi']) {
     assert.ok(server.dependencies[dep],`${dep} must be a production server dependency`);
     assert.ok(!root.devDependencies[dep],`${dep} must not depend on root development installation`);
     assert.ok(require.resolve(dep === '@modelcontextprotocol/sdk' ? `${dep}/server/mcp.js` : dep));

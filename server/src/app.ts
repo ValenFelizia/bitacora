@@ -6,7 +6,7 @@ import { basename, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { rememberUserUrls } from './allowed-urls';
 import { initializeKit } from './tools/kit';
-import type { Engine, EngineEvent, SuggestedTitle } from "./engine";
+import type { Account, Engine, EngineEvent, SuggestedTitle } from "./engine";
 import { problemText, EngineFailure, activityText } from "./engine";
 import { fallbackTitle, MAX_TITLE } from "./titles";
 import type { FileRef, Message, Work, Snapshot, ClientCommand, ServerMessage } from "./contracts";
@@ -14,7 +14,7 @@ import type { FileRef, Message, Work, Snapshot, ClientCommand, ServerMessage } f
 type SavedWork = Work & { conversationId: string; titlePending?: boolean; renamedByUser?: boolean; pendingFiles?: { messageId: string; before?: Record<string, string> } };
 const isText = (value: unknown) => typeof value === "string";
 /** How long close() lets a title request already in flight finish before stopping the engine. */
-const TITLE_CLOSE_WAIT_MS = 2000;
+const TITLE_CLOSE_WAIT_MS = 400;
 const isFileRef = (value: unknown) => {
   const file = value as Partial<FileRef> | null;
   return !!file && isText(file.id) && isText(file.path) && isText(file.name) && isText(file.mime) && isText(file.createdAt);
@@ -44,12 +44,13 @@ export class App {
   private scans = new Set<Promise<void>>();
   private notice?: string;
   private available = false;
+  private starting = true;
   private exhausted = false;
   private flushTimer?: NodeJS.Timeout;
   private dirty = false;
   private writeRevision = 0;
   private works: SavedWork[] = [];
-  private accountState = { connected: false };
+  private accountState?: Account;
   private writes: Promise<void> = Promise.resolve();
   private unsubscribe?: () => void;
   private submitting = false;
@@ -75,11 +76,16 @@ export class App {
     private publish: (message: ServerMessage) => void,
     private files = { rename, copyFile },
     private workspace?: WorkspaceFiles,
+    private kitSource?: string,
   ) {}
   async start() {
+    await this.initialize();
+    await this.startEngine();
+  }
+  async initialize() {
     await mkdir(this.data, { recursive: true });
     await this.workspace?.initialize();
-    if (this.workspace) await initializeKit(this.workspace.root, this.data);
+    if (this.workspace) await initializeKit(this.workspace.root, this.data, this.kitSource);
     try {
       const saved = JSON.parse(
         await readFile(join(this.data, "works.json"), "utf8"),
@@ -125,16 +131,26 @@ export class App {
       if (this.backups?.restoring) this.notice = "Quedó un Deshacer pendiente. Podés reintentarlo o dejar la carpeta como está.";
     }
     for (const work of this.works) if (work.pendingFiles) { await this.collectResults(work); this.dirty = true; }
+  }
+  async startEngine() {
     this.unsubscribe = this.engine.subscribe((event) => this.event(event));
     await this.engine.start();
+    // Usable as soon as the engine is: the account read below must not keep a
+    // ready protection looking stopped (see DEC-011).
     this.available = true;
-    this.accountState = await this.engine.account();
+    this.starting = false;
+    this.publish({ type: "snapshot", state: this.snapshot() });
+    // Codex reports the account during start. Avoid a second read racing the
+    // automatic MXC setup, which can replace the app-server.
+    this.accountState ??= await this.engine.account();
+    this.publish({ type: "snapshot", state: this.snapshot() });
   }
   snapshot(): Snapshot {
     return {
-      account: this.available ? this.accountState : { connected: false },
+      account: (!this.starting && this.available && this.accountState) || { connected: false },
       engine: {
-        available: this.available,
+        available: !this.starting && this.available,
+        starting: this.starting,
         exhausted: this.exhausted,
         safety: this.engine.executionSafety(),
       },
@@ -283,6 +299,8 @@ export class App {
     }
     if (event.type === "availability") {
       this.available = event.available;
+      // The engine publishes availability together with a decided protection.
+      if (event.available) this.starting = false;
       this.exhausted = event.exhausted ?? false;
       this.resumed.clear();
       if (!event.available) {
@@ -421,7 +439,7 @@ export class App {
       return;
     }
     if (command.type === "prepareProtection") {
-      if (!this.available || this.submitting || this.works.some(w => w.busy)) return;
+      if (this.starting || !this.available || this.submitting || this.works.some(w => w.busy)) return;
       await this.engine.prepareProtection();
       return;
     }
@@ -430,7 +448,7 @@ export class App {
       return;
     }
     if (command.type === "connect") {
-      if (this.engine.executionSafety().status === "preparing") {
+      if (this.starting || this.engine.executionSafety().status === "preparing") {
         reply({ type: "problem", text: "Estoy preparando la protección de tu compu. Esperá un momento y volvé a intentar conectar." });
         return;
       }
@@ -486,15 +504,17 @@ export class App {
       });
       return;
     }
-    if (!this.available || !this.engine.executionSafety().allowed) {
+    if (this.starting || !this.available || !this.engine.executionSafety().allowed) {
       const safety = this.engine.executionSafety();
       reply({
         type: "problem",
-        text: !this.available
-          ? "Bitácora está detenida. Esperá a que vuelva para enviar el pedido."
-          : safety.issue === "readBlock"
-            ? "No pude activar el bloqueo que impide leer archivos fuera de tu carpeta. Sin eso no puedo empezar tus pedidos. Tocá Reintentar para volver a intentarlo."
-            : "No puedo enviar pedidos porque la protección de la carpeta no está preparada. Hace falta completar la preparación de Windows.",
+        text: this.starting
+          ? "Esperá a que Bitácora termine de prepararse para enviar el pedido."
+          : !this.available
+            ? "Bitácora está detenida. Esperá a que vuelva para enviar el pedido."
+            : safety.issue === "readBlock"
+              ? "No pude activar el bloqueo que impide leer archivos fuera de tu carpeta. Sin eso no puedo empezar tus pedidos. Tocá Reintentar para volver a intentarlo."
+              : "No puedo enviar pedidos porque la protección de la carpeta no está preparada. Hace falta completar la preparación de Windows.",
         detail: safety.detail,
       });
       return;
@@ -635,6 +655,15 @@ export class App {
   }
   async close() {
     clearTimeout(this.flushTimer);
+    // The desktop shell gives us a short grace period. Queue the current
+    // transcript before waiting for titles, scans or Codex shutdown.
+    for (const work of this.works) {
+      if (!work.busy || this.scanning.has(work.id)) continue;
+      work.busy = false;
+      work.progress = "El trabajo se detuvo al cerrar la app. Podés continuarlo.";
+      this.dirty = true;
+    }
+    if (this.dirty) this.changed();
     // A title already on its way gets a short, bounded chance to finish before
     // the engine stops. If it does not, the work stays pending and the next
     // start titles it.

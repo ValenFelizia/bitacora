@@ -11,13 +11,18 @@
     "typecheck": "tsc --noEmit",
     "test": "tsx --test --test-timeout=60000 server/test/*.test.ts",
     "build": "npm run build -w web",
+    "build:installer": "tauri build",
+    "prepare:installer": "npm run build && node scripts/prepare-installer.mjs",
     "generate:protocol": "node scripts/generate-protocol.mjs"
   },
   "devDependencies": {
     "@openai/codex": "0.168.0",
+    "@tauri-apps/cli": "2.12.6",
     "@types/node": "^22.19.0",
     "@types/ws": "^8.18.1",
     "concurrently": "^9.2.1",
+    "esbuild": "0.28.2",
+    "tsx": "4.23.15",
     "typescript": "^5.9.3"
   }
 }
