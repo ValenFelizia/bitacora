@@ -224,11 +224,17 @@ accepted direction from implementation alone.
     `HOME`/`USERPROFILE`), y no tiene un interruptor por alcance ni por raíz
     para skills de usuario, Bitácora pasa `-c skills.include_instructions=false`
     cuando `allowedSkills` está vacía y, al iniciar, ante `skills/changed` y
-    antes de `thread/start` y `thread/resume`, pide `skills/list` y apaga una
-    por una (`skills/config/write` secuencial con `enabled: false`, porque en
-    paralelo compiten al escribir `config.toml`) toda skill habilitada que no
-    sea permitida. No se modifican `HOME` ni `USERPROFILE`, y si apagar una
-    skill falla se registra en el detalle del trabajo sin frenar la app.
+    antes de cada turno (`thread/start`, `thread/resume` y `send`), pide
+    `skills/list` y apaga una por una (`skills/config/write` con
+    `enabled: false`) toda skill habilitada que no sea permitida. El
+    app-server serializa esas escrituras, así que el orden secuencial no evita
+    una carrera sobre `config.toml` (probado con 47 escrituras en paralelo sin
+    pérdidas): se usa para poder cortar el lote y avisar qué quedó prendido.
+    `effectiveEnabled` no se cree, porque repite lo pedido; después de cada
+    lote se vuelve a pedir `skills/list` y se avisa lo que siga prendido. La
+    sincronización entera tiene un tope de 20 s y nunca rechaza: si falla o se
+    queda sin tiempo, queda como detalle del trabajo y la app sigue. No se
+    modifican `HOME` ni `USERPROFILE`.
 - Rationale: el objetivo no es cortarle las patas a Codex sino darle a la
   agencia un entorno limpio, sin descargas de catálogos ni herramientas de
   programación o conectores sorpresa, dejando una estructura lista para que
