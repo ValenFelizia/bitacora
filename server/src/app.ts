@@ -63,7 +63,12 @@ export class App {
   private titlePending = new Set<string>();
   private renamed = new Set<string>();
   private titleTasks = new Set<Promise<void>>();
-  private pendingDetails: string[] = [];
+  /**
+   * Notices that belong to no work yet. Each one keeps the key the engine uses
+   * to avoid repeating itself, so a notice that is thrown away can make the
+   * engine say it again.
+   */
+  private pendingDetails: { text: string; key?: string }[] = [];
   constructor(
     private engine: Engine,
     private data: string,
@@ -306,7 +311,7 @@ export class App {
           : undefined;
     if (!work) {
       if (event.type === "detail" && !event.conversationId) {
-        this.pendingDetails.push(event.text);
+        this.pendingDetails.push({ text: event.text, key: event.key });
         if (this.pendingDetails.length > 50) this.pendingDetails.shift();
       } else if (event.type === "problem")
         this.publish({
@@ -502,9 +507,9 @@ export class App {
     let committed = false;
     let newWork = false;
     // Notices without a work wait here for the next one. A request that fails
-    // before it commits discards only the ones it queued itself: the older
-    // notices stay for the work that is actually sent.
-    const queuedDetails = this.pendingDetails.length;
+    // before it commits leaves the queue exactly as it found it: the notices it
+    // queued are dropped and the older ones stay for the work that is sent.
+    const queuedDetails = [...this.pendingDetails];
     try {
       this.accountState = await this.engine.account();
       this.publish({ type: "snapshot", state: this.snapshot() });
@@ -557,7 +562,9 @@ export class App {
       }
       if (newWork) { this.works.unshift(work); this.resumed.add(work.id); }
       if (this.pendingDetails.length) {
-        work.details = (work.details + this.pendingDetails.splice(0).join("\n") + "\n").slice(-100000);
+        // Delivered here, so the engine keeps the keys as said.
+        const texts = this.pendingDetails.splice(0).map((detail) => detail.text);
+        work.details = (work.details + texts.join("\n") + "\n").slice(-100000);
       }
       committed = true;
       work.messages.push({
@@ -592,8 +599,14 @@ export class App {
         this.accountState = { connected: false };
       if (!committed) {
         // The notices this request queued never reached a work: they would show
-        // up under the next one, so they are dropped with the request.
-        this.pendingDetails.length = queuedDetails;
+        // up under the next one, so they are dropped with the request and the
+        // engine is told to say them again. The queue goes back exactly as it
+        // was, including what the cap had pushed out meanwhile.
+        const dropped = this.pendingDetails.filter((detail) => !queuedDetails.includes(detail));
+        this.pendingDetails = queuedDetails;
+        this.engine.forgetDetails(
+          dropped.flatMap((detail) => (detail.key ? [detail.key] : [])),
+        );
         await this.workspace?.removeAttachments(attachments);
         if (work) {
           // Only a work created by this request is discarded: an existing one

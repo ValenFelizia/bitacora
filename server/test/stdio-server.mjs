@@ -24,14 +24,26 @@ const fakeSkillsFile = process.env.BITACORA_FAKE_SKILLS_FILE;
 let fakeSkills = process.env.BITACORA_FAKE_SKILLS
   ? JSON.parse(process.env.BITACORA_FAKE_SKILLS)
   : [];
-const readFakeSkills = () =>
-  fakeSkillsFile && existsSync(fakeSkillsFile)
-    ? JSON.parse(readFileSync(fakeSkillsFile, "utf8"))
-    : fakeSkills;
+// The test may be rewriting the file while the app-server reads it (a new skill
+// that appears mid-session): an empty or half-written file is read again, and if
+// it stays unreadable the previous list is used instead of crashing.
+const readFakeSkills = () => {
+  if (!fakeSkillsFile || !existsSync(fakeSkillsFile)) return fakeSkills;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return JSON.parse(readFileSync(fakeSkillsFile, "utf8"));
+    } catch {
+      // Try again: the writer is between opening and closing the file.
+    }
+  }
+  return fakeSkills;
+};
 const writeFakeSkills = (skills) => {
   fakeSkills = skills;
   if (fakeSkillsFile) writeFileSync(fakeSkillsFile, JSON.stringify(skills));
 };
+/** Lists asked in this process: the second one is the engine's verification. */
+let skillLists = 0;
 const turn = (status = "inProgress") => ({ id: "turn-1", status, error: null });
 // The profile a thread reports back. `BITACORA_FAKE_THREAD_PROFILE=none` is an
 // engine that ignored the request and would run with the default profile;
@@ -100,9 +112,24 @@ createInterface({ input: process.stdin })
         setTimeout(() => reply({}), Number(process.env.BITACORA_FAKE_CONFIG_DELAY || 0));
         break;
       case "skills/list": {
+        if (process.env.BITACORA_FAKE_SKILLS_HANG) break;
         if (process.env.BITACORA_FAKE_SKILLS_LIST_FAIL) {
           send({ id: m.id, error: { code: -32603, message: "skills list failed" } });
           break;
+        }
+        // The check the engine makes after writing: the second list of the
+        // process can fail, never answer or come back without its skills.
+        const verify = process.env.BITACORA_FAKE_SKILLS_VERIFY;
+        if (verify && ++skillLists === 2) {
+          if (verify === "fail") {
+            send({ id: m.id, error: { code: -32603, message: "verify list failed" } });
+            break;
+          }
+          if (verify === "hang") break;
+          if (verify === "shape") {
+            reply({ data: [{ cwd: m.params?.cwds?.[0] || "", errors: [] }] });
+            break;
+          }
         }
         // A list whose shape is not the one the engine expects: it must still
         // start and say so instead of failing the app.

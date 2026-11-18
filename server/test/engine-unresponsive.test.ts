@@ -98,6 +98,19 @@ async function started(file: string) {
   }
 }
 
+/**
+ * True once the engine really asked for the turn. A pause before that point is
+ * answered by cancelling the request; the pause deadline covers a turn that was
+ * requested and never answers.
+ */
+async function turnRequested(file: string) {
+  try {
+    return (await readFile(file, "utf8")).includes('"method":"turn/start"');
+  } catch {
+    return false;
+  }
+}
+
 test("a turn/start with no sign of life stops the engine", async () => {
   const f = await fixture({ turnStartTimeoutMs: 1000 });
   const pidFile = join(f.dir, "pids.txt");
@@ -152,7 +165,7 @@ test("a pause the engine never honours stops it", async () => {
   }
 });
 
-test("a pause requested before the turn starts still has a deadline", async () => {
+test("a pause requested while turn/start is unanswered still has a deadline", async () => {
   // The request timeout is far away: only the pause deadline can release this.
   const f = await fixture({ turnStartTimeoutMs: 30_000, pauseTimeoutMs: 200 });
   const { app } = await application(f);
@@ -160,6 +173,9 @@ test("a pause requested before the turn starts still has a deadline", async () =
     await app.start();
     const sending = app.command({ type: "send", text: "silent-start" }, () => {});
     await until(() => app.snapshot().works[0]?.busy === true);
+    // The pause has to reach a turn that was already requested: a pause during
+    // the skill check before it cancels the request instead.
+    await until(() => turnRequested(f.log));
     await app.command({ type: "interrupt", workId: app.snapshot().works[0].id }, () => {});
     // The turn never started, so only the pause deadline can stop the engine.
     await assert.rejects(sending, /stopped answering turn\/start/);
@@ -178,6 +194,7 @@ test("a failed pause on a turn still starting keeps the work until the tree stop
     await app.start();
     const sending = app.command({ type: "send", text: "pause-refused" }, () => {});
     await until(() => app.snapshot().works[0]?.busy === true);
+    await until(() => turnRequested(f.log));
     await app.command({ type: "interrupt", workId: app.snapshot().works[0].id }, () => {});
     // The turn is running and refused the pause: the app must not scan and
     // release the work while it may still write, only after the deadline.
@@ -271,6 +288,7 @@ test("a reply while the tree is stopping waits for the stop", async () => {
   try {
     await f.engine.start();
     const sending = f.engine.send("thread-1", "error-after-timeout");
+    await until(() => turnRequested(f.log));
     await f.engine.interrupt("thread-1");
     await assert.rejects(sending);
     order.push("released");

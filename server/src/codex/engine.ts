@@ -249,6 +249,8 @@ export class CodexEngine implements Engine {
       turnStartTimeoutMs?: number;
       pauseTimeoutMs?: number;
       killTimeoutMs?: number;
+      /** Total limit of one skill check, its lists and writes included. */
+      skillsSyncTimeoutMs?: number;
       /** Test seam: replaces the `taskkill` call. */
       killProcessTree?: KillProcessTree;
       setupTimeoutMs?: number;
@@ -392,24 +394,23 @@ export class CodexEngine implements Engine {
         await this.stopTree(child);
         return false;
       }
+      // The protection state and the availability are published in the same
+      // step, and nothing is awaited between them: `start()` returns at once and
+      // no later wait can leave the app refusing work with a ready engine. The
+      // skill check runs in the background; `createWork`, `resumeWork` and
+      // `send` wait for it before a turn, and it never rejects.
       this.available = true;
       this.exhausted = false;
       this.stableTimer?.();
       this.stableTimer = this.scheduleTimer(() => { this.attempts = 0; }, this.options.stableAfterMs ?? 60_000);
-      // The engine is already available while the skills are checked: the
-      // protection state and the availability are published in the same step,
-      // so a slow list can never leave work refused by an engine that is ready.
-      // Work still waits for this sync (createWork, resumeWork and send).
       this.reportedSkillErrors.clear();
       this.skillsDirty = false;
       this.skillsSync = undefined;
-      await this.syncSkills();
-      if (this.child !== child)
-        throw new Error("Engine stopped during skill setup");
+      this.emit({ type: "availability", available: true, safety: this.safety });
+      void this.syncSkills();
       const account = await this.account();
       if (this.child !== child)
         throw new Error("Engine stopped during account read");
-      this.emit({ type: "availability", available: true, safety: this.safety });
       this.emit({ type: "account", account });
       if (this.safety.status === "needed" && !this.safety.needsPermission) void this.prepareProtection();
       return true;
@@ -758,7 +759,9 @@ export class CodexEngine implements Engine {
   /** A pause that does not end the turn within the pause timeout kills the
    *  engine: the turn could keep writing files the app already scanned. The
    *  deadline starts when the pause is requested, even before the turn exists,
-   *  so a silent engine cannot keep it waiting for the request timeout. */
+   *  so a silent engine cannot keep it waiting for the request timeout. While
+   *  the turn is still being prepared there is nothing to interrupt yet: the
+   *  deadline starts when the turn is really requested. */
   private watchPause(conversationId: string) {
     if (this.pauseTimers.has(conversationId)) return;
     // A pause asked for while the turn is still being prepared is delivered
@@ -1129,7 +1132,14 @@ export class CodexEngine implements Engine {
   private reportSkillError(key: string, text: string, conversationId?: string) {
     if (this.reportedSkillErrors.has(key)) return;
     this.reportedSkillErrors.add(key);
-    this.emit({ type: "detail", conversationId, text });
+    this.emit({ type: "detail", conversationId, text, key });
+  }
+  /**
+   * Forgets notices the app never delivered: a notice that was dropped is not
+   * a notice that was said, so the next check has to say it again.
+   */
+  forgetDetails(keys: readonly string[]) {
+    for (const key of keys) this.reportedSkillErrors.delete(key);
   }
   /**
    * Lists the skills Codex can see and turns off every one the kit does not
@@ -1144,13 +1154,16 @@ export class CodexEngine implements Engine {
     child: ChildProcessWithoutNullStreams,
     conversationId?: string,
     deadline?: number,
-  ) {
-    if (this.child !== child || this.stopping) return;
+  ): Promise<{ timedOut: boolean; verified: boolean }> {
+    if (this.child !== child || this.stopping)
+      return { timedOut: false, verified: true };
+    const result = { timedOut: false, verified: true };
     const outOfTime = () => deadline !== undefined && Date.now() >= deadline;
     const timeLimit = () =>
       deadline === undefined ? undefined : Math.max(1, deadline - Date.now());
-    const reportTime = () => {
+    const stopForTime = () => {
       if (!outOfTime()) return false;
+      result.timedOut = true;
       this.reportSkillError(
         "timeout",
         "No terminé de revisar los complementos a tiempo.",
@@ -1166,13 +1179,13 @@ export class CodexEngine implements Engine {
         timeLimit(),
       );
     } catch (error) {
-      if (this.child !== child || this.stopping || reportTime()) return;
+      if (this.child !== child || this.stopping || stopForTime()) return result;
       this.reportSkillError(
         "list",
         `No pude revisar los complementos del kit: ${String(error)}`,
         conversationId,
       );
-      return;
+      return result;
     }
     // The list also carries the skills it could not read: they stay invisible to
     // the agent, but a broken file is worth saying once instead of silently.
@@ -1189,7 +1202,7 @@ export class CodexEngine implements Engine {
         "No pude revisar los complementos del kit: la lista llegó incompleta.",
         conversationId,
       );
-      return;
+      return result;
     }
     // An entry without a list of skills is an incomplete answer too: what it
     // omits could be a skill that stays on, so it is said instead of guessed.
@@ -1209,9 +1222,9 @@ export class CodexEngine implements Engine {
       for (const skill of entry.skills)
         if (skill?.path && skill.enabled && !isAllowedSkill(skill))
           targets.set(skill.path, { path: skill.path });
-    if (!targets.size) return;
+    if (!targets.size) return result;
     for (const target of targets.values()) {
-      if (this.child !== child || this.stopping || reportTime()) return;
+      if (this.child !== child || this.stopping || stopForTime()) return result;
       try {
         await this.rpc(
           "skills/config/write",
@@ -1219,12 +1232,15 @@ export class CodexEngine implements Engine {
           timeLimit(),
         );
       } catch (error) {
-        if (this.child !== child || this.stopping || reportTime()) return;
+        if (this.child !== child || this.stopping || stopForTime()) return result;
         target.failure = String(error);
       }
     }
-    // Ask again: only a new list says which ones are really off. When it cannot
-    // be asked for, the failed writes are all there is to say.
+    // Ask again: an accepted write is not a skill that is off. When this list
+    // fails, runs out of time or comes back incomplete, nothing proves the
+    // batch worked, so the app says it could not check and names every skill it
+    // tried to turn off.
+    const written = [...targets.keys()];
     let after: SkillsListResponse | undefined;
     try {
       after = await this.rpc(
@@ -1233,21 +1249,25 @@ export class CodexEngine implements Engine {
         timeLimit(),
       );
     } catch {
-      if (this.child !== child || this.stopping) return;
       after = undefined;
     }
-    if (!Array.isArray(after?.data)) {
-      for (const target of targets.values())
-        if (target.failure)
-          this.reportSkillError(
-            `skill:${target.path}`,
-            `No pude desactivar un complemento que no es del kit: ${target.path}. ${target.failure}`,
-            conversationId,
-          );
-      return;
+    if (this.child !== child || this.stopping) return result;
+    const verified =
+      Array.isArray(after?.data) &&
+      after.data.every((entry) => Array.isArray(entry?.skills));
+    if (!verified) {
+      stopForTime();
+      result.verified = false;
+      this.reportSkillError(
+        "verify",
+        `No pude comprobar si quedaron desactivados los complementos: ${written.join(", ")}.`,
+        conversationId,
+      );
+      return result;
     }
+    this.reportedSkillErrors.delete("verify");
     const stillOn = new Set<string>();
-    for (const entry of after.data)
+    for (const entry of after?.data ?? [])
       for (const skill of entry?.skills ?? [])
         if (skill?.path && skill.enabled && !isAllowedSkill(skill))
           stillOn.add(skill.path);
@@ -1264,6 +1284,7 @@ export class CodexEngine implements Engine {
         conversationId,
       );
     }
+    return result;
   }
   /**
    * Runs the skill sync, coalescing concurrent requests and never rejecting:
@@ -1273,7 +1294,7 @@ export class CodexEngine implements Engine {
    */
   private syncSkills(
     conversationId?: string,
-    timeoutMs = SKILL_SYNC_TIMEOUT_MS,
+    timeoutMs = this.options.skillsSyncTimeoutMs ?? SKILL_SYNC_TIMEOUT_MS,
   ): Promise<void> {
     const child = this.child;
     if (!child || this.stopping) return Promise.resolve();
@@ -1285,12 +1306,24 @@ export class CodexEngine implements Engine {
       return running.promise;
     }
     const slot: { promise: Promise<void> } = { promise: Promise.resolve() };
-    const deadline = Date.now() + timeoutMs;
     slot.promise = (async () => {
       try {
         do {
           this.skillsDirty = false;
-          await this.runSkillSync(child, conversationId, deadline);
+          // Each pass has its own limit: a change that arrives while the first
+          // one runs gets a full chance instead of what was left of the other.
+          const pass = await this.runSkillSync(
+            child,
+            conversationId,
+            Date.now() + timeoutMs,
+          );
+          // A check that ended in time is the only one that proves the next
+          // failure is new, so the notices it would repeat are allowed again.
+          if (!pass.timedOut) {
+            this.reportedSkillErrors.delete("timeout");
+            this.reportedSkillErrors.delete("sync");
+          }
+          if (pass.verified) this.reportedSkillErrors.delete("verify");
         } while (this.skillsDirty && this.child === child && !this.stopping);
       } catch (error) {
         if (this.child !== child || this.stopping) return;
@@ -1444,7 +1477,12 @@ export class CodexEngine implements Engine {
       state.preparing = false;
       if (!this.available || !this.safety.allowed)
         throw new EngineFailure("other", this.safety.detail);
-      if (state.interrupt) this.watchPause(conversationId);
+      // The pause arrived before the turn existed, so there is no turn to
+      // interrupt: nothing was sent and the request ends like any other pause.
+      if (state.interrupt) {
+        this.emit({ type: "finished", conversationId, status: "interrupted" });
+        return;
+      }
       const turn = await this.startTurn(conversationId, {
         threadId: conversationId,
         input: [
