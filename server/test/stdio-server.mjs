@@ -99,13 +99,35 @@ createInterface({ input: process.stdin })
         writeFileSync(setupFile, configuredMode);
         setTimeout(() => reply({}), Number(process.env.BITACORA_FAKE_CONFIG_DELAY || 0));
         break;
-      case "skills/list":
+      case "skills/list": {
         if (process.env.BITACORA_FAKE_SKILLS_LIST_FAIL) {
           send({ id: m.id, error: { code: -32603, message: "skills list failed" } });
           break;
         }
-        reply({ data: [{ cwd: m.params?.cwds?.[0] || "", skills: readFakeSkills(), errors: [] }] });
+        // A list whose shape is not the one the engine expects: it must still
+        // start and say so instead of failing the app.
+        const shape = process.env.BITACORA_FAKE_SKILLS_SHAPE;
+        if (shape === "missing") {
+          reply({});
+          break;
+        }
+        if (shape === "skills") {
+          reply({ data: [{ cwd: m.params?.cwds?.[0] || "", errors: [] }] });
+          break;
+        }
+        // A skill file the app-server could not read, reported with the list.
+        const errors = process.env.BITACORA_FAKE_SKILL_ERRORS
+          ? [{ path: process.env.BITACORA_FAKE_SKILL_ERRORS, message: "invalid front matter" }]
+          : [];
+        // A slow list: the engine must not take work for a list it has not
+        // answered yet, nor refuse work that the protection already allows.
+        const answer = () =>
+          reply({ data: [{ cwd: m.params?.cwds?.[0] || "", skills: readFakeSkills(), errors }] });
+        const delayMs = Number(process.env.BITACORA_FAKE_SKILLS_DELAY || 0);
+        if (delayMs > 0) setTimeout(answer, delayMs);
+        else answer();
         break;
+      }
       case "skills/config/write": {
         const failPath = process.env.BITACORA_FAKE_SKILL_WRITE_FAIL;
         if (failPath && (failPath === "*" || m.params?.path === failPath)) {
@@ -157,6 +179,13 @@ createInterface({ input: process.stdin })
         setTimeout(() => reply({}), Number(process.env.BITACORA_FAKE_LOGIN_CANCEL_DELAY || 0));
         break;
       case "thread/start":
+        // A request that fails before the work exists: its skill notices must
+        // not show up under the next work.
+        if (process.env.BITACORA_FAKE_THREAD_START_FAIL_ONCE && !existsSync(setupFile + ".thread-failed")) {
+          writeFileSync(setupFile + ".thread-failed", "1");
+          send({ id: m.id, error: { code: -32603, message: "thread start failed" } });
+          break;
+        }
         reply({ thread: { id: threadId }, activePermissionProfile: activeProfile(m.params) });
         break;
       case "thread/resume":
@@ -243,6 +272,17 @@ createInterface({ input: process.stdin })
         if (scenario === "race")
           notify("turn/completed", { threadId, turn: turn("completed") });
         if (scenario === "skills-changed") {
+          // A skill appears while the turn runs, the way a folder dropped into
+          // the workspace does: it is written and the app-server notifies.
+          const added = {
+            name: "added-mid-turn-skill",
+            description: "Added while the turn runs",
+            path: `${process.env.CODEX_HOME}/skills/added-mid-turn-skill/SKILL.md`.replaceAll("\\", "/"),
+            scope: "user",
+            enabled: true,
+          };
+          const current = readFakeSkills();
+          if (!current.some((skill) => skill.path === added.path)) writeFakeSkills([...current, added]);
           notify("skills/changed", {});
           notify("turn/completed", { threadId, turn: turn("completed") });
         }

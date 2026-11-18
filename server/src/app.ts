@@ -501,6 +501,10 @@ export class App {
     let attachments: FileRef[] = [];
     let committed = false;
     let newWork = false;
+    // Notices without a work wait here for the next one. A request that fails
+    // before it commits discards only the ones it queued itself: the older
+    // notices stay for the work that is actually sent.
+    const queuedDetails = this.pendingDetails.length;
     try {
       this.accountState = await this.engine.account();
       this.publish({ type: "snapshot", state: this.snapshot() });
@@ -587,6 +591,9 @@ export class App {
       if (error instanceof EngineFailure && error.kind === "disconnected")
         this.accountState = { connected: false };
       if (!committed) {
+        // The notices this request queued never reached a work: they would show
+        // up under the next one, so they are dropped with the request.
+        this.pendingDetails.length = queuedDetails;
         await this.workspace?.removeAttachments(attachments);
         if (work) {
           // Only a work created by this request is discarded: an existing one
