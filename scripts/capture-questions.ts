@@ -69,7 +69,7 @@ class AskingEngine extends FakeEngine {
   }
   override async interrupt(id: string) {
     this.calls.push(`interrupt:${id}`);
-    this.emit({ type: "questionClosed", conversationId: id, id: `q-${this.sent.length}`, reason: "paused" });
+    this.emit({ type: "questionClosed", conversationId: id, ids: [`q-${this.sent.length}`], reason: "paused" });
     this.emit({ type: "finished", conversationId: id, status: "interrupted" });
   }
 }
@@ -107,12 +107,16 @@ try {
   await desktop.keyboard.press("Tab");
   await desktop.keyboard.press("ArrowDown");
   assert.equal(await desktop.getByRole("radio", { name: /La 2/ }).isChecked(), true);
-  // The options are one radio group: the next stop is the answer button.
+  // The options are one radio group: the next stops are «Ahora no» and «Responder».
+  await desktop.keyboard.press("Tab");
+  assert.equal(await desktop.evaluate(() => document.activeElement?.textContent), "Ahora no");
   await desktop.keyboard.press("Tab");
   assert.equal(await desktop.evaluate(() => document.activeElement?.textContent), "Responder");
   await desktop.keyboard.press("Enter");
   await desktop.getByText("Muestra: La 2", { exact: true }).waitFor();
   assert.deepEqual(engine.answers.at(-1)?.answers, { muestra: ["La 2"] });
+  // With the card gone, the focus goes to the text box, not to the page.
+  await desktop.waitForFunction(() => document.activeElement?.id === "request");
 
   // Two questions in one card, with a written answer in «Otra».
   await ask(desktop, "Sigamos con la forma de hablar.");
@@ -122,7 +126,7 @@ try {
   await desktop.screenshot({ path: join(out, "pregunta-otra.png") });
   await desktop.getByRole("button", { name: "Responder", exact: true }).click();
   await desktop.getByText(/Trato: Vos\s+Tono: Cálido pero sin emojis/).waitFor();
-  assert.deepEqual(engine.answers.at(-1)?.answers, { trato: ["Vos (Recommended)"], tono: ["user_note: Cálido pero sin emojis"] });
+  assert.deepEqual(engine.answers.at(-1)?.answers, { trato: ["Vos (Recommended)"], tono: ["None of the above", "user_note: Cálido pero sin emojis"] });
 
   // Narrow: the same card on a phone-sized window.
   await ask(desktop, "Probemos otra vez las muestras.");
@@ -132,9 +136,13 @@ try {
   await narrow.getByRole("group").first().scrollIntoViewIfNeeded();
   await narrow.screenshot({ path: join(out, "pregunta-angosta.png") });
 
-  // Paused before answering: the card stays, closed, with the notice.
+  // Paused before answering: the card stays, closed, with the notice. The
+  // notice goes into a live region that was already there while it was open.
+  const card = desktop.locator("section").filter({ has: desktop.getByRole("heading", { name: "Te hago una pregunta" }) });
+  assert.equal(await card.getByRole("status").count(), 1);
   await desktop.getByRole("button", { name: "Pausar pedido" }).click();
   await desktop.getByText(/^Pausaste el trabajo y esta pregunta quedó sin responder/).waitFor();
+  await desktop.waitForFunction(() => document.activeElement?.textContent === "Pregunta sin responder");
   await desktop.screenshot({ path: join(out, "pregunta-sin-responder.png") });
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ captures: ["pregunta.png", "pregunta-otra.png", "pregunta-angosta.png", "pregunta-sin-responder.png"], keyboard: "PASS", pageErrors: errors }));

@@ -6,6 +6,7 @@ import { MAX_ANSWER, optionLabel } from "../../server/src/questions";
 const focusRing =
   "focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2";
 const buttonBordered = `inline-flex items-center justify-center gap-2 px-3 py-2 rounded-[6px] border border-ink bg-surface text-ink font-bold text-[14px] hover:bg-soft cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors duration-150 ${focusRing}`;
+const buttonQuiet = `inline-flex items-center justify-center gap-2 px-3 py-2 rounded-[6px] border border-line bg-surface text-ink text-[14px] hover:bg-soft cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors duration-150 ${focusRing}`;
 const row =
   "flex items-start gap-3 px-2 py-2.5 cursor-pointer hover:bg-soft transition-colors duration-150";
 const radio = `mt-[5px] w-4 h-4 shrink-0 accent-[#1d2838] cursor-pointer ${focusRing}`;
@@ -31,22 +32,34 @@ export function QuestionCard({
   disabled,
   sending,
   onAnswer,
+  onSkip,
 }: {
   question: PendingQuestion;
   disabled: boolean;
   sending: boolean;
   onAnswer: (answers: Record<string, string>) => void;
+  /** «Ahora no»: the agent goes on without an answer. */
+  onSkip: () => void;
 }) {
   const baseId = useId();
+  const sectionRef = useRef<HTMLElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const [choices, setChoices] = useState<Record<string, Choice>>({});
   const [written, setWritten] = useState<Record<string, string>>({});
   const [missing, setMissing] = useState<string>();
   const open = !question.closed;
+  const wasOpen = useRef(open);
 
   useEffect(() => {
-    // A new question takes the focus unless the user is typing somewhere.
-    if (open && !isTextField(document.activeElement)) headingRef.current?.focus();
+    const closing = wasOpen.current && !open;
+    wasOpen.current = open;
+    const active = document.activeElement;
+    // A new question takes the focus, and a card that closes keeps it on its
+    // title so it does not fall to the page, unless the user is typing
+    // somewhere else.
+    if (open || closing) {
+      if (sectionRef.current?.contains(active) || !isTextField(active)) headingRef.current?.focus();
+    }
   }, [question.id, open]);
 
   function answerFor(id: string) {
@@ -75,6 +88,7 @@ export function QuestionCard({
 
   return (
     <section
+      ref={sectionRef}
       aria-labelledby={`${baseId}-title`}
       className={`w-full rounded-[6px] border border-line border-l-2 bg-surface px-4 py-3.5 flex flex-col gap-3.5 ${
         open ? "border-l-accent" : ""
@@ -205,7 +219,17 @@ export function QuestionCard({
               </fieldset>
             );
           })}
-          <div className="flex items-center justify-end">
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              className={buttonQuiet}
+              disabled={disabled || sending}
+              onClick={() => {
+                if (!disabled && !sending) onSkip();
+              }}
+            >
+              Ahora no
+            </button>
             <button type="submit" className={buttonBordered} disabled={disabled || sending}>
               <Check size={18} strokeWidth={1.75} aria-hidden="true" />
               {sending ? "Enviando…" : "Responder"}
@@ -213,15 +237,18 @@ export function QuestionCard({
           </div>
         </form>
       ) : (
-        <>
-          <ul className="flex flex-col gap-1">
-            {question.questions.map((q) => (
-              <li key={q.id} className="text-[15px] text-muted [overflow-wrap:anywhere]">
-                {q.text}
-              </li>
-            ))}
-          </ul>
-          <p role="status" className="flex items-start gap-2 text-[14px] text-ink">
+        <ul className="flex flex-col gap-1">
+          {question.questions.map((q) => (
+            <li key={q.id} className="text-[15px] text-muted [overflow-wrap:anywhere]">
+              {q.text}
+            </li>
+          ))}
+        </ul>
+      )}
+      {/* Mounted with the card, so a reader announces the notice when it closes. */}
+      <p role="status" className={question.closed ? "flex items-start gap-2 text-[14px] text-ink" : "sr-only"}>
+        {question.closed && (
+          <>
             <AlertCircle
               size={18}
               strokeWidth={1.75}
@@ -229,9 +256,9 @@ export function QuestionCard({
               aria-hidden="true"
             />
             <span>{question.closed}</span>
-          </p>
-        </>
-      )}
+          </>
+        )}
+      </p>
     </section>
   );
 }
