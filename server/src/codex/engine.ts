@@ -1494,8 +1494,9 @@ export class CodexEngine implements Engine {
   /**
    * One skill switch, with a single retry. A write that fails twice is returned
    * so the caller names it in the work detail instead of the user seeing a
-   * transient Windows lock as a problem. The retry never sleeps past the
-   * cycle's deadline: a request never waits longer than the shared limit.
+   * transient Windows lock as a problem. Neither the wait nor the retry goes
+   * past the cycle's deadline: a request never waits longer than the shared
+   * limit.
    */
   private async writeSkill(
     child: ChildProcessWithoutNullStreams,
@@ -1516,6 +1517,9 @@ export class CodexEngine implements Engine {
         await new Promise((resolve) =>
           setTimeout(resolve, Math.min(SKILL_WRITE_RETRY_MS, remaining)),
         );
+        // The wait may have used the rest of the cycle: a retry now would only
+        // add a request the deadline cannot wait for.
+        if (deadline !== undefined && Date.now() >= deadline) return String(error);
       }
     }
   }

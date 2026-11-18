@@ -1638,9 +1638,12 @@ test("a write retry never stretches a cycle past its deadline", async () => {
   ]);
   process.env.BITACORA_FAKE_SKILLS_FILE = skillsFile;
   // The write fails late, when most of the cycle's 150 ms is already gone: the
-  // retry cannot sleep its 150 ms and push the request past the deadline.
+  // retry cannot sleep its 150 ms and push the request past the deadline, and
+  // there is no time left for a second request either.
   process.env.BITACORA_FAKE_SKILL_WRITE_FAIL = "*";
   process.env.BITACORA_FAKE_SKILL_WRITE_DELAY = "120";
+  const log = join(dir, "protocol.jsonl");
+  process.env.BITACORA_FAKE_LOG = log;
   const engine = new CodexEngine({
     home,
     workspace,
@@ -1654,14 +1657,28 @@ test("a write retry never stretches a cycle past its deadline", async () => {
   const off = engine.subscribe((event) => {
     if (event.type === "detail") details.push(event.text);
   });
+  const writes = async (from: number) =>
+    (await readFile(log, "utf8"))
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { method?: string })
+      .slice(from)
+      .filter((call) => call.method === "skills/config/write").length;
   try {
     await engine.start();
     // The startup cycle may already have used the deadline: this one is fresh.
     await engine.createWork();
+    const seen = (await readFile(log, "utf8")).trim().split("\n").length;
     const started = Date.now();
     await engine.createWork();
     const waited = Date.now() - started;
     assert.ok(waited < 240, `the cycle stopped at its deadline (${waited}ms)`);
+    assert.equal(
+      await writes(seen),
+      1,
+      "a write with no time left is not retried",
+    );
     assert.equal(
       details.some((text) =>
         text.includes("No pude comprobar si los complementos quedaron como tienen que estar"),
@@ -1674,6 +1691,7 @@ test("a write retry never stretches a cycle past its deadline", async () => {
     delete process.env.BITACORA_FAKE_SKILLS_FILE;
     delete process.env.BITACORA_FAKE_SKILL_WRITE_FAIL;
     delete process.env.BITACORA_FAKE_SKILL_WRITE_DELAY;
+    delete process.env.BITACORA_FAKE_LOG;
     await engine.close();
     await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   }
