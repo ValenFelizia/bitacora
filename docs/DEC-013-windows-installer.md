@@ -7,8 +7,10 @@ el instalador lo descarga. El dibujo sigue usando Edge del sistema. La firma y l
 El armado genera dos entradas JavaScript, una para el servidor y otra para
 las herramientas del kit. Incluye Node 24.15.0, las dependencias de producción
 del servidor fijadas en el lock de npm y el runtime de Codex 0.168.0
-necesario para la agencia, sin el ejecutable de modo código ni los recursos
-de voz. Con esto `koffi` mantiene su módulo nativo y Playwright puede
+necesario para la agencia, sin los recursos de voz. El ejecutable de modo
+código (`codex-code-mode-host.exe`) se incluye: todos los comandos del agente
+pasan por él, y sin él el agente no puede ni leer un archivo. Lo comprobó un
+pedido real el 18/11. Con esto `koffi` mantiene su módulo nativo y Playwright puede
 encontrar Edge. El `config.toml` de Bitácora usa rutas absolutas al Node y a la
 entrada compilada del kit. `tsx` queda como dependencia de desarrollo.
 
