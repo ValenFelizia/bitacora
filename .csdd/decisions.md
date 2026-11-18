@@ -265,10 +265,18 @@ accepted direction from implementation alone.
     del modo Plan responde «unavailable in Default mode» si esa opción está
     apagada. El app-server la pide con `item/tool/requestUserInput`; Bitácora ya
     no la responde sola: la muestra como tarjeta, espera la respuesta y la
-    devuelve. Si la pregunta no se puede mostrar (datos incompletos o sin
-    trabajo), se responde vacía como antes. Una pausa, un reinicio de Codex o
-    cerrar la app la cierran con un aviso en la tarjeta; perder la conexión o
-    recargar la ventana la vuelven a mostrar.
+    devuelve. Si Codex pregunta otra vez antes de la respuesta, las preguntas
+    se encolan y se muestran de a una, como hace su propio cliente. Si la
+    pregunta no se puede mostrar (datos incompletos o sin trabajo), se responde
+    vacía como antes. Una pausa, que Bitácora se detenga o cerrar la app las
+    cierran todas con un aviso en la tarjeta; perder la conexión o recargar la
+    ventana la vuelven a mostrar. Las respuestas siguen el formato del cliente
+    de 0.168.0: la etiqueta elegida, o `["None of the above", "user_note: …"]`
+    para «Otra». «Ahora no» responde vacío (`{"answers":{}}`): Codex se lo pasa
+    al modelo sin explicación, así que `developerInstructions` le dice que la
+    usuaria prefirió no responder. El resultado de la herramienta no se copia
+    al detalle del trabajo (podría traer una respuesta secreta); 0.168.0 no
+    emite un ítem con ese resultado, y la prueba del binario real lo comprueba.
   - **Riesgo:** `default_mode_request_user_input` figura «under development» en
     `codex features list` de 0.168.0 y los tipos `ToolRequestUserInput*` están
     marcados «EXPERIMENTAL». Puede cambiar o desaparecer en otra versión: al

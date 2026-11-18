@@ -84,8 +84,10 @@ Bitácora es el cuaderno de a bordo de la agencia: un registro de lo que se hizo
 - **Preguntas del agente:**
   - Tarjeta al final de la conversación, en `--surface` con borde de `1 px` en `--line` y, mientras espera, el filete naranja a la izquierda del trabajo activo. Arriba, el ícono `message-circle-question` en `--accent` y «Te hago una pregunta» en `13 px` `--muted`.
   - Cada pregunta es un grupo con su texto en `17 px` negrita (y el rótulo corto arriba, en `--muted`). Las opciones son filas de texto separadas por líneas de `1 px`, con su botón de opción nativo, el nombre en negrita y la explicación en `13 px` `--muted`. La sugerida por el agente lleva «Recomendada» en `--muted`, sin color.
-  - «Otra» es la última fila y abre un campo para escribir. Se responde con un botón con borde, «Responder» con `check`; si falta elegir, un aviso corto en `--danger` debajo de la pregunta y el foco va ahí.
-  - Lo respondido queda como mensaje de la usuaria («Trato: Vos»). Si ya no se puede responder (pausa, reinicio, cierre), la tarjeta queda sin filete, con la pregunta en `--muted` y el aviso con `alert-circle`; se borra con el pedido siguiente.
+  - «Otra» es la última fila y abre un campo para escribir. Se responde con un botón con borde, «Responder» con `check`; a su izquierda, «Ahora no» con borde en `--line` saltea la pregunta sin pausar. Si falta elegir, un aviso corto en `--danger` debajo de la pregunta y el foco va ahí.
+  - Si el agente pregunta otra vez antes de la respuesta, las preguntas se muestran de a una, en orden.
+  - Lo respondido queda como mensaje de la usuaria («Trato: Vos», o «Ahora no.»). Si ya no se puede responder (pausa, Bitácora detenida o cerrada), la tarjeta queda sin filete, con la pregunta en `--muted` y el aviso con `alert-circle`; se borra con el pedido siguiente.
+  - Foco: una pregunta nueva lo toma en su título; al responder vuelve a la caja de texto; si la tarjeta se cierra, va a su título. El aviso de cierre vive en una región `status` que existe desde que se muestra la tarjeta, para que el lector de pantalla lo anuncie.
 - **Errores:** un solo aviso rojo sobre la caja de texto (ícono, una frase llana y «Reintentar»), sin duplicar líneas en el registro ni en el pie de la barra izquierda.
 - **Cuenta:**
   - Conectada: abajo a la izquierda, el mail con el ícono `mail`. Sin puntito de estado.
