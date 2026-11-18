@@ -74,6 +74,14 @@ export class FakeEngine implements Engine {
     this.calls.push(`interrupt:${id}`);
     this.emit({ type: "finished", conversationId: id, status: "interrupted" });
   }
+  /** Answers the app sent, in order. */
+  answers: { conversationId: string; questionId: string; answers: Record<string, string[]> }[] = [];
+  /** The question is no longer waiting on the engine side. */
+  answerFails = false;
+  async answer(conversationId: string, questionId: string, answers: Record<string, string[]>) {
+    if (this.answerFails) throw new Error("question no longer waiting");
+    this.answers.push({ conversationId, questionId, answers });
+  }
   /** Keys the app asked to forget, so a test can tell a dropped notice apart. */
   forgotten: string[] = [];
   forgetDetails(keys: readonly string[]) {

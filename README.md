@@ -90,6 +90,12 @@ Un archivo de trabajos dañado se conserva como `works.corrupt-<fecha>.json` y
 la app abre una lista vacía con un aviso. Si falla un guardado, muestra un aviso
 y el siguiente guardado puede recuperarse.
 
+El agente puede preguntar con opciones (`request_user_input`, issue #52): la
+pregunta llega como tarjeta y el turno espera la respuesta. Después de
+`npm run build`, `npx tsx scripts/capture-questions.ts` abre la pantalla en Edge
+con un motor de prueba, comprueba que se responde solo con el teclado y guarda
+las capturas en `docs/design/capturas/pregunta*.png`.
+
 Las copias y Deshacer están implementados. Con MXC, el perfil `agencia`
 bloquea las lecturas fuera de la carpeta de la agencia. Si Windows no tiene
 MXC, Bitácora avisa que el agente puede leer archivos de afuera, aunque no

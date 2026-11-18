@@ -8,6 +8,56 @@ const setupFile = process.env.CODEX_HOME + "/fake-protection";
 let configuredMode = existsSync(setupFile) ? readFileSync(setupFile, "utf8") : null;
 const threadId = "thread-1";
 let interrupts = 0;
+/**
+ * Ids of the `request_user_input` requests waiting for the client, in order.
+ * Like 0.168.0, the turn waits on every one of them.
+ */
+let waiting = [];
+/** What the client answered in this turn, in order. */
+let answered = [];
+const questions = process.env.BITACORA_FAKE_QUESTIONS
+  ? JSON.parse(process.env.BITACORA_FAKE_QUESTIONS)
+  : [{
+      id: "trato",
+      header: "Trato",
+      question: "¿Les hablás de vos o de usted?",
+      isOther: true,
+      isSecret: false,
+      options: [
+        { label: "Vos (Recommended)", description: "Más cercano, como en una charla." },
+        { label: "Usted", description: "Más formal." },
+      ],
+    }];
+const secondQuestions = [{
+  id: "canal",
+  header: "Canal",
+  question: "¿Dónde lo mandás más?",
+  isOther: true,
+  isSecret: false,
+  options: [
+    { label: "WhatsApp", description: "Chats y estados." },
+    { label: "Historias", description: "Instagram." },
+  ],
+}];
+const ask = (id, asked) => {
+  waiting.push(id);
+  send({
+    id,
+    method: "item/tool/requestUserInput",
+    params: { threadId, turnId: "turn-1", itemId: `call-${id}`, questions: asked, isBlocking: false, autoResolutionMs: null },
+  });
+};
+/**
+ * Ends the turn with questions still waiting, in the order 0.168.0 uses on a
+ * pause: the turn ends first and then each request is resolved.
+ */
+const endWaiting = (status) => {
+  const left = waiting;
+  waiting = [];
+  answered = [];
+  notify("turn/completed", { threadId, turn: turn(status) });
+  for (const requestId of left) notify("serverRequest/resolved", { threadId, requestId });
+};
 let interruptHangs = false;
 let interruptRejects = false;
 let crashScheduled = false;
@@ -64,6 +114,30 @@ createInterface({ input: process.stdin })
     if (process.env.BITACORA_FAKE_LOG)
       appendFileSync(process.env.BITACORA_FAKE_LOG, JSON.stringify(m) + "\n");
     if (!m.method) {
+      if (waiting.includes(m.id)) {
+        // The answer reaches the agent and the turn goes on, as in 0.168.0:
+        // the request is resolved first, then the turn ends once nothing is
+        // left waiting.
+        waiting = waiting.filter((id) => id !== m.id);
+        answered.push(m.result?.answers ?? null);
+        notify("serverRequest/resolved", { threadId, requestId: m.id });
+        // The tool's output as a `functionCallOutput` thread item (the shape in
+        // `ThreadItem`): it carries the answers, secret ones included.
+        notify("item/completed", {
+          threadId,
+          item: { type: "functionCallOutput", id: `output-${m.id}`, name: "request_user_input", namespace: null, output: JSON.stringify(m.result ?? null) },
+        });
+        if (!waiting.length) {
+          // An agent that keeps a secret: it does not repeat it in its reply.
+          const text = questions.some((q) => q.isSecret)
+            ? "Recibí la respuesta."
+            : `Recibí: ${answered.map((answers) => JSON.stringify(answers)).join(" y ")}`;
+          answered = [];
+          notify("item/completed", { threadId, item: { type: "agentMessage", id: `after-${m.id}`, text } });
+          notify("turn/completed", { threadId, turn: turn("completed") });
+        }
+        return;
+      }
       if (String(m.id).startsWith('interactive-')) {
         if (!m.result && !m.error) process.exit(5);
         if (m.id === 'interactive-9') notify('turn/completed', { threadId, turn: turn('completed') });
@@ -248,7 +322,16 @@ createInterface({ input: process.stdin })
         else if (++interrupts > 1) send({ id: m.id, error: { message: "already interrupted" } });
         else {
           reply({});
-          if (!interruptHangs) setTimeout(() => notify("turn/completed", { threadId, turn: turn("interrupted") }), 140);
+          // `BITACORA_FAKE_PAUSE_RELEASE` names a file: the pause only ends
+          // when the test writes it, so the test decides when Codex confirms.
+          const release = process.env.BITACORA_FAKE_PAUSE_RELEASE;
+          if (release) {
+            const timer = setInterval(() => {
+              if (!existsSync(release)) return;
+              clearInterval(timer);
+              endWaiting("interrupted");
+            }, 20);
+          } else if (!interruptHangs) setTimeout(() => endWaiting("interrupted"), 140);
         }
         break;
       case "turn/start": {
@@ -258,6 +341,18 @@ createInterface({ input: process.stdin })
         }
         if (scenario === "crash") {
           process.exit(3);
+        }
+        if (scenario === "question" || scenario === "two-questions") {
+          // The agent calls `request_user_input` and waits for the answer; in
+          // `two-questions` it asks again before the first one is answered.
+          reply({ turn: turn() });
+          notify("turn/started", { threadId, turn: turn() });
+          const stamp = Date.now();
+          ask(`question-${stamp}-1`, questions);
+          if (scenario === "two-questions") ask(`question-${stamp}-2`, secondQuestions);
+          // The turn ends on its own while the question is still waiting.
+          if (process.env.BITACORA_FAKE_QUESTION_ENDS) setTimeout(() => endWaiting("completed"), 100);
+          break;
         }
         if (scenario === "environment")
           notify("item/commandExecution/outputDelta", {

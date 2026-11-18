@@ -241,6 +241,53 @@ accepted direction from implementation alone.
     aviso, porque `skills.include_instructions=false` ya evita que el catálogo
     llegue al agente y el apagado uno por uno es la segunda barrera.
     No se modifican `HOME` ni `USERPROFILE`.
+- Update (2026-11-18, decidido por Valentín, issue #52): «No saquemos funciones
+  de Codex dentro de lo posible… la idea es construir sobre eso». Se revierten
+  dos apagados y se prende una función nueva:
+  - **Metas prendidas:** `goals = true` en `AGENCY_ENVIRONMENT` pasa
+    `-c features.goals=true` (reemplaza la regla «Metas apagadas» del 18/11).
+  - **Búsqueda web de Codex prendida:** `webSearch = "cached"` pasa
+    `-c web_search="cached"`. Es el valor de fábrica de 0.168.0
+    (`web_search` vacío se resuelve a `Cached` en `codex-rs/core/src/config/mod.rs`):
+    resultados del índice de OpenAI, sin que el agente abra páginas en vivo.
+    Los valores aceptados son `disabled`, `cached`, `indexed` y `live`
+    (`WebSearchMode`); `features.web_search_cached` y
+    `features.web_search_request` figuran «deprecated» y no se usan.
+    Reemplaza la regla «Búsqueda web de Codex apagada».
+  - **Las reglas de datos del kit siguen valiendo:** todo número visible sale
+    de una línea citada de la fuente y se controla con `controlar`. La búsqueda
+    web orienta pero no es una fuente; `kit/turismo/AGENTS.md` lo dice.
+  - **`traer` sigue siendo el camino para leer una página que pega la usuaria**
+    y para guardar la fuente que se cita.
+  - **Preguntas con opciones prendidas:** `questions = true` pasa
+    `-c features.default_mode_request_user_input=true`. En 0.168.0 la
+    herramienta `request_user_input` se registra en todos los modos, pero fuera
+    del modo Plan responde «unavailable in Default mode» si esa opción está
+    apagada. El app-server la pide con `item/tool/requestUserInput`; Bitácora ya
+    no la responde sola: la muestra como tarjeta, espera la respuesta y la
+    devuelve. Si Codex pregunta otra vez antes de la respuesta, las preguntas
+    se encolan y se muestran de a una, como hace su propio cliente. Si la
+    pregunta no se puede mostrar (datos incompletos o sin trabajo), se responde
+    vacía como antes. Una pausa, que Bitácora se detenga o cerrar la app las
+    cierran todas con un aviso en la tarjeta; perder la conexión o recargar la
+    ventana la vuelven a mostrar. Las respuestas siguen el formato del cliente
+    de 0.168.0: la etiqueta elegida, o `["None of the above", "user_note: …"]`
+    para «Otra». «Ahora no» responde vacío (`{"answers":{}}`): Codex se lo pasa
+    al modelo sin explicación, así que `developerInstructions` le dice que la
+    usuaria prefirió no responder. El resultado de la herramienta no se copia
+    al detalle del trabajo (podría traer una respuesta secreta); 0.168.0 no
+    emite un ítem con ese resultado, y la prueba del binario real lo comprueba.
+  - **Riesgo:** `default_mode_request_user_input` figura «under development» en
+    `codex features list` de 0.168.0 y los tipos `ToolRequestUserInput*` están
+    marcados «EXPERIMENTAL». Puede cambiar o desaparecer en otra versión: al
+    actualizar Codex hay que volver a pasar la prueba sin inferencia del binario
+    real (`server/test/agency-environment.test.ts`), que comprueba la
+    configuración, que el modelo vea `request_user_input`, las metas y
+    `web_search`, y que la pregunta llegue al cliente y la respuesta vuelva.
+  - **Límite del protocolo:** 0.168.0 no tiene preguntas de varias respuestas:
+    la herramienta le pide al modelo opciones excluyentes (de 2 a 3, la
+    recomendada primero con «(Recommended)») y suma «Otra». La tarjeta elige una
+    opción por pregunta; una tarjeta puede traer hasta tres preguntas.
 - Rationale: el objetivo no es cortarle las patas a Codex sino darle a la
   agencia un entorno limpio, sin descargas de catálogos ni herramientas de
   programación o conectores sorpresa, dejando una estructura lista para que
