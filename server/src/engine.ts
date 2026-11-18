@@ -40,7 +40,8 @@ export type QuestionEnd = "paused" | "finished" | "stopped" | "closed";
 export type EngineEvent =
   | { type: "availability"; available: boolean; exhausted?: boolean; safety: ExecutionSafety }
   | { type: "question"; conversationId: string; id: string; questions: Question[] }
-  | { type: "questionClosed"; conversationId: string; id: string; reason: Exclude<QuestionEnd, "closed"> }
+  /** Questions of one conversation that stopped waiting together, in the order they were asked. */
+  | { type: "questionClosed"; conversationId: string; ids: string[]; reason: Exclude<QuestionEnd, "closed"> }
   | { type: "protection"; safety: ExecutionSafety }
   | { type: "account"; account: Account }
   | { type: "title"; conversationId: string; title: string }
@@ -138,7 +139,7 @@ export function questionEndText(reason: QuestionEnd): string {
   const why = {
     paused: "Pausaste el trabajo",
     finished: "El pedido terminó",
-    stopped: "Bitácora se reinició",
+    stopped: "Bitácora se detuvo",
     closed: "Bitácora se cerró",
   }[reason];
   return `${why} y esta pregunta quedó sin responder. Si querés, contestala en un mensaje nuevo.`;

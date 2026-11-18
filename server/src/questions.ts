@@ -12,17 +12,22 @@ export function optionLabel(label: string): { text: string; recommended: boolean
   return match && match[1] ? { text: match[1], recommended: true } : { text: label, recommended: false };
 }
 
+/** The label Codex 0.168.0's own client sends when «Otra» is chosen over the options. */
+export const OTHER_LABEL = "None of the above";
+
 /**
- * What the agent receives for one question: the chosen label, or the written
- * text marked the way Codex's own client marks a free answer. Undefined when
- * the value is not a valid answer to that question.
+ * What the agent receives for one question, the way Codex's own client sends
+ * it: the chosen label, or the written text as a note, after "None of the
+ * above" when there were options to choose from. Undefined when the value is
+ * not a valid answer to that question.
  */
 export function agentAnswer(question: Question, value: unknown): string[] | undefined {
   if (typeof value !== "string") return undefined;
   if (question.options.some((option) => option.label === value)) return [value];
   const written = value.trim();
   if (!question.other || !written || written.length > MAX_ANSWER) return undefined;
-  return [`user_note: ${written}`];
+  const note = `user_note: ${written}`;
+  return question.options.length ? [OTHER_LABEL, note] : [note];
 }
 
 /** The user's side of the conversation once she answered. */

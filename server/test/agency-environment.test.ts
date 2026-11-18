@@ -594,7 +594,7 @@ test(
       type: "response.output_item.done",
       item: { type: "message", role: "assistant", id: "msg", content: [{ type: "output_text", text: "Listo." }] },
     }];
-    const model = await mockResponses([ask("call-1"), say, ask("call-2"), say]);
+    const model = await mockResponses([ask("call-1"), say, ask("call-2"), say, ask("call-3"), say]);
     // The arguments Bitácora gives a machine without MXC: no profile, so no
     // sandbox is needed for a turn that runs no command.
     const server = startRealAppServer([...appServerArgs("elevated"), ...model.args], workspace, home);
@@ -646,15 +646,38 @@ test(
       for (const tool of ["request_user_input", "create_goal", "get_goal", "update_goal", "web_search"])
         assert.ok(names.includes(tool), `${tool} missing from ${names.join(", ")}`);
 
-      // The answer goes back to the model as the tool's output.
-      server.respond(request.id!, { answers: { trato: { answers: ["Vos (Recommended)"] } } });
+      // «Otra» goes back as Codex's own client sends it, and reaches the model
+      // as the tool's output.
+      const written = "nota-escrita-7391";
+      const otherAnswer = { answers: { trato: { answers: ["None of the above", `user_note: ${written}`] } } };
+      server.respond(request.id!, otherAnswer);
       const completed = await next((m) => m.method === "turn/completed", "the first turn");
       assert.equal(completed.params.turn.status, "completed");
-      const output = (model.bodies[1].input as Array<{ type: string; call_id?: string; output?: string }>)
-        .find((item) => item.type === "function_call_output" && item.call_id === "call-1");
-      assert.deepEqual(JSON.parse(output!.output!), { answers: { trato: { answers: ["Vos (Recommended)"] } } });
+      const outputOf = (body: any, callId: string) =>
+        JSON.parse((body.input as Array<{ type: string; call_id?: string; output?: string }>)
+          .find((item) => item.type === "function_call_output" && item.call_id === callId)!.output!);
+      assert.deepEqual(outputOf(model.bodies[1], "call-1"), otherAnswer);
       const resolved = server.incoming.findIndex((m) => m.method === "serverRequest/resolved" && m.params.requestId === request.id);
       assert.ok(resolved >= 0 && resolved < server.incoming.indexOf(completed), "resolved before the turn ends");
+      // 0.168.0 sends no thread item with the answer: nothing the client could
+      // copy into a work's detail carries what the user wrote.
+      assert.equal(server.incoming.some((m) => JSON.stringify(m).includes(written)), false);
+
+      // «Ahora no»: an empty answer. The model gets `{"answers":{}}` and
+      // nothing else, and the turn goes on.
+      const afterFirst = server.incoming.length;
+      await server.rpc("turn/start", { threadId: thread.id, input: text("Seguimos") });
+      const skipped = await next(
+        (m) => server.incoming.indexOf(m as never) >= afterFirst && m.method === "item/tool/requestUserInput",
+        "the second question",
+      );
+      server.respond(skipped.id!, { answers: {} });
+      const skippedTurn = await next(
+        (m) => server.incoming.indexOf(m as never) >= afterFirst && m.method === "turn/completed",
+        "the second turn",
+      );
+      assert.equal(skippedTurn.params.turn.status, "completed");
+      assert.deepEqual(outputOf(model.bodies[3], "call-2"), { answers: {} });
 
       // A pause while the question waits ends the turn as interrupted and the
       // app-server stops waiting for the answer (in 0.168.0 it says so after
@@ -663,7 +686,7 @@ test(
       const second = await server.rpc<{ turn: { id: string } }>("turn/start", { threadId: thread.id, input: text("Otra cosa") });
       const pausedRequest = await next(
         (m) => server.incoming.indexOf(m as never) >= seen && m.method === "item/tool/requestUserInput",
-        "the second question",
+        "the third question",
       );
       await server.rpc("turn/interrupt", { threadId: thread.id, turnId: second.turn.id });
       const interrupted = await next(

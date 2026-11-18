@@ -43,7 +43,9 @@ export type ClientCommand =
   | { type: "rename"; workId: string; title: string }
   | { type: "interrupt"; workId: string }
   /** One answer per question id: the label of the chosen option or the written text. */
-  | { type: "answer"; workId: string; questionId: string; answers: Record<string, string> };
+  | { type: "answer"; workId: string; questionId: string; answers: Record<string, string> }
+  /** «Ahora no»: the agent goes on without an answer. */
+  | { type: "skipQuestion"; workId: string; questionId: string };
 export type ServerMessage =
   | { type: "snapshot"; state: Snapshot }
   | {
@@ -55,4 +57,5 @@ export type ServerMessage =
     }
   | { type: "selected"; workId: string }
   | { type: "login"; url: string }
-  | { type: "problem"; text: string; detail?: string };
+  /** `workId` names the work the problem is about, so the screen can take the user there. */
+  | { type: "problem"; text: string; detail?: string; workId?: string };

@@ -998,16 +998,23 @@ export class CodexEngine implements Engine {
     this.emit({ type: "question", id, ...asked });
     return true;
   }
-  /** Stops waiting for the questions that match, and says why. */
+  /**
+   * Stops waiting for the questions that match, and says why: one event per
+   * conversation, so the app closes them together instead of showing the next
+   * one in line just before it is closed too.
+   */
   private closeQuestions(
     reason: Extract<EngineEvent, { type: "questionClosed" }>["reason"],
     match: (question: { conversationId: string; requestId: RequestId }) => boolean = () => true,
   ) {
+    const closed = new Map<string, string[]>();
     for (const [id, question] of this.questions) {
       if (!match(question)) continue;
       this.questions.delete(id);
-      if (!this.stopping) this.emit({ type: "questionClosed", conversationId: question.conversationId, id, reason });
+      closed.set(question.conversationId, [...(closed.get(question.conversationId) ?? []), id]);
     }
+    if (this.stopping) return;
+    for (const [conversationId, ids] of closed) this.emit({ type: "questionClosed", conversationId, ids, reason });
   }
   async answer(conversationId: string, questionId: string, answers: Record<string, string[]>) {
     const question = this.questions.get(questionId);
@@ -1114,7 +1121,11 @@ export class CodexEngine implements Engine {
               text: item.text,
               delta: false,
             });
-        } else if (item.type !== "userMessage") {
+        } else if (
+          item.type !== "userMessage" &&
+          // The user's answers, secret ones included, never go to the detail.
+          !(item.type === "functionCallOutput" && item.name === "request_user_input")
+        ) {
           const activity =
             item.type === "commandExecution"
               ? item.commandActions.length > 0 &&

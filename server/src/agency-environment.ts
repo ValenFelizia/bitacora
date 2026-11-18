@@ -55,7 +55,9 @@ export const AGENCY_DEVELOPER_INSTRUCTIONS =
   "Respondé en castellano rioplatense, simple y sin términos técnicos. " +
   "Trabajá en la carpeta actual. " +
   "Usá imágenes generadas con IA solo si la usuaria te lo pide explícitamente, " +
-  "y nunca presentes una imagen con IA como si fuera una foto real de un hotel o un destino.";
+  "y nunca presentes una imagen con IA como si fuera una foto real de un hotel o un destino. " +
+  "Si una pregunta de request_user_input vuelve sin respuestas ({\"answers\":{}}), la usuaria prefirió no responderla ahora: " +
+  "no la repitas enseguida, seguí con lo que puedas y contale qué supusiste.";
 
 export const AGENCY_ENVIRONMENT: AgencyEnvironment = {
   developerInstructions: AGENCY_DEVELOPER_INSTRUCTIONS,

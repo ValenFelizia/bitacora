@@ -81,6 +81,12 @@ export class App {
    * engine say it again.
    */
   private pendingDetails: { text: string; key?: string }[] = [];
+  /**
+   * Questions asked while another one is on screen, by work. Codex can ask
+   * again before the first is answered and waits on each one: they are shown
+   * one at a time, in order, like its own client does.
+   */
+  private queuedQuestions = new Map<string, PendingQuestion[]>();
   constructor(
     private engine: Engine,
     private data: string,
@@ -306,11 +312,23 @@ export class App {
       this.changed();
     }
   }
-  /** Marks a waiting question as no longer answerable, saying why. */
-  private closeQuestion(work: SavedWork, reason: Parameters<typeof questionEndText>[0], id?: string) {
-    if (!work.question || work.question.closed || (id && work.question.id !== id)) return false;
+  /**
+   * Marks the question on screen as no longer answerable, saying why, and drops
+   * the ones waiting behind it: they belong to the same turn.
+   */
+  private closeQuestion(work: SavedWork, reason: Parameters<typeof questionEndText>[0]) {
+    this.queuedQuestions.delete(work.id);
+    if (!work.question || work.question.closed) return false;
     work.question.closed = questionEndText(reason);
     return true;
+  }
+  /** Shows the next question in line, if any. True when one is waiting again. */
+  private nextQuestion(work: SavedWork) {
+    const queue = this.queuedQuestions.get(work.id);
+    work.question = queue?.shift();
+    if (!queue?.length) this.queuedQuestions.delete(work.id);
+    if (work.question) work.progress = WAITING_ANSWER;
+    return !!work.question;
   }
   private event(event: EngineEvent) {
     if (event.type === "protection") {
@@ -387,13 +405,27 @@ export class App {
       case "detail":
         work.details = (work.details + event.text + "\n").slice(-100000);
         break;
-      case "question":
-        work.question = { id: event.id, askedAt: new Date().toISOString(), questions: event.questions };
+      case "question": {
+        const question = { id: event.id, askedAt: new Date().toISOString(), questions: event.questions };
+        if (work.question && !work.question.closed) {
+          this.queuedQuestions.set(work.id, [...(this.queuedQuestions.get(work.id) ?? []), question]);
+          return;
+        }
+        work.question = question;
         work.progress = WAITING_ANSWER;
         break;
-      case "questionClosed":
-        if (!this.closeQuestion(work, event.reason, event.id)) return;
+      }
+      case "questionClosed": {
+        const queue = this.queuedQuestions.get(work.id)?.filter((q) => !event.ids.includes(q.id));
+        if (queue?.length) this.queuedQuestions.set(work.id, queue);
+        else this.queuedQuestions.delete(work.id);
+        const current = work.question;
+        if (!current || current.closed || !event.ids.includes(current.id)) break;
+        // Only the one on screen stopped waiting: the next one takes its place.
+        // When nothing is left behind it, the card stays closed with the notice.
+        if (!this.nextQuestion(work)) work.question = { ...current, closed: questionEndText(event.reason) };
         break;
+      }
       case "problem":
         work.problem = problemText(event.kind);
         work.details = (work.details + event.detail + "\n").slice(-100000);
@@ -523,35 +555,41 @@ export class App {
       await this.engine.interrupt(work.conversationId);
       return;
     }
-    if (command.type === "answer") {
+    if (command.type === "answer" || command.type === "skipQuestion") {
       const work = this.works.find((w) => w.id === command.workId);
       if (!work) throw new Error("Unknown work");
       const question = work.question;
-      if (!question || question.closed || question.id !== command.questionId) {
-        reply({ type: "problem", text: "Esa pregunta ya no está esperando respuesta." });
-        return;
-      }
-      const given = command.answers && typeof command.answers === "object" ? command.answers : {};
+      // Already answered (another window, a second click) or closed: the
+      // snapshot that follows already shows why, so nothing is said.
+      if (!question || question.closed || question.id !== command.questionId) return;
+      const given = command.type === "answer" && command.answers && typeof command.answers === "object" ? command.answers : {};
       const answers: Record<string, string[]> = {};
-      for (const q of question.questions) {
-        const answer = agentAnswer(q, Object.hasOwn(given, q.id) ? given[q.id] : undefined);
-        if (!answer) {
-          reply({ type: "problem", text: "Respondé cada pregunta antes de seguir." });
-          return;
+      if (command.type === "answer")
+        for (const q of question.questions) {
+          const answer = agentAnswer(q, Object.hasOwn(given, q.id) ? given[q.id] : undefined);
+          if (!answer) {
+            reply({ type: "problem", text: "Respondé cada pregunta antes de seguir." });
+            return;
+          }
+          answers[q.id] = answer;
         }
-        answers[q.id] = answer;
-      }
       try {
+        // «Ahora no» answers nothing, the way Codex resolves an unanswered
+        // question; the developer instructions tell the agent what that means.
         await this.engine.answer(work.conversationId, question.id, answers);
       } catch (error) {
-        // Another path closed it meanwhile (a pause, a restart): its own notice
-        // is already on the card.
-        reply({ type: "problem", text: "Esa pregunta ya no está esperando respuesta.", detail: String(error) });
+        // The engine stopped waiting meanwhile (a pause, a restart): its own
+        // event closes the card with the notice.
+        work.details = (work.details + `No pude enviar la respuesta: ${String(error)}\n`).slice(-100000);
+        this.changed();
         return;
       }
-      work.question = undefined;
-      work.messages.push({ id: randomUUID(), role: "user", text: answerRecord(question, given) });
-      work.progress = activityText.preparing;
+      work.messages.push({
+        id: randomUUID(),
+        role: "user",
+        text: command.type === "answer" ? answerRecord(question, given) : "Ahora no.",
+      });
+      if (!this.nextQuestion(work)) work.progress = activityText.preparing;
       work.updatedAt = new Date().toISOString();
       this.changed();
       return;
@@ -564,10 +602,10 @@ export class App {
       throw new Error("Invalid request");
     if (this.backups?.restoring) { reply({ type: "problem", text: "Primero elegí Reintentar deshacer o Dejar la carpeta como está." }); return; }
     if (this.submitting || this.works.some((w) => w.busy)) {
-      reply({
-        type: "problem",
-        text: "Esperá a que termine el pedido actual o pausalo.",
-      });
+      const asking = this.works.find((w) => w.busy && w.question && !w.question.closed);
+      reply(asking
+        ? { type: "problem", text: `Te hice una pregunta en «${asking.title}»: respondela para seguir.`, workId: asking.id }
+        : { type: "problem", text: "Esperá a que termine el pedido actual o pausalo." });
       return;
     }
     if (this.starting || !this.available || !this.engine.executionSafety().allowed) {
@@ -663,6 +701,7 @@ export class App {
       work.problem = undefined;
       // A question left unanswered stays on screen until the next request.
       work.question = undefined;
+      this.queuedQuestions.delete(work.id);
       work.progress = "Preparando la respuesta…";
       this.unsent.add(work.id);
       this.changed();
