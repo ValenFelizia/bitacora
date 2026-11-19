@@ -23,7 +23,10 @@ export class FakeEngine implements Engine {
   catalogue: EngineModel[] | "fail" = FAKE_CATALOGUE;
   /** The model each thread start, resume and turn asked for, in order. */
   modelRequests: { call: "create" | "resume" | "send"; model?: ModelSelection }[] = [];
+  /** How many times the app asked for the list. */
+  modelLists = 0;
   async models() {
+    this.modelLists++;
     if (this.catalogue === "fail") throw new Error("model list failed");
     return this.catalogue;
   }

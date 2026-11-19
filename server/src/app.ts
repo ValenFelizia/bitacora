@@ -12,13 +12,15 @@ import { fallbackTitle, MAX_TITLE } from "./titles";
 import { agentAnswer, answerRecord } from "./questions";
 import type { FileRef, Message, Work, Snapshot, ClientCommand, ServerMessage, PendingQuestion } from "./contracts";
 import { PANEL_WIDTH } from "./contracts";
-import { resolveModel, type EngineModel } from "./models";
+import { isAllowedModel, resolveModel, type EngineModel } from "./models";
 
 /** Choices kept for the whole app in `settings.json`, not per work (DEC-014). */
 type Settings = { model?: string; panelWidth?: number };
 
 type SavedWork = Work & { conversationId: string; titlePending?: boolean; renamedByUser?: boolean; pendingFiles?: { messageId: string; before?: Record<string, string> } };
 const isText = (value: unknown) => typeof value === "string";
+/** A model list older than this is asked again when the menu opens. */
+const CATALOGUE_MAX_AGE_MS = 10 * 60_000;
 /** How long close() lets a title request already in flight finish before stopping the engine. */
 const TITLE_CLOSE_WAIT_MS = 400;
 /**
@@ -112,7 +114,11 @@ export class App {
   private settingsWrites: Promise<void> = Promise.resolve();
   /** The account's models; undefined until the engine answers. */
   private catalogue?: EngineModel[];
+  private catalogueAt = 0;
+  /** The list on hand was asked for another account. */
+  private catalogueStale = false;
   private catalogueRequest = 0;
+  private listing = false;
   constructor(
     private engine: Engine,
     private data: string,
@@ -231,17 +237,42 @@ export class App {
     for (const work of this.works) if (work.pendingFiles) { await this.collectResults(work); this.dirty = true; }
     await this.loadSettings();
   }
-  /** A missing or unreadable file only means nothing was chosen yet. */
+  /**
+   * A missing file only means nothing was chosen yet. A damaged one is set
+   * aside like `works.json` and the defaults are used, saying so, so the next
+   * save does not overwrite it unseen. A ruled-out model is dropped.
+   */
   private async loadSettings() {
-    try {
-      const saved = JSON.parse(await readFile(join(this.data, "settings.json"), "utf8"));
-      if (saved?.version !== 1) return;
-      if (typeof saved.model === "string" && saved.model) this.settings.model = saved.model;
-      if (typeof saved.panelWidth === "number" && Number.isFinite(saved.panelWidth))
-        this.settings.panelWidth = Math.round(Math.min(PANEL_WIDTH.max, Math.max(PANEL_WIDTH.min, saved.panelWidth)));
-    } catch {
-      // Defaults stay: the recommended model and the usual panel width.
+    const source = join(this.data, "settings.json");
+    let text: string;
+    try { text = await readFile(source, "utf8"); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") this.addNotice("No pude leer tus preferencias. Uso las de siempre.");
+      return;
     }
+    let saved: { version?: unknown; model?: unknown; panelWidth?: unknown };
+    try {
+      saved = JSON.parse(text);
+      if (!saved || typeof saved !== "object" || saved.version !== 1) throw new SyntaxError("Invalid settings");
+    } catch {
+      const target = join(this.data, `settings.corrupt-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
+      let preserved = true;
+      try { await this.renameWithRetry(source, target); }
+      catch {
+        try { await this.files.copyFile(source, target); }
+        catch { preserved = false; }
+      }
+      this.addNotice(preserved
+        ? "No pude leer tus preferencias. Guardé el archivo dañado aparte y volví a las de siempre."
+        : "No pude leer tus preferencias. Volví a las de siempre.");
+      return;
+    }
+    if (typeof saved.model === "string" && saved.model && isAllowedModel({ id: saved.model })) this.settings.model = saved.model;
+    if (typeof saved.panelWidth === "number" && Number.isFinite(saved.panelWidth))
+      this.settings.panelWidth = Math.round(Math.min(PANEL_WIDTH.max, Math.max(PANEL_WIDTH.min, saved.panelWidth)));
+  }
+  private addNotice(text: string) {
+    this.notice = this.notice ? `${this.notice} ${text}` : text;
   }
   private saveSettings() {
     const content = JSON.stringify({ version: 1, ...this.settings }, null, 2);
@@ -254,20 +285,37 @@ export class App {
     return this.settingsWrites;
   }
   /**
-   * Asks the engine which models the account has. It runs again when the
-   * engine restarts or the account changes; only the latest answer counts,
-   * and a failure keeps the list it had.
+   * Asks the engine which models the account has. It runs when the engine
+   * starts or restarts, when the account changes and when the menu opens
+   * without a fresh list. Only the latest answer counts. A failure keeps the
+   * list it had, unless that list belongs to another account: then there is
+   * no list, and the next request asks for the chosen model.
    */
   private async refreshModels() {
     const request = ++this.catalogueRequest;
+    this.listing = true;
+    this.publish({ type: "snapshot", state: this.snapshot() });
     try {
       const catalogue = await this.engine.models();
       if (request !== this.catalogueRequest) return;
       this.catalogue = catalogue;
-      this.publish({ type: "snapshot", state: this.snapshot() });
+      this.catalogueAt = Date.now();
+      this.catalogueStale = false;
     } catch {
-      // Without a list the next request still asks for the chosen model.
+      if (request !== this.catalogueRequest) return;
+      if (this.catalogueStale) this.catalogue = undefined;
+    } finally {
+      if (request === this.catalogueRequest) {
+        this.listing = false;
+        this.publish({ type: "snapshot", state: this.snapshot() });
+      }
     }
+  }
+  /** The menu opened: ask again when there is no list, or it is old or from another account. */
+  private refreshModelsIfStale() {
+    if (this.listing) return;
+    if (this.catalogue && !this.catalogueStale && Date.now() - this.catalogueAt < CATALOGUE_MAX_AGE_MS) return;
+    void this.refreshModels();
   }
   async startEngine() {
     this.unsubscribe = this.engine.subscribe((event) => this.event(event));
@@ -296,7 +344,7 @@ export class App {
       notice: this.notice,
       undo: !this.submitting && !this.works.some(w => w.busy) ? this.backups?.target : undefined,
       fileRevision: this.fileRevision,
-      model: resolveModel(this.catalogue, this.settings.model).state,
+      model: { ...resolveModel(this.catalogue, this.settings.model).state, listing: this.listing },
       panelWidth: this.settings.panelWidth,
       works: this.works.map(({ conversationId: _, pendingFiles: __, titlePending: ___, renamedByUser: ____, ...work }) => work),
     };
@@ -478,9 +526,12 @@ export class App {
       return;
     }
     if (event.type === "account") {
+      const previous = this.accountState;
+      // Another account can offer other models: the list on hand is not its own.
+      if (previous && (previous.connected !== event.account.connected || previous.email !== event.account.email))
+        this.catalogueStale = true;
       this.accountState = event.account;
       this.publish({ type: "snapshot", state: this.snapshot() });
-      // Another account can offer other models.
       if (this.available) void this.refreshModels();
       return;
     }
@@ -683,6 +734,10 @@ export class App {
       catch (error) {
         reply({ type: "problem", text: "Cambié el modelo, pero no pude guardarlo para la próxima vez.", detail: String(error) });
       }
+      return;
+    }
+    if (command.type === "refreshModels") {
+      if (this.available) this.refreshModelsIfStale();
       return;
     }
     if (command.type === "panelWidth") {

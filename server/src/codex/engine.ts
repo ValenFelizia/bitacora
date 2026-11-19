@@ -1632,7 +1632,12 @@ export class CodexEngine implements Engine {
   }
   async createWork(model?: ModelSelection) {
     await this.syncSkills();
-    const { thread, activePermissionProfile } = await this.rpc("thread/start", this.settings(model));
+    const { thread, activePermissionProfile } = await this.rpc("thread/start", {
+      ...this.settings(model),
+      // A model the account lacks must fail, not be swapped for another one
+      // the owner may have ruled out. `thread/resume` has no such field.
+      ...(model && { allowProviderModelFallback: false }),
+    });
     this.checkProfile(activePermissionProfile, true);
     return { conversationId: thread.id, title: thread.name || undefined };
   }

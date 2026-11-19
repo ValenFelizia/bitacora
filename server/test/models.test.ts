@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { App } from "../src/app";
@@ -35,10 +35,17 @@ test("the list comes from the catalogue without any Astra model", () => {
   assert.deepEqual(state.choices.map((choice) => choice.id), ["gpt-6.2-sol", "gpt-6.1-terra", "gpt-6.1-sol", "gpt-6-luna"]);
   assert.ok(state.choices.every((choice) => !/astra/i.test(choice.id + choice.name)));
   assert.ok(state.choices.every((choice) => choice.description && !/\bcoding\b|token|modelo de lenguaje/i.test(choice.description)));
-  // Not even when it is what the user had saved.
+  // Not even when it is what the user had saved: the default takes its place.
   const saved = resolveModel(FAKE_CATALOGUE, "gpt-6.2-astra");
   assert.equal(saved.selection.model, "gpt-6.2-sol");
-  assert.match(saved.state.notice ?? "", /GPT-6.2 Astra no está disponible en tu cuenta\. Uso GPT-6.2 Sol\./);
+  assert.equal(saved.state.current.id, "gpt-6.2-sol");
+});
+
+test("a saved Astra is never asked for, even without a catalogue", () => {
+  const { selection, state } = resolveModel(undefined, "gpt-6.2-astra");
+  assert.deepEqual(selection, { model: "gpt-6.2-sol", effort: "high" });
+  assert.equal(state.current.id, "gpt-6.2-sol");
+  assert.equal(resolveModel(undefined, "GPT-6-ASTRA").selection.model, "gpt-6.2-sol");
 });
 
 test("without the default in the account the best one available is used, and said", () => {
@@ -136,9 +143,13 @@ test("the model travels in thread/start, thread/resume and turn/start", async ()
     assert.equal(start.params.model, "gpt-6.2-sol");
     // `thread/start` has no effort field in 0.168.0: it is a config override.
     assert.deepEqual(start.params.config, { model_reasoning_effort: "high" });
+    // Codex may not swap a missing model for another one.
+    assert.equal(start.params.allowProviderModelFallback, false);
     const resume = records.find((m) => m.method === "thread/resume");
     assert.equal(resume.params.model, "gpt-6.2-sol");
     assert.deepEqual(resume.params.config, { model_reasoning_effort: "high" });
+    // `ThreadResumeParams` has no fallback field in 0.168.0.
+    assert.equal("allowProviderModelFallback" in resume.params, false);
     const turn = records.find((m) => m.method === "turn/start");
     assert.equal(turn.params.model, "gpt-6.2-sol");
     assert.equal(turn.params.effort, "high");
@@ -278,6 +289,125 @@ test("a failed list keeps asking for the chosen model, and a new account lists a
     engine.emit({ type: "account", account: { connected: true, email: "otra@example.test" } });
     await until(() => !!app.snapshot().model?.choices.length);
     assert.equal(app.snapshot().model?.current.id, "gpt-6-luna");
+  } finally {
+    await app.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a saved Astra with the list down never reaches thread/start", async () => {
+  await mkdir(".local", { recursive: true });
+  // The folder name travels as `cwd`: it must not contain the word checked below.
+  const dir = await mkdtemp(resolve(".local/models-saved-"));
+  const data = join(dir, "data");
+  const log = join(dir, "protocol.jsonl");
+  await mkdir(data, { recursive: true });
+  await writeFile(join(data, "settings.json"), JSON.stringify({ version: 1, model: "gpt-6.2-astra" }));
+  process.env.BITACORA_FAKE_LOG = log;
+  process.env.BITACORA_FAKE_MODELS = "fail";
+  const engine = new CodexEngine({
+    home: join(dir, "home"),
+    workspace: join(dir, "workspace"),
+    binary: process.execPath,
+    args: fakeAppServerArgs,
+    restartDelayMs: 30,
+    probeProtection: async () => false,
+  });
+  const app = new App(engine, data, () => {});
+  try {
+    await app.start();
+    await until(() => app.snapshot().model?.listing === false);
+    assert.deepEqual(app.snapshot().model?.choices, []);
+    assert.equal(app.snapshot().model?.current.id, "gpt-6.2-sol");
+    const reply = await new Promise<ServerMessage>((done) => {
+      void app.command({ type: "send", text: "race" }, done);
+    });
+    assert.equal(reply.type, "selected");
+    await until(async () => (await readFile(log, "utf8")).includes('"turn/start"'));
+    const records = (await readFile(log, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+    assert.ok(records.some((m) => m.method === "model/list"));
+    const start = records.find((m) => m.method === "thread/start");
+    assert.equal(start.params.model, "gpt-6.2-sol");
+    assert.equal(start.params.allowProviderModelFallback, false);
+    const sent = records.filter((m) => ["thread/start", "thread/resume", "turn/start"].includes(m.method));
+    assert.doesNotMatch(JSON.stringify(sent), /astra/i);
+    // The ruled-out choice is not kept either.
+    await app.command({ type: "panelWidth", width: 400 }, () => {});
+    assert.doesNotMatch(await readFile(join(data, "settings.json"), "utf8"), /astra/i);
+  } finally {
+    delete process.env.BITACORA_FAKE_LOG;
+    delete process.env.BITACORA_FAKE_MODELS;
+    await app.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
+});
+
+test("the menu asks again for a list that failed, and leaves a fresh one alone", async () => {
+  await mkdir(".local", { recursive: true });
+  const dir = await mkdtemp(resolve(".local/models-app-"));
+  const engine = new FakeEngine();
+  engine.catalogue = "fail";
+  const app = new App(engine, dir, () => {});
+  try {
+    await app.start();
+    await until(() => app.snapshot().model?.listing === false);
+    assert.deepEqual(app.snapshot().model?.choices, []);
+    engine.catalogue = FAKE_CATALOGUE;
+    await app.command({ type: "refreshModels" }, () => {});
+    await until(() => !!app.snapshot().model?.choices.length);
+    const lists = engine.modelLists;
+    await app.command({ type: "refreshModels" }, () => {});
+    await delay(20);
+    assert.equal(engine.modelLists, lists);
+  } finally {
+    await app.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("after a change of account a failed list does not offer the old account's models", async () => {
+  const f = await appFixture();
+  try {
+    assert.equal(f.app.snapshot().model?.choices.length, 4);
+    f.engine.catalogue = "fail";
+    f.engine.emit({ type: "account", account: { connected: true, email: "otra@example.test" } });
+    await until(() => f.app.snapshot().model?.listing === false && !f.app.snapshot().model?.choices.length);
+    // The menu opening asks again, even though the old list was recent.
+    f.engine.catalogue = FAKE_CATALOGUE;
+    await f.app.command({ type: "refreshModels" }, f.reply);
+    await until(() => f.app.snapshot().model?.choices.length === 4);
+  } finally {
+    await f.app.close();
+    await rm(f.dir, { recursive: true, force: true });
+  }
+});
+
+test("a failed list for the same account keeps the list it had", async () => {
+  const f = await appFixture();
+  try {
+    f.engine.catalogue = "fail";
+    f.engine.emit({ type: "availability", available: true, safety: f.engine.executionSafety() });
+    await until(() => f.app.snapshot().model?.listing === false);
+    assert.equal(f.app.snapshot().model?.choices.length, 4);
+  } finally {
+    await f.app.close();
+    await rm(f.dir, { recursive: true, force: true });
+  }
+});
+
+test("damaged preferences are set aside and said, not overwritten unseen", async () => {
+  await mkdir(".local", { recursive: true });
+  const dir = await mkdtemp(resolve(".local/models-app-"));
+  await writeFile(join(dir, "settings.json"), "{ esto no es json");
+  const engine = new FakeEngine();
+  const app = new App(engine, dir, () => {});
+  try {
+    await app.start();
+    assert.equal(app.snapshot().notice, "No pude leer tus preferencias. Guardé el archivo dañado aparte y volví a las de siempre.");
+    const kept = (await readdir(dir)).filter((name) => /^settings\.corrupt-.*\.json$/.test(name));
+    assert.equal(kept.length, 1);
+    assert.equal(await readFile(join(dir, kept[0]), "utf8"), "{ esto no es json");
+    assert.equal(app.snapshot().model?.current.id, "gpt-6.2-sol");
   } finally {
     await app.close();
     await rm(dir, { recursive: true, force: true });

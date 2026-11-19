@@ -55,6 +55,8 @@ export type ClientCommand =
   /** «Ahora no»: the agent goes on without an answer. */
   | { type: "skipQuestion"; workId: string; questionId: string }
   | { type: "chooseModel"; model: string }
+  /** The model menu opened: list again if there is no fresh list. */
+  | { type: "refreshModels" }
   | { type: "panelWidth"; width: number };
 export type ServerMessage =
   | { type: "snapshot"; state: Snapshot }

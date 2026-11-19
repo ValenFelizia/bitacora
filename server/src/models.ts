@@ -45,11 +45,13 @@ export type ModelState = {
   choices: ModelChoice[];
   /** Said when the chosen or the recommended model is not in the account. */
   notice?: string;
+  /** True while the app is asking the engine for the catalogue. */
+  listing?: boolean;
 };
 
 /** The owner ruled out every Astra model (issue #57). */
-export function isAllowedModel(model: { id: string; displayName: string }): boolean {
-  return !/astra/i.test(model.id) && !/astra/i.test(model.displayName);
+export function isAllowedModel(model: { id: string; displayName?: string }): boolean {
+  return !/astra/i.test(model.id) && !/astra/i.test(model.displayName ?? "");
 }
 
 /** "GPT-6.2-Sol" or "gpt-6.2-sol" → "GPT-6.2 Sol". */
@@ -102,13 +104,14 @@ function choice(id: string, displayName?: string): ModelChoice {
  * user's choice, if any; `catalogue` is undefined while the engine has not
  * answered. A choice that is not in the account falls back to the default,
  * and a default that is not there either falls back to the engine's own
- * default or the first one listed, saying so.
+ * default or the first one listed, saying so. A ruled-out choice is never
+ * used, not even before the catalogue arrives.
  */
 export function resolveModel(
   catalogue: EngineModel[] | undefined,
   saved?: string,
 ): { selection: ModelSelection; state: ModelState } {
-  const wanted = saved || DEFAULT_MODEL;
+  const wanted = saved && isAllowedModel({ id: saved }) ? saved : DEFAULT_MODEL;
   const allowed = (catalogue ?? []).filter(isAllowedModel);
   const choices = allowed.map((model) => choice(model.id, model.displayName));
   const pick = (model: EngineModel | undefined, notice?: string) => {

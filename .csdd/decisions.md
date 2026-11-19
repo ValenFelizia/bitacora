@@ -399,7 +399,16 @@ accepted direction from implementation alone.
     si ese es Astra o no hay ninguno marcado, el primero de la lista. La pantalla
     lo avisa en una línea debajo del cuadro de texto. Mientras la lista no llegó
     (Codex arrancando o sin respuesta), el pedido sale igual con el modelo
-    elegido.
+    elegido. Abrir el menú vuelve a pedir la lista si no hay, si tiene más de
+    10 minutos o si es de otra cuenta, y el menú ofrece «Volver a intentar».
+    Si cambia la cuenta y la lista nueva falla, no se ofrecen los modelos de la
+    cuenta anterior.
+  - **Astra no sale nunca:** un Astra guardado en `settings.json` se descarta al
+    leerlo y `resolveModel` no lo usa aunque falte la lista; en su lugar va el
+    predeterminado. `thread/start` manda `allowProviderModelFallback: false`
+    para que Codex no cambie un modelo que falta por otro. En 0.168.0
+    `thread/resume` no tiene ese campo; ahí alcanza con que Bitácora mande
+    siempre un modelo permitido.
   - **Una elección para toda la app, no por trabajo.** Se guarda en
     `settings.json`, en la carpeta de datos de Bitácora, y vale desde el próximo
     pedido en todos los trabajos, también en los que se retoman.
@@ -408,10 +417,15 @@ accepted direction from implementation alone.
     `turn/start` lleva `model` y `effort`. Verificado sin inferencia con un
     `thread/start` efímero: devuelve `model: "gpt-6.2-sol"` y
     `reasoningEffort: "high"`. Si un modelo no ofrece `high`, usa el suyo.
-  - **El título automático no depende de la elección del esfuerzo:**
-    `thread/sample` corre con `effort: "low"`. En 0.168.0 no tiene parámetro de
-    modelo, porque reusa la caché del trabajo, que es del modelo del trabajo.
-    Por eso el título usa el mismo modelo, pero con el esfuerzo más bajo.
+  - **Título automático (decidido por Valentín, 18/11):** `thread/sample` corre
+    con el modelo del trabajo y `effort: "low"`. En 0.168.0 no tiene parámetro
+    de modelo, porque reusa la caché del trabajo, que es del modelo del trabajo.
+    Aprovechar esa caché es lo que lo hace barato: en la prueba real costó 11
+    tokens de salida. No se usa un pedido aparte con otro modelo. **Sin
+    verificar:** si el binario aplica el `effort: "low"` del sample sobre un
+    hilo que trabaja en alto (el esquema dice que solo se aplica cuando el
+    proveedor y el modelo lo permiten sin perder la caché). Valentín lo prueba
+    con un pedido real, porque gasta cupo.
 - Rationale: una sola elección es lo más fácil de entender para alguien que no
   es técnica. Se ve siempre en el mismo lugar, junto al cuadro de texto como en
   Codex, y no cambia sola al pasar de un trabajo a otro. Elegir por trabajo
@@ -422,6 +436,6 @@ accepted direction from implementation alone.
   a correr `scripts/verify-models.ts` y revisar los ids y las líneas de
   `server/src/models.ts`. `settings.json` también guarda el ancho del panel de
   entregables: el instalador sirve la pantalla en un puerto distinto cada vez y
-  el navegador no lo recordaría. Si se quiere que el título use otro modelo,
-  hace falta un pedido aparte en lugar de `thread/sample`: un hilo efímero con
-  un modelo barato, sin la caché del trabajo.
+  el navegador no lo recordaría. Si `settings.json` está dañado, se aparta como
+  `settings.corrupt-<fecha>.json`, igual que `works.json`, y la app vuelve a las
+  preferencias de siempre con un aviso de una línea.

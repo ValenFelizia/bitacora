@@ -134,11 +134,14 @@ function CopyMessageButton({ text }: { text: string }) {
         className={iconButton}
         title="Copiar mensaje"
         aria-label="Copiar mensaje"
-        onClick={() => {
-          navigator.clipboard.writeText(text).then(
-            () => setStatus("copied"),
-            () => setStatus("failed"),
-          );
+        onClick={async () => {
+          // `navigator.clipboard` is missing outside a secure page: that is a failure too.
+          try {
+            await navigator.clipboard.writeText(text);
+            setStatus("copied");
+          } catch {
+            setStatus("failed");
+          }
         }}
       >
         {status === "copied" ? (
@@ -428,6 +431,15 @@ function App() {
     setPanelWidth(width);
     clearTimeout(panelSave.current);
     panelSave.current = setTimeout(() => sendQuietly({ type: "panelWidth", width }), 300);
+  }
+
+  /** Release, cancel or a capture taken away (the window lost focus): the drag ends where it is. */
+  function endPanelDrag() {
+    const drag = panelDrag.current;
+    if (!drag) return;
+    panelDrag.current = undefined;
+    setResizingPanel(false);
+    if (drag.width !== drag.startWidth) resizePanel(drag.width);
   }
 
   function startConnect() {
@@ -1715,10 +1727,10 @@ function App() {
                 }
                 onChange={(e) => setText(e.target.value)}
                 onKeyDown={(e) => {
-                  if (!sendsOnEnter({ ...e, isComposing: e.nativeEvent.isComposing })) return;
-                  // Enter never adds a line here; it sends only when the button could.
+                  // When the button could not send, Enter keeps its usual new line.
+                  if (sendBlocked || !sendsOnEnter({ ...e, isComposing: e.nativeEvent.isComposing })) return;
                   e.preventDefault();
-                  if (!sendBlocked) submitRequest();
+                  submitRequest();
                 }}
                 className="w-full resize-none min-h-[44px] max-h-48 border-0 bg-transparent px-1 py-2 text-[15px] leading-[1.45] text-ink placeholder:text-muted focus:outline-none disabled:cursor-default disabled:opacity-70"
               />
@@ -1739,6 +1751,7 @@ function App() {
                     model={state.model}
                     disabled={!online}
                     onChoose={(model) => sendQuietly({ type: "chooseModel", model })}
+                    onRefresh={() => sendQuietly({ type: "refreshModels" })}
                   />
                 )}
                 <span className="flex-1" />
@@ -1818,20 +1831,9 @@ function App() {
               drag.width = clampPanel(drag.startWidth + drag.startX - e.clientX, viewport);
               setPanelWidth(drag.width);
             }}
-            onPointerUp={(e) => {
-              const drag = panelDrag.current;
-              if (!drag) return;
-              panelDrag.current = undefined;
-              setResizingPanel(false);
-              e.currentTarget.releasePointerCapture(e.pointerId);
-              if (drag.width !== drag.startWidth) resizePanel(drag.width);
-            }}
-            onPointerCancel={() => {
-              const drag = panelDrag.current;
-              panelDrag.current = undefined;
-              setResizingPanel(false);
-              if (drag && drag.width !== drag.startWidth) resizePanel(drag.width);
-            }}
+            onPointerUp={endPanelDrag}
+            onPointerCancel={endPanelDrag}
+            onLostPointerCapture={endPanelDrag}
             onKeyDown={(e) => {
               const next = panelKey(e.key, shownPanel, viewport, e.shiftKey);
               if (next === undefined) return;

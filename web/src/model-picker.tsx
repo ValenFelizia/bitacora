@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown } from "lucide-react";
+import { Check, ChevronDown, RotateCcw } from "lucide-react";
 import type { ModelState } from "../../server/src/contracts";
 
 const focusRing =
@@ -13,15 +13,18 @@ export function ModelPicker({
   model,
   disabled,
   onChoose,
+  onRefresh,
 }: {
   model: ModelState;
   disabled: boolean;
   onChoose: (id: string) => void;
+  /** Asks for the account's list again; the server skips it when the one on hand is fresh. */
+  onRefresh: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLButtonElement>(null);
   const menu = useRef<HTMLDivElement>(null);
-  const items = () => [...(menu.current?.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]') ?? [])];
+  const items = () => [...(menu.current?.querySelectorAll<HTMLButtonElement>('[role^="menuitem"]') ?? [])];
 
   function close(restoreFocus: boolean) {
     setOpen(false);
@@ -39,6 +42,13 @@ export function ModelPicker({
     document.addEventListener("pointerdown", outside);
     return () => document.removeEventListener("pointerdown", outside);
   }, [open]);
+
+  useEffect(() => {
+    // The list arrived with the menu open: «Volver a intentar» is gone, so
+    // the focus goes to the model in use instead of falling to the page.
+    if (!open || menu.current?.contains(document.activeElement)) return;
+    items().find((item) => item.getAttribute("aria-checked") === "true")?.focus();
+  }, [model.choices.length]);
 
   useEffect(() => {
     if (disabled) setOpen(false);
@@ -74,7 +84,10 @@ export function ModelPicker({
         aria-expanded={open}
         aria-label={`Modelo: ${model.current.name}, ${model.effortText}. Cambiar modelo`}
         title="Cambiar el modelo"
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => {
+          if (!open) onRefresh();
+          setOpen((value) => !value);
+        }}
         className={`inline-flex max-w-full items-center gap-1 h-[36px] max-[959px]:h-[40px] px-2 rounded-[6px] text-[13px] text-ink hover:bg-soft cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors duration-150 ${focusRing}`}
       >
         <span className="truncate font-bold">{model.current.name}</span>
@@ -116,11 +129,31 @@ export function ModelPicker({
               </button>
             );
           })}
-          <p className="mt-1 border-t border-line px-3 pt-2 pb-1.5 text-[13px] text-muted leading-snug">
-            {model.choices.length
-              ? `Trabaja con ${model.effortText}: cuanto más alto, más piensa antes de responder. El cambio vale para todos tus trabajos desde el próximo pedido.`
-              : "Todavía no tengo la lista de modelos de tu cuenta. Probá de nuevo en un momento."}
-          </p>
+          {model.choices.length ? (
+            <p className="mt-1 border-t border-line px-3 pt-2 pb-1.5 text-[13px] text-muted leading-snug">
+              {`Trabaja con ${model.effortText}: cuanto más alto, más piensa antes de responder. El cambio vale para todos tus trabajos desde el próximo pedido.`}
+            </p>
+          ) : (
+            <div className="mt-1 border-t border-line px-3 pt-2 pb-2 flex flex-col items-start gap-2">
+              <p role="status" className="text-[13px] text-muted leading-snug">
+                {model.listing
+                  ? "Buscando los modelos de tu cuenta…"
+                  : "No pude traer la lista de modelos de tu cuenta. Mientras tanto trabajo con este."}
+              </p>
+              <button
+                type="button"
+                role="menuitem"
+                aria-disabled={model.listing}
+                onClick={() => {
+                  if (!model.listing) onRefresh();
+                }}
+                className={`inline-flex items-center justify-center gap-2 px-3 py-1.5 rounded-[6px] border border-ink bg-surface text-ink font-bold text-[13px] hover:bg-soft cursor-pointer aria-disabled:opacity-40 aria-disabled:cursor-default transition-colors duration-150 ${focusRing}`}
+              >
+                <RotateCcw size={16} strokeWidth={1.75} aria-hidden="true" />
+                Volver a intentar
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

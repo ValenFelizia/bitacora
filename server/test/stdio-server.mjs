@@ -383,7 +383,11 @@ async function handle(line) {
         break;
       case "model/list": {
         // The catalogue's shape in 0.168.0, two pages long, with one hidden
-        // model the client must leave out.
+        // model the client must leave out. `BITACORA_FAKE_MODELS=fail` refuses it.
+        if (process.env.BITACORA_FAKE_MODELS === "fail") {
+          send({ id: m.id, error: { code: -32603, message: "model list failed" } });
+          break;
+        }
         const efforts = ["low", "medium", "high"].map((reasoningEffort) => ({ reasoningEffort, description: "" }));
         const entry = (id, displayName, extra = {}) => ({
           id, model: id, displayName, description: "", hidden: false, isDefault: false,
