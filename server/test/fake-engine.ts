@@ -1,5 +1,35 @@
 import type { Engine, EngineEvent, Account, ExecutionSafety, SuggestedTitle } from "../src/engine";
+import type { EngineModel, ModelSelection } from "../src/models";
+
+const model = (id: string, displayName: string, isDefault = false): EngineModel => ({
+  id,
+  displayName,
+  efforts: ["low", "medium", "high", "xhigh", "max"],
+  defaultEffort: "low",
+  isDefault,
+});
+/** The visible part of the catalogue 0.168.0 returned for a Plus account on 18/11. */
+export const FAKE_CATALOGUE: EngineModel[] = [
+  model("gpt-6.2-sol", "GPT-6.2-Sol", true),
+  model("gpt-6.2-astra", "GPT-6.2-Astra"),
+  model("gpt-6.1-terra", "GPT-6.1 Terra"),
+  model("gpt-6.1-sol", "GPT-6.1-Sol"),
+  model("gpt-6-astra", "GPT-6-Astra"),
+  model("gpt-6-luna", "GPT-6-Luna"),
+];
+
 export class FakeEngine implements Engine {
+  /** What `models()` answers; `"fail"` makes it reject. */
+  catalogue: EngineModel[] | "fail" = FAKE_CATALOGUE;
+  /** The model each thread start, resume and turn asked for, in order. */
+  modelRequests: { call: "create" | "resume" | "send"; model?: ModelSelection }[] = [];
+  /** How many times the app asked for the list. */
+  modelLists = 0;
+  async models() {
+    this.modelLists++;
+    if (this.catalogue === "fail") throw new Error("model list failed");
+    return this.catalogue;
+  }
   listeners = new Set<(event: EngineEvent) => void>();
   connected = true;
   resumed: string[] = [];
@@ -32,14 +62,18 @@ export class FakeEngine implements Engine {
     this.emit({ type: "account", account: await this.account() });
     return { url: "https://example.test/login" };
   }
+  /** The account's mail; another value is another account. */
+  email?: string;
   async account(): Promise<Account> {
-    return { connected: this.connected };
+    return this.email ? { connected: this.connected, email: this.email } : { connected: this.connected };
   }
-  async createWork() {
+  async createWork(model?: ModelSelection) {
+    this.modelRequests.push({ call: "create", model });
     return { conversationId: `conversation-${++this.count}` };
   }
-  async resumeWork(id: string) {
+  async resumeWork(id: string, model?: ModelSelection) {
     if (this.resumeFails) throw new Error("resume failed");
+    this.modelRequests.push({ call: "resume", model });
     this.resumed.push(id);
   }
   async suggestTitle(id: string): Promise<SuggestedTitle | undefined> {
@@ -61,7 +95,8 @@ export class FakeEngine implements Engine {
     if (this.renameFails) throw new Error("rename refused");
     this.renamed.push({ conversationId: id, title });
   }
-  async send(id: string, text: string, _files?: import("../src/engine").EngineFile[]) {
+  async send(id: string, text: string, _files?: import("../src/engine").EngineFile[], context?: { filesReverted?: boolean; model?: ModelSelection }) {
+    this.modelRequests.push({ call: "send", model: context?.model });
     this.calls.push(`send:${id}`);
     this.sent.push(text);
     this.emit({

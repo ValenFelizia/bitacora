@@ -6,6 +6,7 @@ import {
   clearSentText,
   isCurrentDraft,
   keepSelectedWork,
+  sendsOnEnter,
 } from "../../web/src/draft";
 
 const photo = { name: "foto.png", data: "AAAA" };
@@ -37,6 +38,19 @@ test("a late reply does not switch the work the user opened", () => {
 test("files read for a discarded draft are not added to the new one", () => {
   assert.deepEqual(appendReadFiles([], [photo], 1, 1), [photo]);
   assert.deepEqual(appendReadFiles([], [photo], 1, 2), []);
+});
+
+test("Enter sends and Shift+Enter keeps a new paragraph", () => {
+  const key = { key: "Enter", shiftKey: false, isComposing: false, keyCode: 13 };
+  assert.equal(sendsOnEnter(key), true);
+  assert.equal(sendsOnEnter({ ...key, shiftKey: true }), false);
+  assert.equal(sendsOnEnter({ ...key, key: "a", keyCode: 65 }), false);
+});
+
+test("Enter that confirms a composition stays in the text", () => {
+  const key = { key: "Enter", shiftKey: false, isComposing: false, keyCode: 13 };
+  assert.equal(sendsOnEnter({ ...key, isComposing: true }), false);
+  assert.equal(sendsOnEnter({ ...key, keyCode: 229 }), false);
 });
 
 test("a late reply does not reopen a draft the user discarded", () => {

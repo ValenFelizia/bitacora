@@ -11,9 +11,16 @@ import { problemText, EngineFailure, activityText, questionEndText } from "./eng
 import { fallbackTitle, MAX_TITLE } from "./titles";
 import { agentAnswer, answerRecord } from "./questions";
 import type { FileRef, Message, Work, Snapshot, ClientCommand, ServerMessage, PendingQuestion } from "./contracts";
+import { PANEL_WIDTH } from "./contracts";
+import { isAllowedModel, resolveModel, type EngineModel } from "./models";
+
+/** Choices kept for the whole app in `settings.json`, not per work (DEC-014). */
+type Settings = { model?: string; panelWidth?: number };
 
 type SavedWork = Work & { conversationId: string; titlePending?: boolean; renamedByUser?: boolean; pendingFiles?: { messageId: string; before?: Record<string, string> } };
 const isText = (value: unknown) => typeof value === "string";
+/** A model list older than this is asked again when the menu opens. */
+const CATALOGUE_MAX_AGE_MS = 10 * 60_000;
 /** How long close() lets a title request already in flight finish before stopping the engine. */
 const TITLE_CLOSE_WAIT_MS = 400;
 /**
@@ -103,6 +110,15 @@ export class App {
    * one at a time, in order, like its own client does.
    */
   private queuedQuestions = new Map<string, PendingQuestion[]>();
+  private settings: Settings = {};
+  private settingsWrites: Promise<void> = Promise.resolve();
+  /** The account's models; undefined until the engine answers. */
+  private catalogue?: EngineModel[];
+  private catalogueAt = 0;
+  /** The list on hand was asked for another account. */
+  private catalogueStale = false;
+  private catalogueRequest = 0;
+  private listing = false;
   constructor(
     private engine: Engine,
     private data: string,
@@ -219,6 +235,103 @@ export class App {
       if (this.backups?.restoring) this.notice = "Quedó un Deshacer pendiente. Podés reintentarlo o dejar la carpeta como está.";
     }
     for (const work of this.works) if (work.pendingFiles) { await this.collectResults(work); this.dirty = true; }
+    await this.loadSettings();
+  }
+  /**
+   * A missing file only means nothing was chosen yet. A damaged one is set
+   * aside like `works.json` and the defaults are used, saying so, so the next
+   * save does not overwrite it unseen. A ruled-out model is dropped.
+   */
+  private async loadSettings() {
+    const source = join(this.data, "settings.json");
+    let text: string;
+    try { text = await readFile(source, "utf8"); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") this.addNotice("No pude leer tus preferencias. Uso las de siempre.");
+      return;
+    }
+    let saved: { version?: unknown; model?: unknown; panelWidth?: unknown };
+    try {
+      saved = JSON.parse(text);
+      if (!saved || typeof saved !== "object" || saved.version !== 1) throw new SyntaxError("Invalid settings");
+    } catch {
+      const target = join(this.data, `settings.corrupt-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
+      let preserved = true;
+      try { await this.renameWithRetry(source, target); }
+      catch {
+        try { await this.files.copyFile(source, target); }
+        catch { preserved = false; }
+      }
+      this.addNotice(preserved
+        ? "No pude leer tus preferencias. Guardé el archivo dañado aparte y volví a las de siempre."
+        : "No pude leer tus preferencias. Volví a las de siempre.");
+      return;
+    }
+    if (typeof saved.model === "string" && saved.model && isAllowedModel({ id: saved.model })) this.settings.model = saved.model;
+    if (typeof saved.panelWidth === "number" && Number.isFinite(saved.panelWidth))
+      this.settings.panelWidth = Math.round(Math.min(PANEL_WIDTH.max, Math.max(PANEL_WIDTH.min, saved.panelWidth)));
+  }
+  private addNotice(text: string) {
+    this.notice = this.notice ? `${this.notice} ${text}` : text;
+  }
+  private saveSettings() {
+    const content = JSON.stringify({ version: 1, ...this.settings }, null, 2);
+    this.settingsWrites = this.settingsWrites
+      .catch(() => {})
+      .then(async () => {
+        await writeFile(join(this.data, "settings.json.tmp"), content, "utf8");
+        await this.renameWithRetry(join(this.data, "settings.json.tmp"), join(this.data, "settings.json"));
+      });
+    return this.settingsWrites;
+  }
+  /**
+   * Asks the engine which models the account has. It runs when the engine
+   * starts or restarts, when the account changes and when the menu opens
+   * without a fresh list. Only the latest answer counts. A failure keeps the
+   * list it had, unless that list belongs to another account: then there is
+   * no list, and the next request asks for the chosen model.
+   */
+  private async refreshModels() {
+    const request = ++this.catalogueRequest;
+    this.listing = true;
+    this.publish({ type: "snapshot", state: this.snapshot() });
+    try {
+      const catalogue = await this.engine.models();
+      if (request !== this.catalogueRequest) return;
+      this.catalogue = catalogue;
+      this.catalogueAt = Date.now();
+      this.catalogueStale = false;
+    } catch {
+      if (request !== this.catalogueRequest) return;
+      if (this.catalogueStale) this.catalogue = undefined;
+    } finally {
+      if (request === this.catalogueRequest) {
+        this.listing = false;
+        this.publish({ type: "snapshot", state: this.snapshot() });
+      }
+    }
+  }
+  /**
+   * Takes the account the engine reports. When it is another one (other mail,
+   * or connected now and not before) the list on hand is marked as the old
+   * account's before it is replaced, whoever read it first: an account event
+   * or a request.
+   */
+  private noteAccount(account: Account) {
+    const previous = this.accountState;
+    if (previous && (previous.connected !== account.connected || previous.email !== account.email))
+      this.catalogueStale = true;
+    this.accountState = account;
+  }
+  /** The list to choose from: none while the one on hand belongs to another account. */
+  private listOnHand() {
+    return this.catalogueStale ? undefined : this.catalogue;
+  }
+  /** The menu opened: ask again when there is no list, or it is old or from another account. */
+  private refreshModelsIfStale() {
+    if (this.listing) return;
+    if (this.catalogue && !this.catalogueStale && Date.now() - this.catalogueAt < CATALOGUE_MAX_AGE_MS) return;
+    void this.refreshModels();
   }
   async startEngine() {
     this.unsubscribe = this.engine.subscribe((event) => this.event(event));
@@ -228,6 +341,7 @@ export class App {
     this.available = true;
     this.starting = false;
     this.publish({ type: "snapshot", state: this.snapshot() });
+    void this.refreshModels();
     // Codex reports the account during start. Avoid a second read racing the
     // automatic MXC setup, which can replace the app-server.
     this.accountState ??= await this.engine.account();
@@ -246,6 +360,8 @@ export class App {
       notice: this.notice,
       undo: !this.submitting && !this.works.some(w => w.busy) ? this.backups?.target : undefined,
       fileRevision: this.fileRevision,
+      model: { ...resolveModel(this.listOnHand(), this.settings.model).state, listing: this.listing },
+      panelWidth: this.settings.panelWidth,
       works: this.works.map(({ conversationId: _, pendingFiles: __, titlePending: ___, renamedByUser: ____, ...work }) => work),
     };
   }
@@ -422,11 +538,13 @@ export class App {
       }
       if (!event.available) for (const work of this.works) this.finishFiles(work);
       this.changed();
+      if (event.available) void this.refreshModels();
       return;
     }
     if (event.type === "account") {
-      this.accountState = event.account;
+      this.noteAccount(event.account);
       this.publish({ type: "snapshot", state: this.snapshot() });
+      if (this.available) void this.refreshModels();
       return;
     }
     const work =
@@ -616,6 +734,32 @@ export class App {
       }
       return;
     }
+    if (command.type === "chooseModel") {
+      const choices = resolveModel(this.listOnHand(), this.settings.model).state.choices;
+      if (!choices.some((choice) => choice.id === command.model)) {
+        reply({ type: "problem", text: "Ese modelo no está disponible en tu cuenta. Elegí otro de la lista." });
+        return;
+      }
+      this.settings.model = command.model;
+      this.publish({ type: "snapshot", state: this.snapshot() });
+      try { await this.saveSettings(); }
+      catch (error) {
+        reply({ type: "problem", text: "Cambié el modelo, pero no pude guardarlo para la próxima vez.", detail: String(error) });
+      }
+      return;
+    }
+    if (command.type === "refreshModels") {
+      if (this.available) this.refreshModelsIfStale();
+      return;
+    }
+    if (command.type === "panelWidth") {
+      if (typeof command.width !== "number" || !Number.isFinite(command.width)) throw new Error("Invalid width");
+      this.settings.panelWidth = Math.round(Math.min(PANEL_WIDTH.max, Math.max(PANEL_WIDTH.min, command.width)));
+      // Not published: the window that dragged it already shows it, and the
+      // next snapshot carries it to any other window.
+      await this.saveSettings().catch(() => {});
+      return;
+    }
     if (command.type === "interrupt") {
       const work = this.works.find((w) => w.id === command.workId);
       if (!work) throw new Error("Unknown work");
@@ -713,9 +857,16 @@ export class App {
     // queued are dropped and the older ones stay for the work that is sent.
     const queuedDetails = [...this.pendingDetails];
     try {
-      this.accountState = await this.engine.account();
+      const account = await this.engine.account();
+      const wasCurrent = !this.catalogueStale;
+      this.noteAccount(account);
+      // Another account since the last list: that list is not this one's.
+      if (wasCurrent && this.catalogueStale && this.available) void this.refreshModels();
+      // Chosen after the account read, so another account's list is not used,
+      // and kept for the whole request even if the user changes it meanwhile.
+      const model = resolveModel(this.listOnHand(), this.settings.model).selection;
       this.publish({ type: "snapshot", state: this.snapshot() });
-      if (!this.accountState.connected) {
+      if (!account.connected) {
         reply({ type: "problem", text: problemText("disconnected") });
         return;
       }
@@ -723,11 +874,11 @@ export class App {
         work = this.works.find((w) => w.id === command.workId);
         if (!work) throw new Error("Unknown work");
         if (!this.resumed.has(work.id)) {
-          await this.engine.resumeWork(work.conversationId);
+          await this.engine.resumeWork(work.conversationId, model);
           this.resumed.add(work.id);
         }
       } else {
-        const created = await this.engine.createWork();
+        const created = await this.engine.createWork(model);
         const now = new Date().toISOString();
         work = {
           id: randomUUID(),
@@ -788,7 +939,7 @@ export class App {
       await rememberUserUrls(this.data, command.text);
       const engineFiles = await Promise.all((attachments || []).map(async f => ({ path: await this.workspace!.safePath(f.path), mime: f.mime })));
       this.unsent.delete(work.id);
-      const sending = this.engine.send(work.conversationId, command.text.trim(), engineFiles, { filesReverted: this.backups?.hasNotice(work.id) });
+      const sending = this.engine.send(work.conversationId, command.text.trim(), engineFiles, { filesReverted: this.backups?.hasNotice(work.id), model });
       if (this.pauseRequested.delete(work.id)) await this.engine.interrupt(work.conversationId);
       await sending;
       if (this.backups?.hasNotice(work.id)) {
@@ -871,6 +1022,7 @@ export class App {
     // retry it before closing.
     await this.writes.catch(() => {});
     if (this.dirty) this.changed();
+    await this.settingsWrites.catch(() => {});
     await this.writes;
   }
 }

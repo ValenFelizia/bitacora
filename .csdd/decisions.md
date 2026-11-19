@@ -375,3 +375,71 @@ accepted direction from implementation alone.
   - La cuenta se muestra con el mail. Si no hay cuenta, una invitación con una sola acción. Sin indicadores que laten.
 - Rationale: la personalidad sale del nombre (un cuaderno de a bordo es un registro con hora), no de adornos. Atkinson Hyperlegible está hecha para leerse fácil, y eso le sirve a una usuaria no técnica. El naranja se reserva para lo que está pasando ahora, para que la atención vaya ahí.
 - Consequences: todo cambio visual en `web/` sigue `design.md`. Si hace falta algo que no está, se agrega ahí. Aplicarlo a la interfaz es parte de #25. Las ideas de producto de la investigación (generar en segundo plano, editar señalando, historial, elegir qué placas mandar) quedan para después del MVP.
+
+## DEC-014 — Modelo a la vista, elegido para toda la app
+
+- Status: accepted (2026-11-18; predeterminado y exclusión decididos por Valentín, issue #57)
+- Context: Bitácora no elegía modelo. `thread/start` y `turn/start` salían sin
+  `model` y la pantalla no lo mostraba, así que trabajaba el que Codex trajera
+  por defecto: un `CODEX_HOME` sin cuenta arranca con `gpt-6.1-sol` y la cuenta
+  Plus de Valentín con `gpt-6.2-sol` en razonamiento `low`. Valentín: «esconder el
+  selector de modelos es una muy mala decisión. Onboarding, acompañamiento y UI
+  sencilla no significa perder transparencia».
+- Decision:
+  - **Predeterminado:** `gpt-6.2-sol` con razonamiento `high`. Verificado el
+    18/11 contra el binario 0.168.0 con `model/list`, que no gasta cupo
+    (`docs/verification/issue57/model-list.json`, `scripts/verify-models.ts`).
+  - **Lista:** la de `model/list` sin los modelos ocultos y sin ninguno que diga
+    «Astra» en el id o el nombre. Cada uno lleva un nombre legible
+    («GPT-6.2 Sol») y una línea en castellano sobre para qué conviene
+    (`server/src/models.ts`); un modelo nuevo sin línea propia toma la de su
+    familia (Sol, Terra o Luna).
+  - **Si falta:** si el modelo elegido o el predeterminado no está en la cuenta,
+    se usa el predeterminado; si tampoco está, el que Codex marca como suyo, y
+    si ese es Astra o no hay ninguno marcado, el primero de la lista. La pantalla
+    lo avisa en una línea debajo del cuadro de texto. Mientras la lista no llegó
+    (Codex arrancando o sin respuesta), el pedido sale igual con el modelo
+    elegido. Abrir el menú vuelve a pedir la lista si no hay, si tiene más de
+    10 minutos o si es de otra cuenta, y el menú ofrece «Volver a intentar».
+    Si cambia la cuenta (lo note un aviso de Codex o la lectura de la cuenta que
+    hace cada pedido), la lista que había se marca como de la cuenta anterior:
+    ni el menú ni ese pedido la usan, y si la nueva falla no vuelve. Una lista
+    que llegó vacía, o solo con Astra, no es una lista que falta: se dice que la
+    cuenta no tiene modelos disponibles para Bitácora y no se ofrece el
+    reintento.
+  - **Astra no sale nunca:** un Astra guardado en `settings.json` se descarta al
+    leerlo y `resolveModel` no lo usa aunque falte la lista; en su lugar va el
+    predeterminado. `thread/start` manda `allowProviderModelFallback: false`
+    para que Codex no cambie un modelo que falta por otro. En 0.168.0
+    `thread/resume` no tiene ese campo; ahí alcanza con que Bitácora mande
+    siempre un modelo permitido.
+  - **Una elección para toda la app, no por trabajo.** Se guarda en
+    `settings.json`, en la carpeta de datos de Bitácora, y vale desde el próximo
+    pedido en todos los trabajos, también en los que se retoman.
+  - **Cómo viaja:** `thread/start` y `thread/resume` llevan `model` y, como no
+    tienen campo de esfuerzo, `config: { model_reasoning_effort }`; cada
+    `turn/start` lleva `model` y `effort`. Verificado sin inferencia con un
+    `thread/start` efímero: devuelve `model: "gpt-6.2-sol"` y
+    `reasoningEffort: "high"`. Si un modelo no ofrece `high`, usa el suyo.
+  - **Título automático (decidido por Valentín, 18/11):** `thread/sample` corre
+    con el modelo del trabajo y `effort: "low"`. En 0.168.0 no tiene parámetro
+    de modelo, porque reusa la caché del trabajo, que es del modelo del trabajo.
+    Aprovechar esa caché es lo que lo hace barato: en la prueba real costó 11
+    tokens de salida. No se usa un pedido aparte con otro modelo. **Sin
+    verificar:** si el binario aplica el `effort: "low"` del sample sobre un
+    hilo que trabaja en alto (el esquema dice que solo se aplica cuando el
+    proveedor y el modelo lo permiten sin perder la caché). Valentín lo prueba
+    con un pedido real, porque gasta cupo.
+- Rationale: una sola elección es lo más fácil de entender para alguien que no
+  es técnica. Se ve siempre en el mismo lugar, junto al cuadro de texto como en
+  Codex, y no cambia sola al pasar de un trabajo a otro. Elegir por trabajo
+  obligaría a mirar el selector cada vez que se abre otro trabajo, sin una
+  ganancia clara para una agencia. El predeterminado viene elegido para que no
+  haga falta saber cuál conviene, pero queda a la vista.
+- Consequences: actualizar Codex o cambiar el catálogo de la cuenta exige volver
+  a correr `scripts/verify-models.ts` y revisar los ids y las líneas de
+  `server/src/models.ts`. `settings.json` también guarda el ancho del panel de
+  entregables: el instalador sirve la pantalla en un puerto distinto cada vez y
+  el navegador no lo recordaría. Si `settings.json` está dañado, se aparta como
+  `settings.corrupt-<fecha>.json`, igual que `works.json`, y la app vuelve a las
+  preferencias de siempre con un aviso de una línea.

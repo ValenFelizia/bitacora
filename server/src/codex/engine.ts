@@ -38,6 +38,8 @@ import type { PermissionProfileListResponse } from "./generated/v2/PermissionPro
 import type { SkillsConfigWriteResponse } from "./generated/v2/SkillsConfigWriteResponse";
 import type { SkillsListResponse } from "./generated/v2/SkillsListResponse";
 import type { WindowsSandboxReadinessResponse } from "./generated/v2/WindowsSandboxReadinessResponse";
+import type { ModelListResponse } from "./generated/v2/ModelListResponse";
+import { TITLE_EFFORT, type EngineModel, type ModelSelection } from "../models";
 
 /**
  * Named Codex permissions profile that keeps the agent's commands inside the
@@ -114,6 +116,7 @@ type Responses = {
   "account/read": GetAccountResponse;
   "account/login/start": LoginAccountResponse;
   "account/login/cancel": unknown;
+  "model/list": ModelListResponse;
   "thread/start": ThreadStartResponse;
   "thread/resume": ThreadResumeResponse;
   "thread/sample": ThreadSampleResponse;
@@ -1235,7 +1238,31 @@ export class CodexEngine implements Engine {
     this.loginId = login.loginId;
     return { url: login.authUrl };
   }
-  private settings() {
+  /**
+   * The catalogue `model/list` returns for the account, without the models it
+   * hides from pickers. It reads the catalogue only: no thread, no quota.
+   */
+  async models(): Promise<EngineModel[]> {
+    if (!this.available) throw new Error("The engine is not available");
+    const models: EngineModel[] = [];
+    let cursor: string | null = null;
+    for (let page = 0; page < 10; page++) {
+      const list: ModelListResponse = await this.rpc("model/list", { cursor, includeHidden: false });
+      for (const model of list.data)
+        if (!model.hidden)
+          models.push({
+            id: model.id,
+            displayName: model.displayName,
+            efforts: model.supportedReasoningEfforts.map((option) => option.reasoningEffort),
+            defaultEffort: model.defaultReasoningEffort,
+            isDefault: model.isDefault,
+          });
+      cursor = list.nextCursor;
+      if (!cursor) break;
+    }
+    return models;
+  }
+  private settings(model?: ModelSelection) {
     return {
       cwd: this.options.workspace,
       approvalPolicy: "never" as const,
@@ -1246,6 +1273,9 @@ export class CodexEngine implements Engine {
         ? { sandbox: "workspace-write" as const }
         : { permissions: PERMISSIONS_PROFILE }),
       developerInstructions: AGENCY_ENVIRONMENT.developerInstructions,
+      // `thread/start` and `thread/resume` have no effort field: it travels as
+      // the config override, verified against 0.168.0 (DEC-014).
+      ...(model && { model: model.model, config: { model_reasoning_effort: model.effort } }),
     };
   }
   /**
@@ -1600,17 +1630,22 @@ export class CodexEngine implements Engine {
     this.skillsSync = slot;
     return slot.promise;
   }
-  async createWork() {
+  async createWork(model?: ModelSelection) {
     await this.syncSkills();
-    const { thread, activePermissionProfile } = await this.rpc("thread/start", this.settings());
+    const { thread, activePermissionProfile } = await this.rpc("thread/start", {
+      ...this.settings(model),
+      // A model the account lacks must fail, not be swapped for another one
+      // the owner may have ruled out. `thread/resume` has no such field.
+      ...(model && { allowProviderModelFallback: false }),
+    });
     this.checkProfile(activePermissionProfile, true);
     return { conversationId: thread.id, title: thread.name || undefined };
   }
-  async resumeWork(conversationId: string) {
+  async resumeWork(conversationId: string, model?: ModelSelection) {
     await this.syncSkills(conversationId);
     const { activePermissionProfile } = await this.rpc("thread/resume", {
       threadId: conversationId,
-      ...this.settings(),
+      ...this.settings(model),
     });
     this.checkProfile(activePermissionProfile, false);
   }
@@ -1635,6 +1670,7 @@ export class CodexEngine implements Engine {
           expectedTurnId,
           prompt: TITLE_PROMPT,
           disableMcp: true,
+          effort: TITLE_EFFORT,
         });
         const title = cleanTitle(sample.text);
         if (!title) return undefined;
@@ -1720,7 +1756,7 @@ export class CodexEngine implements Engine {
       }
     });
   }
-  async send(conversationId: string, text: string, files: import("../engine").EngineFile[] = [], context?: { filesReverted?: boolean }) {
+  async send(conversationId: string, text: string, files: import("../engine").EngineFile[] = [], context?: { filesReverted?: boolean; model?: ModelSelection }) {
     if (!this.available || !this.safety.allowed)
       throw new EngineFailure("other", this.safety.detail);
     this.interrupted.delete(conversationId);
@@ -1749,6 +1785,7 @@ export class CodexEngine implements Engine {
         ],
         cwd: this.options.workspace,
         approvalPolicy: "never",
+        ...(context?.model && { model: context.model.model, effort: context.model.effort }),
         // Same mode as the thread: the turn cannot be widened back to a policy
         // that reads the whole computer. With the profile, a sandbox policy
         // cannot be sent at all; without MXC, the write protection is the same

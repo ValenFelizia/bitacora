@@ -381,6 +381,24 @@ async function handle(line) {
       case "account/login/cancel":
         setTimeout(() => reply({}), Number(process.env.BITACORA_FAKE_LOGIN_CANCEL_DELAY || 0));
         break;
+      case "model/list": {
+        // The catalogue's shape in 0.168.0, two pages long, with one hidden
+        // model the client must leave out. `BITACORA_FAKE_MODELS=fail` refuses it.
+        if (process.env.BITACORA_FAKE_MODELS === "fail") {
+          send({ id: m.id, error: { code: -32603, message: "model list failed" } });
+          break;
+        }
+        const efforts = ["low", "medium", "high"].map((reasoningEffort) => ({ reasoningEffort, description: "" }));
+        const entry = (id, displayName, extra = {}) => ({
+          id, model: id, displayName, description: "", hidden: false, isDefault: false,
+          supportedReasoningEfforts: efforts, defaultReasoningEffort: "low", ...extra,
+        });
+        if (!m.params?.cursor)
+          reply({ data: [entry("gpt-6.2-sol", "GPT-6.2-Sol", { isDefault: true }), entry("gpt-6.2-astra", "GPT-6.2-Astra")], nextCursor: "page-2" });
+        else
+          reply({ data: [entry("gpt-6-luna", "GPT-6-Luna"), entry("codex-auto-review", "Codex Auto Review", { hidden: true })], nextCursor: null });
+        break;
+      }
       case "thread/start":
         // A request that fails before the work exists: its skill notices must
         // not show up under the next work.
