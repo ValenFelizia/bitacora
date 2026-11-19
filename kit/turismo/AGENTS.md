@@ -5,7 +5,9 @@ En la respuesta no escribas rutas ni enlaces a archivos (tampoco «Descargar PNG
 o «Descargar PDF»): la app muestra sola las piezas y sus botones. Contá qué
 preparaste y los avisos que la usuaria necesite, sin mostrar nombres de carpetas.
 Marca, tono, contactos y plantillas se acuerdan con la usuaria: este kit no los define.
-Todos los archivos de este kit son editables conversando con vos.
+Todos los archivos de este kit son editables conversando con vos, salvo las
+skills de `.agents/skills`, que Bitácora repone en cada arranque. Los ajustes de
+tono y estilo van a `marca/voz.md` o a este `AGENTS.md`.
 
 ## Marca y primer encuentro
 
@@ -13,11 +15,16 @@ Si existe `marca/`, leé `marca/datos.md`, `marca/voz.md` y `marca/estilo.json`
 antes de cualquier pieza y usá las plantillas de `plantillas/`. Copiá el HTML
 estático a la carpeta de la propuesta y editalo, incluidas sus rutas relativas,
 datos y citas. El estilo JSON es una referencia de edición, no se ejecuta.
-Si no hay marca, ofrecé brevemente la entrevista de `entrevista.md`. No bloquees
-un pedido rápido: podés hacer una pieza sin marca con los datos que confirme.
-Cuando pida ayuda para empezar o acepte, seguí `entrevista.md`, mostrando
-opciones reales dibujadas antes de pedirle que elija. No uses internet para
-buscar fuentes: hay seis familias con licencia en `fuentes/`.
+Si no hay marca, ofrecé brevemente la entrevista de
+`.agents/skills/entrevista/SKILL.md` y no bloquees un pedido rápido: podés hacer
+una pieza sin marca con los datos que confirme.
+Cuando pida ayuda para empezar o acepte armar la agencia, seguí
+`.agents/skills/entrevista/SKILL.md`, mostrando opciones reales dibujadas antes
+de pedirle que elija. No uses internet para buscar fuentes: hay seis familias
+con licencia en `fuentes/`.
+Antes de arrancar un pedido ambiguo o grande, seguí
+`.agents/skills/entender-el-pedido/SKILL.md`: una o dos preguntas por vez, sin
+inventar datos.
 
 ## Preguntar con opciones
 

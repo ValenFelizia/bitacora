@@ -39,6 +39,12 @@ function codexKeySegment(id: string): string {
  *   and `features.apps=true` registers `codex_apps`. While the allowlists are
  *   empty, keeping `features.plugins=false`, `features.apps=false`, and
  *   `include_apps_instructions=false` prevents that download and registration.
+ *
+ * Skills changed with issue #50: the kit ships its own, so the engine leaves
+ * exactly those skills on and turns every other one off (DEC-011). The skill
+ * catalogue itself stays off for every thread: it can only be chosen when the
+ * thread is created, so an unverified pass could not withdraw it from a later
+ * turn. The kit's `AGENTS.md` names each skill file instead.
  */
 export function codexEnvironmentArgs(
   environment: AgencyEnvironment = AGENCY_ENVIRONMENT,
@@ -60,7 +66,14 @@ export function codexEnvironmentArgs(
   args.push(...c(`features.default_mode_request_user_input=${environment.questions}`));
   args.push(
     ...c(`skills.bundled.enabled=${environment.bundledSkills}`),
-    ...c(`skills.include_instructions=${environment.allowedSkills.length > 0}`),
+    // Off for every thread, always (DEC-011, issue #50). Codex 0.168.0 can
+    // only decide the skill catalogue when a thread is created: a
+    // `thread/start` config is honoured, but neither `thread/resume` nor
+    // `turn/start` can change it for an existing thread (verified with the real
+    // binary and a local model that records what the model receives). Since the
+    // catalogue cannot be withdrawn for a turn, it is never handed to the
+    // model: the kit's `AGENTS.md` names each skill file instead.
+    ...c("skills.include_instructions=false"),
   );
   args.push(...c(`features.tool_suggest=${environment.pluginSuggestions}`));
 

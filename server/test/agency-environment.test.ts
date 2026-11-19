@@ -6,7 +6,7 @@ import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from "node:c
 import { existsSync, readdirSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -14,12 +14,14 @@ import { setTimeout as delay } from "node:timers/promises";
 import {
   AGENCY_DEVELOPER_INSTRUCTIONS,
   AGENCY_ENVIRONMENT,
+  KIT_SKILLS,
   isAllowedSkill,
 } from "../src/agency-environment";
 import { App } from "../src/app";
 import { CodexEngine, PERMISSIONS_PROFILE, appServerArgs } from "../src/codex/engine";
 import { codexEnvironmentArgs } from "../src/codex/environment";
 import { registerKit } from "../src/codex/kit";
+import { initializeKit } from "../src/tools/kit";
 import { codexBinary } from "../../scripts/codex-runtime.mjs";
 import { WorkspaceFiles } from "../src/workspace-files";
 import { fakeAppServerArgs } from "./fake-app-server";
@@ -240,40 +242,98 @@ async function mockResponses(replies: Array<(body: any) => object[]>) {
   };
 }
 
-test("agency environment policy and developer instructions match DEC-011", () => {
+/**
+ * Rewrites the fake skills list atomically. The app-server may read the file
+ * while the test writes it; a rename means it either sees the old list or the
+ * new one, never half of either.
+ */
+async function writeSkillsFile(path: string, skills: unknown[]) {
+  const temp = `${path}.${process.pid}.tmp`;
+  await writeFile(temp, JSON.stringify(skills), "utf8");
+  await rename(temp, path);
+}
+
+test("agency environment policy and developer instructions match DEC-011", async () => {
   assert.equal(AGENCY_ENVIRONMENT.aiImages, true);
   assert.equal(AGENCY_ENVIRONMENT.webSearch, "cached");
   assert.equal(AGENCY_ENVIRONMENT.subagents, false);
   assert.equal(AGENCY_ENVIRONMENT.goals, true);
   assert.equal(AGENCY_ENVIRONMENT.questions, true);
   assert.equal(AGENCY_ENVIRONMENT.bundledSkills, false);
-  assert.deepEqual(AGENCY_ENVIRONMENT.allowedSkills, []);
+  assert.deepEqual([...AGENCY_ENVIRONMENT.allowedSkills], [...KIT_SKILLS]);
   assert.equal(AGENCY_ENVIRONMENT.pluginSuggestions, false);
   assert.deepEqual(AGENCY_ENVIRONMENT.allowedPlugins, []);
   assert.deepEqual(AGENCY_ENVIRONMENT.allowedConnectors, []);
 
-  for (const scope of ["user", "repo", "system", "admin"]) {
-    assert.equal(isAllowedSkill({ name: "any-skill", scope }), false);
+  const workspace = "C:\\agencias\\viajes";
+  const kitSkill = (name: string) => ({
+    name,
+    scope: "repo",
+    path: join(workspace, ".agents", "skills", name, "SKILL.md"),
+  });
+  for (const name of KIT_SKILLS) {
+    assert.equal(isAllowedSkill(kitSkill(name), workspace), true, name);
   }
+  for (const scope of ["user", "system", "admin"]) {
+    assert.equal(isAllowedSkill({ ...kitSkill("entrevista"), scope }, workspace), false, scope);
+  }
+  // A name the kit does not ship, the same name outside the kit folder and a
+  // skill the agent wrote by hand in `.agents/skills` stay off.
+  assert.equal(isAllowedSkill(kitSkill("otra"), workspace), false);
   assert.equal(
     isAllowedSkill(
-      { name: "kit-skill", scope: "repo" },
-      { ...AGENCY_ENVIRONMENT, allowedSkills: ["kit-skill"] },
+      { name: "entrevista", scope: "repo", path: join(workspace, ".agents", "skills", "copia", "entrevista", "SKILL.md") },
+      workspace,
+    ),
+    false,
+  );
+  assert.equal(
+    isAllowedSkill(
+      { name: "entrevista", scope: "repo", path: join(workspace, ".agents", "skills", "escrita-por-el-agente", "SKILL.md") },
+      workspace,
+    ),
+    false,
+  );
+  // Windows lists the same file with backslashes and any case, and the same
+  // path with another separator: both sides are compared normalized.
+  assert.equal(
+    isAllowedSkill(
+      { name: "entrevista", scope: "repo", path: join(workspace, ".agents", "skills", "entrevista", "skill.md").toUpperCase() },
+      workspace,
     ),
     true,
   );
   assert.equal(
     isAllowedSkill(
-      { name: "kit-skill", scope: "user" },
-      { ...AGENCY_ENVIRONMENT, allowedSkills: ["kit-skill"] },
+      { name: "entrevista", scope: "repo", path: `${workspace.replace(/\\/g, "/")}/.agents/skills/entrevista/SKILL.md` },
+      workspace,
     ),
-    false,
+    true,
   );
 
   assert.doesNotMatch(AGENCY_DEVELOPER_INSTRUCTIONS, /No generes imágenes con IA/i);
   assert.match(AGENCY_DEVELOPER_INSTRUCTIONS, /castellano rioplatense/i);
   assert.match(AGENCY_DEVELOPER_INSTRUCTIONS, /si la usuaria te lo pide explícitamente/i);
   assert.match(AGENCY_DEVELOPER_INSTRUCTIONS, /nunca presentes una imagen con IA.*foto real de un hotel o un destino/i);
+  // The two skills are named in the instructions that travel with every thread,
+  // so they keep working even when the agency rewrites its `AGENTS.md`.
+  assert.match(AGENCY_DEVELOPER_INSTRUCTIONS, /\.agents\/skills\/entrevista\/SKILL\.md/);
+  assert.match(AGENCY_DEVELOPER_INSTRUCTIONS, /\.agents\/skills\/entender-el-pedido\/SKILL\.md/);
+
+  // The list the policy allows is exactly what the kit ships, folder by folder,
+  // and every one is a Codex skill with its front matter.
+  const kitSkills = await readdir(join("kit", "turismo", ".agents", "skills"), { withFileTypes: true });
+  assert.deepEqual(
+    kitSkills.filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort(),
+    [...KIT_SKILLS].sort(),
+  );
+  for (const name of KIT_SKILLS) {
+    const text = await readFile(join("kit", "turismo", ".agents", "skills", name, "SKILL.md"), "utf8");
+    const front = /^---\r?\n([\s\S]*?)\r?\n---\r?\n/.exec(text);
+    assert.ok(front, `${name} must start with front matter`);
+    assert.match(front[1], new RegExp(`^name: ${name}$`, "m"), `${name} name must match its folder`);
+    assert.match(front[1], /^description: \S.+$/m, `${name} needs a description`);
+  }
 });
 
 test("codexEnvironmentArgs validates allowlist IDs and wires backends cleanly", () => {
@@ -502,6 +562,9 @@ test(
       assert.equal(config.apps?._default?.enabled, false);
       assert.equal(config.agents?.enabled, false);
       assert.equal(config.skills?.bundled?.enabled, false);
+      // The catalogue stays off for every thread (issue #50, DEC-011): it can
+      // only be chosen at thread creation, so a failed check could not withdraw
+      // it later. The kit's `AGENTS.md` names each skill file.
       assert.equal(config.skills?.include_instructions, false);
 
       const skills = await curated.rpc<{
@@ -799,11 +862,9 @@ test("CodexEngine re-disables a skill that appears while a turn runs (skills/cha
   await mkdir(home, { recursive: true });
   await mkdir(workspace, { recursive: true });
   const initialPath = join(home, "skills", "initial-user-skill", "SKILL.md");
-  await writeFile(
-    skillsFile,
-    JSON.stringify([{ name: "initial-user-skill", description: "Initial", path: initialPath, scope: "user", enabled: true }]),
-    "utf8",
-  );
+  await writeSkillsFile(skillsFile, [
+    { name: "initial-user-skill", description: "Initial", path: initialPath, scope: "user", enabled: true },
+  ]);
   process.env.BITACORA_FAKE_SKILLS_FILE = skillsFile;
 
   const engine = new CodexEngine({
@@ -829,8 +890,9 @@ test("CodexEngine re-disables a skill that appears while a turn runs (skills/cha
     await engine.start();
     // The skill that existed at startup is turned off by the check that runs in
     // the background, and the work exists before the new one appears: only the
-    // notification can turn that one off.
-    await until(async () => (await readSkills()).every((skill) => !skill.enabled));
+    // notification can turn that one off. The wait is generous because the whole
+    // suite runs several files at once and this machine spawns processes slowly.
+    await until(async () => (await readSkills()).every((skill) => !skill.enabled), 15_000);
     const afterStart = await readSkills();
     assert.equal(afterStart.length, 1);
 
@@ -839,7 +901,7 @@ test("CodexEngine re-disables a skill that appears while a turn runs (skills/cha
     await engine.send(conversationId, "skills-changed");
     await finished;
 
-    const deadline = Date.now() + 5000;
+    const deadline = Date.now() + 15_000;
     let updated: Array<{ name: string; enabled: boolean }> = [];
     while (Date.now() < deadline) {
       updated = await readSkills();
@@ -1014,7 +1076,7 @@ test("CodexEngine turns off a skill that appeared since the last turn before sen
   const skillsFile = join(dir, "skills.json");
   await mkdir(home, { recursive: true });
   await mkdir(workspace, { recursive: true });
-  await writeFile(skillsFile, JSON.stringify([]), "utf8");
+  await writeSkillsFile(skillsFile, []);
   process.env.BITACORA_FAKE_SKILLS_FILE = skillsFile;
   const engine = new CodexEngine({
     home,
@@ -1030,13 +1092,9 @@ test("CodexEngine turns off a skill that appeared since the last turn before sen
     await engine.start();
     const { conversationId } = await engine.createWork();
     // No notification this time: the next turn must not see the new skill.
-    await writeFile(
-      skillsFile,
-      JSON.stringify([
-        { name: "late-skill", description: "Appeared after the last turn", path: join(home, "skills", "late-skill", "SKILL.md"), scope: "user", enabled: true },
-      ]),
-      "utf8",
-    );
+    await writeSkillsFile(skillsFile, [
+      { name: "late-skill", description: "Appeared after the last turn", path: join(home, "skills", "late-skill", "SKILL.md"), scope: "user", enabled: true },
+    ]);
     await engine.send(conversationId, "race");
     const after = await readSkills();
     assert.equal(after.length, 1);
@@ -1157,10 +1215,10 @@ for (const verify of ["fail", "hang", "shape"] as const) {
     try {
       await engine.start();
       await until(() =>
-        details.some((text) => text.includes("No pude comprobar si quedaron desactivados los complementos")),
+        details.some((text) => text.includes("No pude comprobar si los complementos quedaron como tienen que estar")),
       );
       const message = details.find((text) =>
-        text.includes("No pude comprobar si quedaron desactivados los complementos"),
+        text.includes("No pude comprobar si los complementos quedaron como tienen que estar"),
       );
       assert.match(message ?? "", /external-skill/, "the notice names what was written");
       const timedOut = details.some((text) =>
@@ -1305,11 +1363,9 @@ test("a request that fails before its work exists does not leave its notices beh
   await mkdir(workspace, { recursive: true });
   const first = join(home, "skills", "first-skill", "SKILL.md");
   const second = join(home, "skills", "second-skill", "SKILL.md");
-  await writeFile(
-    skillsFile,
-    JSON.stringify([{ name: "first-skill", description: "At startup", path: first, scope: "user", enabled: true }]),
-    "utf8",
-  );
+  await writeSkillsFile(skillsFile, [
+    { name: "first-skill", description: "At startup", path: first, scope: "user", enabled: true },
+  ]);
   process.env.BITACORA_FAKE_SKILLS_FILE = skillsFile;
   // Neither skill can be turned off, so every list that sees one says so once.
   process.env.BITACORA_FAKE_SKILL_KEEP_ENABLED = "*";
@@ -1345,14 +1401,10 @@ test("a request that fails before its work exists does not leave its notices beh
     await until(() => details.some((text) => text.includes("first-skill")));
     // A second skill appears: the failed request is the one that sees it, so
     // its notice belongs to that request and nowhere else.
-    await writeFile(
-      skillsFile,
-      JSON.stringify([
-        { name: "first-skill", description: "At startup", path: first, scope: "user", enabled: true },
-        { name: "second-skill", description: "During the failed request", path: second, scope: "user", enabled: true },
-      ]),
-      "utf8",
-    );
+    await writeSkillsFile(skillsFile, [
+      { name: "first-skill", description: "At startup", path: first, scope: "user", enabled: true },
+      { name: "second-skill", description: "During the failed request", path: second, scope: "user", enabled: true },
+    ]);
     await assert.rejects(sendCommand("primer pedido"));
     assert.equal(app.snapshot().works.length, 0);
 
@@ -1470,3 +1522,633 @@ test("skills/list errors are reported once, not on every sync", async () => {
     await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
   }
 });
+
+/** Paths are compared the way Windows reports them. */
+const pathKey = (path: string) => path.replace(/\\/g, "/").toLowerCase();
+
+/** The fake list as a map from path to `enabled`. */
+async function fakeSkillState(file: string): Promise<Map<string, boolean>> {
+  const skills = JSON.parse(await readFile(file, "utf8")) as Array<{ path: string; enabled: boolean }>;
+  return new Map(skills.map((skill) => [pathKey(skill.path), skill.enabled]));
+}
+
+test("the kit skills stay on, one that is off is turned on, and everything else stays off", async () => {
+  await mkdir(".local", { recursive: true });
+  const dir = await mkdtemp(resolve(".local/kit-skills-"));
+  const home = join(dir, "home");
+  const workspace = join(dir, "workspace");
+  const skillsFile = join(dir, "skills.json");
+  await mkdir(home, { recursive: true });
+  await mkdir(workspace, { recursive: true });
+  const kit = (name: string) => join(workspace, ".agents", "skills", name, "SKILL.md");
+  const userSkill = join(home, "skills", "fake-user-skill", "SKILL.md");
+  const writtenByAgent = join(workspace, ".agents", "skills", "escrita-por-el-agente", "SKILL.md");
+  await writeSkillsFile(skillsFile, [
+    { name: "entrevista", description: "Del kit", path: kit("entrevista"), scope: "repo", enabled: true },
+    // A kit skill that arrives off: the sync has to turn it on.
+    { name: "entender-el-pedido", description: "Del kit", path: kit("entender-el-pedido"), scope: "repo", enabled: false },
+    { name: "fake-user-skill", description: "De la usuaria", path: userSkill, scope: "user", enabled: true },
+    // The same name as a kit skill, outside the kit folder.
+    { name: "entrevista", description: "Mismo nombre, otro lado", path: join(dir, "otra", "entrevista", "SKILL.md"), scope: "user", enabled: true },
+    { name: "escrita-por-el-agente", description: "Escrita a mano", path: writtenByAgent, scope: "repo", enabled: true },
+  ]);
+  process.env.BITACORA_FAKE_SKILLS_FILE = skillsFile;
+  const engine = new CodexEngine({
+    home,
+    workspace,
+    binary: process.execPath,
+    args: fakeAppServerArgs,
+    restartDelayMs: 30,
+    probeProtection: async () => false,
+  });
+  const details: string[] = [];
+  const off = engine.subscribe((event) => {
+    if (event.type === "detail") details.push(event.text);
+  });
+  try {
+    await engine.start();
+    await engine.createWork();
+    await until(async () => {
+      const state = await fakeSkillState(skillsFile);
+      return (
+        state.get(pathKey(kit("entrevista"))) === true &&
+        state.get(pathKey(kit("entender-el-pedido"))) === true &&
+        state.get(pathKey(userSkill)) === false &&
+        state.get(pathKey(join(dir, "otra", "entrevista", "SKILL.md"))) === false &&
+        state.get(pathKey(writtenByAgent)) === false
+      );
+    });
+    assert.deepEqual(details, [], "nothing to report when every switch worked");
+  } finally {
+    off();
+    delete process.env.BITACORA_FAKE_SKILLS_FILE;
+    await engine.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
+});
+
+test("a skills/config/write that fails once is retried and never reported", async () => {
+  await mkdir(".local", { recursive: true });
+  const dir = await mkdtemp(resolve(".local/skills-write-retry-"));
+  const home = join(dir, "home");
+  const workspace = join(dir, "workspace");
+  const skillsFile = join(dir, "skills.json");
+  await mkdir(home, { recursive: true });
+  await mkdir(workspace, { recursive: true });
+  const skillPath = join(home, "skills", "external-skill", "SKILL.md");
+  await writeSkillsFile(skillsFile, [
+    { name: "external-skill", description: "Not from the kit", path: skillPath, scope: "user", enabled: true },
+  ]);
+  process.env.BITACORA_FAKE_SKILLS_FILE = skillsFile;
+  // The lock Windows had in a real request: one write fails, the retry works.
+  process.env.BITACORA_FAKE_SKILL_WRITE_FAIL_ONCE = skillPath;
+  const engine = new CodexEngine({
+    home,
+    workspace,
+    binary: process.execPath,
+    args: fakeAppServerArgs,
+    restartDelayMs: 30,
+    probeProtection: async () => false,
+  });
+  const details: string[] = [];
+  const off = engine.subscribe((event) => {
+    if (event.type === "detail") details.push(event.text);
+  });
+  try {
+    await engine.start();
+    await engine.createWork();
+    await until(async () => (await fakeSkillState(skillsFile)).get(pathKey(skillPath)) === false);
+    assert.deepEqual(details, [], "a transient lock is not something the user has to read");
+  } finally {
+    off();
+    delete process.env.BITACORA_FAKE_SKILLS_FILE;
+    delete process.env.BITACORA_FAKE_SKILL_WRITE_FAIL_ONCE;
+    await engine.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
+});
+
+test("a write retry never stretches a cycle past its deadline", async () => {
+  await mkdir(".local", { recursive: true });
+  const dir = await mkdtemp(resolve(".local/skills-write-deadline-"));
+  const home = join(dir, "home");
+  const workspace = join(dir, "workspace");
+  const skillsFile = join(dir, "skills.json");
+  await mkdir(home, { recursive: true });
+  await mkdir(workspace, { recursive: true });
+  const skillPath = join(home, "skills", "external-skill", "SKILL.md");
+  await writeSkillsFile(skillsFile, [
+    { name: "external-skill", description: "Not from the kit", path: skillPath, scope: "user", enabled: true },
+  ]);
+  process.env.BITACORA_FAKE_SKILLS_FILE = skillsFile;
+  // The write fails late, when most of the cycle's 400 ms is already gone: the
+  // retry cannot sleep its 150 ms and push the request past the deadline, and
+  // there is no time left for a second request either.
+  process.env.BITACORA_FAKE_SKILL_WRITE_FAIL = "*";
+  process.env.BITACORA_FAKE_SKILL_WRITE_DELAY = "320";
+  const log = join(dir, "protocol.jsonl");
+  process.env.BITACORA_FAKE_LOG = log;
+  const engine = new CodexEngine({
+    home,
+    workspace,
+    binary: process.execPath,
+    args: fakeAppServerArgs,
+    restartDelayMs: 30,
+    probeProtection: async () => false,
+    skillsSyncTimeoutMs: 400,
+  });
+  const details: string[] = [];
+  const off = engine.subscribe((event) => {
+    if (event.type === "detail") details.push(event.text);
+  });
+  const writes = async (from: number) =>
+    (await readFile(log, "utf8"))
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { method?: string })
+      .slice(from)
+      .filter((call) => call.method === "skills/config/write").length;
+  try {
+    await engine.start();
+    // The startup cycle may already have used the deadline: this one is fresh.
+    await engine.createWork();
+    const seen = (await readFile(log, "utf8")).trim().split("\n").length;
+    const started = Date.now();
+    await engine.createWork();
+    const waited = Date.now() - started;
+    // Wide on purpose: the cycle ends at 400 ms and the machine may be loaded.
+    assert.ok(waited < 650, `the cycle stopped at its deadline (${waited}ms)`);
+    assert.equal(
+      await writes(seen),
+      1,
+      "a write with no time left is not retried",
+    );
+    assert.equal(
+      details.some((text) =>
+        text.includes("No pude comprobar si los complementos quedaron como tienen que estar"),
+      ),
+      true,
+      "the failed batch is still reported",
+    );
+  } finally {
+    off();
+    delete process.env.BITACORA_FAKE_SKILLS_FILE;
+    delete process.env.BITACORA_FAKE_SKILL_WRITE_FAIL;
+    delete process.env.BITACORA_FAKE_SKILL_WRITE_DELAY;
+    delete process.env.BITACORA_FAKE_LOG;
+    await engine.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
+});
+
+test("a pass that runs out of time before verifying does not clear its notice", async () => {
+  await mkdir(".local", { recursive: true });
+  const dir = await mkdtemp(resolve(".local/skills-verify-key-"));
+  const home = join(dir, "home");
+  const workspace = join(dir, "workspace");
+  const skillsFile = join(dir, "skills.json");
+  await mkdir(home, { recursive: true });
+  await mkdir(workspace, { recursive: true });
+  const skillPath = join(home, "skills", "external-skill", "SKILL.md");
+  await writeSkillsFile(skillsFile, [
+    { name: "external-skill", description: "Not from the kit", path: skillPath, scope: "user", enabled: true },
+  ]);
+  process.env.BITACORA_FAKE_SKILLS_FILE = skillsFile;
+  process.env.BITACORA_FAKE_SKILLS_DELAY = "40";
+  // The skill never turns off, so every verification that runs fails.
+  process.env.BITACORA_FAKE_SKILL_KEEP_ENABLED = "*";
+  // The first verification (list 2) and the third pass (list 5) fail; list 3
+  // never answers, so the pass in between ends before verifying.
+  process.env.BITACORA_FAKE_SKILLS_VERIFY = "fail";
+  process.env.BITACORA_FAKE_SKILLS_VERIFY_AT = "2,5";
+  process.env.BITACORA_FAKE_SKILLS_HANG_AT = "3";
+  const engine = new CodexEngine({
+    home,
+    workspace,
+    binary: process.execPath,
+    args: fakeAppServerArgs,
+    restartDelayMs: 30,
+    probeProtection: async () => false,
+    skillsSyncTimeoutMs: 250,
+  });
+  const details: string[] = [];
+  const off = engine.subscribe((event) => {
+    if (event.type === "detail") details.push(event.text);
+  });
+  const saidItCouldNotCheck = () =>
+    details.filter((text) => text.includes("No pude comprobar si los complementos quedaron como tienen")).length;
+  try {
+    await engine.start();
+    // The first cycle runs in the background and stops at list 2: it says it
+    // could not check.
+    await until(() => saidItCouldNotCheck() === 1);
+    // The second cycle never gets its first list answered and runs out of time
+    // before verifying: that is not a verification, so the notice stays said.
+    await engine.createWork();
+    // The third cycle verifies again and fails again: the same notice is not
+    // repeated, because it was never disproved.
+    await engine.createWork();
+    assert.equal(saidItCouldNotCheck(), 1);
+  } finally {
+    off();
+    delete process.env.BITACORA_FAKE_SKILLS_FILE;
+    delete process.env.BITACORA_FAKE_SKILLS_DELAY;
+    delete process.env.BITACORA_FAKE_SKILL_KEEP_ENABLED;
+    delete process.env.BITACORA_FAKE_SKILLS_VERIFY;
+    delete process.env.BITACORA_FAKE_SKILLS_VERIFY_AT;
+    delete process.env.BITACORA_FAKE_SKILLS_HANG_AT;
+    await engine.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
+});
+
+test("a request that arrives during a skill check adds one pass, inside the same deadline", async () => {
+  await mkdir(".local", { recursive: true });
+  const dir = await mkdtemp(resolve(".local/skills-join-pass-"));
+  const home = join(dir, "home");
+  const workspace = join(dir, "workspace");
+  const log = join(dir, "protocol.jsonl");
+  await mkdir(home, { recursive: true });
+  await mkdir(workspace, { recursive: true });
+  process.env.BITACORA_FAKE_LOG = log;
+  // The request arrives while the startup check is in flight, so the skill list
+  // it sees has to be taken after its request: the cycle lists once more.
+  process.env.BITACORA_FAKE_SKILLS_DELAY = "200";
+  const engine = new CodexEngine({
+    home,
+    workspace,
+    binary: process.execPath,
+    args: fakeAppServerArgs,
+    restartDelayMs: 30,
+    probeProtection: async () => false,
+    skillsSyncTimeoutMs: 5_000,
+  });
+  try {
+    await engine.start();
+    const started = Date.now();
+    const created = await engine.createWork();
+    assert.ok(created.conversationId);
+    const waited = Date.now() - started;
+    const calls = (await readFile(log, "utf8"))
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as { method?: string });
+    assert.equal(
+      calls.filter((call) => call.method === "skills/list").length,
+      2,
+      "the waiting request asks for the list to be taken again",
+    );
+    assert.ok(waited < 5_000, `the request waited within the shared deadline (${waited}ms)`);
+  } finally {
+    delete process.env.BITACORA_FAKE_LOG;
+    delete process.env.BITACORA_FAKE_SKILLS_DELAY;
+    await engine.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
+});
+
+test("the same skill spelled with forward slashes still counts as on", async () => {
+  await mkdir(".local", { recursive: true });
+  const dir = await mkdtemp(resolve(".local/skills-respell-"));
+  const home = join(dir, "home");
+  const workspace = join(dir, "workspace");
+  const skillsFile = join(dir, "skills.json");
+  await mkdir(home, { recursive: true });
+  await mkdir(workspace, { recursive: true });
+  const skillPath = join(home, "skills", "external-skill", "SKILL.md");
+  await writeSkillsFile(skillsFile, [
+    { name: "external-skill", description: "Not from the kit", path: skillPath, scope: "user", enabled: true },
+  ]);
+  process.env.BITACORA_FAKE_SKILLS_FILE = skillsFile;
+  // The confirmation list reports the same file with another separator, and the
+  // skill never turns off: the path has to be compared the Windows way.
+  process.env.BITACORA_FAKE_SKILLS_RESPell = "1";
+  process.env.BITACORA_FAKE_SKILL_KEEP_ENABLED = "*";
+  const engine = new CodexEngine({
+    home,
+    workspace,
+    binary: process.execPath,
+    args: fakeAppServerArgs,
+    restartDelayMs: 30,
+    probeProtection: async () => false,
+  });
+  const details: string[] = [];
+  const off = engine.subscribe((event) => {
+    if (event.type === "detail") details.push(event.text);
+  });
+  try {
+    await engine.start();
+    await engine.createWork();
+    await until(() =>
+      details.some((text) =>
+        text.includes("No pude comprobar si los complementos quedaron como tienen que estar"),
+      ),
+    );
+    const verify = details.find((text) =>
+      text.includes("No pude comprobar si los complementos quedaron como tienen que estar"),
+    );
+    assert.match(verify ?? "", /skills\/external-skill\/SKILL\.md/, "the notice names the other spelling");
+    // The switch was asked for with the path from the first list, the one with
+    // backslashes: without the normalized key this notice would not appear and
+    // the skill would be named a second time with the other spelling.
+    const disabled = details.filter((text) =>
+      text.includes("No pude desactivar un complemento que no es del kit"),
+    );
+    assert.equal(disabled.length, 1, "the skill that is still on is named once");
+    assert.ok(disabled[0].includes(skillPath), "the notice names the original path with backslashes");
+    assert.equal(
+      disabled[0].includes("skills/external-skill/SKILL.md"),
+      false,
+      "the per-skill notice does not use the other spelling",
+    );
+  } finally {
+    off();
+    delete process.env.BITACORA_FAKE_SKILLS_FILE;
+    delete process.env.BITACORA_FAKE_SKILLS_RESPell;
+    delete process.env.BITACORA_FAKE_SKILL_KEEP_ENABLED;
+    await engine.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
+});
+
+test("a foreign skill that only appears in the confirmation list is named and not called verified", async () => {
+  await mkdir(".local", { recursive: true });
+  const dir = await mkdtemp(resolve(".local/skills-late-foreign-"));
+  const home = join(dir, "home");
+  const workspace = join(dir, "workspace");
+  const skillsFile = join(dir, "skills.json");
+  await mkdir(home, { recursive: true });
+  await mkdir(workspace, { recursive: true });
+  await writeSkillsFile(skillsFile, [
+    { name: "external-skill", description: "Not from the kit", path: join(home, "skills", "external-skill", "SKILL.md"), scope: "user", enabled: true },
+  ]);
+  process.env.BITACORA_FAKE_SKILLS_FILE = skillsFile;
+  // It was never a target: nothing tried to turn it off, and it must not make
+  // the pass look verified.
+  process.env.BITACORA_FAKE_SKILLS_ADD_ON_VERIFY = "late-intruder";
+  const engine = new CodexEngine({
+    home,
+    workspace,
+    binary: process.execPath,
+    args: fakeAppServerArgs,
+    restartDelayMs: 30,
+    probeProtection: async () => false,
+  });
+  const details: string[] = [];
+  const off = engine.subscribe((event) => {
+    if (event.type === "detail") details.push(event.text);
+  });
+  try {
+    await engine.start();
+    await engine.createWork();
+    await until(() => details.some((text) => text.includes("late-intruder")));
+    assert.equal(
+      details.some((text) => text.includes("No pude desactivar un complemento que no es del kit") && text.includes("late-intruder")),
+      true,
+    );
+    assert.equal(
+      details.some((text) => text.includes("No pude comprobar si los complementos quedaron como tienen que estar")),
+      true,
+    );
+  } finally {
+    off();
+    delete process.env.BITACORA_FAKE_SKILLS_FILE;
+    delete process.env.BITACORA_FAKE_SKILLS_ADD_ON_VERIFY;
+    await engine.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
+});
+
+test("a cycle cut at its cap with a change pending says it did not finish", async () => {
+  await mkdir(".local", { recursive: true });
+  const dir = await mkdtemp(resolve(".local/skills-pending-notice-"));
+  const home = join(dir, "home");
+  const workspace = join(dir, "workspace");
+  await mkdir(home, { recursive: true });
+  await mkdir(workspace, { recursive: true });
+  // Every list answers in 250 ms and the cycle has 300 ms: the first pass ends
+  // clean, near the cap, and the pass a second request asks for is cut by it.
+  process.env.BITACORA_FAKE_SKILLS_DELAY = "250";
+  const engine = new CodexEngine({
+    home,
+    workspace,
+    binary: process.execPath,
+    args: fakeAppServerArgs,
+    restartDelayMs: 30,
+    probeProtection: async () => false,
+    skillsSyncTimeoutMs: 300,
+  });
+  const details: string[] = [];
+  const off = engine.subscribe((event) => {
+    if (event.type === "detail") details.push(event.text);
+  });
+  const saidItTimedOut = () =>
+    details.filter((text) => text.includes("No terminé de revisar los complementos a tiempo")).length;
+  try {
+    await engine.start();
+    // No pass timed out before this: the notice can only come from the cycle
+    // that the second request cut at the cap.
+    assert.equal(saidItTimedOut(), 0);
+    await Promise.all([engine.createWork(), engine.createWork()]);
+    assert.equal(
+      saidItTimedOut(),
+      1,
+      "the cycle that had a change pending says it did not finish",
+    );
+  } finally {
+    off();
+    delete process.env.BITACORA_FAKE_SKILLS_DELAY;
+    await engine.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
+});
+
+test("an incomplete list with nothing to change does not call the pass verified", async () => {
+  await mkdir(".local", { recursive: true });
+  const dir = await mkdtemp(resolve(".local/skills-incomplete-verified-"));
+  const home = join(dir, "home");
+  const workspace = join(dir, "workspace");
+  const skillsFile = join(dir, "skills.json");
+  await mkdir(home, { recursive: true });
+  await mkdir(workspace, { recursive: true });
+  const skillPath = join(home, "skills", "external-skill", "SKILL.md");
+  await writeSkillsFile(skillsFile, [
+    { name: "external-skill", description: "Not from the kit", path: skillPath, scope: "user", enabled: true },
+  ]);
+  process.env.BITACORA_FAKE_SKILLS_FILE = skillsFile;
+  process.env.BITACORA_FAKE_SKILL_KEEP_ENABLED = "*";
+  // List 1 is complete and list 2 cannot be read: the first cycle says it could
+  // not check. List 3 is incomplete with nothing visible to change, which used
+  // to pass as verified. Lists 4 and 5 repeat the failed check.
+  process.env.BITACORA_FAKE_SKILLS_SHAPE_AT = "2,3,5";
+  const engine = new CodexEngine({
+    home,
+    workspace,
+    binary: process.execPath,
+    args: fakeAppServerArgs,
+    restartDelayMs: 30,
+    probeProtection: async () => false,
+  });
+  const details: string[] = [];
+  const off = engine.subscribe((event) => {
+    if (event.type === "detail") details.push(event.text);
+  });
+  const couldNotCheck = () =>
+    details.filter((text) =>
+      text.includes("No pude comprobar si los complementos quedaron como tienen que estar"),
+    ).length;
+  try {
+    await engine.start();
+    await engine.createWork();
+    await until(() => couldNotCheck() === 1);
+    // Nothing visible to change and an unreadable entry: not a verification, so
+    // the notice is not cleared.
+    await engine.createWork();
+    // A later check fails again: the notice was never disproved, so it is not
+    // said a second time.
+    await engine.createWork();
+    assert.equal(couldNotCheck(), 1);
+  } finally {
+    off();
+    delete process.env.BITACORA_FAKE_SKILLS_FILE;
+    delete process.env.BITACORA_FAKE_SKILL_KEEP_ENABLED;
+    delete process.env.BITACORA_FAKE_SKILLS_SHAPE_AT;
+    await engine.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
+});
+
+test("the fake app-server answers with an error instead of the old list when its file stays unreadable", async () => {
+  await mkdir(".local", { recursive: true });
+  const dir = await mkdtemp(resolve(".local/skills-unreadable-"));
+  const home = join(dir, "home");
+  const workspace = join(dir, "workspace");
+  const skillsFile = join(dir, "skills.json");
+  await mkdir(home, { recursive: true });
+  await mkdir(workspace, { recursive: true });
+  // A file that is not the list at all: the app-server waits between retries and
+  // then says it could not read, instead of answering with the previous skills.
+  await writeFile(skillsFile, "{ esto no es una lista", "utf8");
+  process.env.BITACORA_FAKE_SKILLS_FILE = skillsFile;
+  const engine = new CodexEngine({
+    home,
+    workspace,
+    binary: process.execPath,
+    args: fakeAppServerArgs,
+    restartDelayMs: 30,
+    probeProtection: async () => false,
+  });
+  const details: string[] = [];
+  const off = engine.subscribe((event) => {
+    if (event.type === "detail") details.push(event.text);
+  });
+  try {
+    await engine.start();
+    const created = await engine.createWork();
+    assert.ok(created.conversationId);
+    await until(() =>
+      details.some((text) => text.includes("No pude revisar los complementos del kit")),
+    );
+  } finally {
+    off();
+    delete process.env.BITACORA_FAKE_SKILLS_FILE;
+    await engine.close();
+    await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  }
+});
+
+test(
+  "real codex keeps the kit skills on and turns off the same name outside the kit",
+  { timeout: 120_000 },
+  async () => {
+    const base = await mkdtemp(join(tmpdir(), "bitacora-kit-skills-"));
+    const home = join(base, "codex");
+    const workspace = join(base, "agencia");
+    const data = join(base, "datos");
+    const skillFile = (name: string, description: string) =>
+      `---\nname: ${name}\ndescription: ${description}\n---\nCuerpo.\n`;
+    await mkdir(home, { recursive: true });
+    await mkdir(data, { recursive: true });
+    // The agency is initialized the way the app does it, so the kit skills are
+    // in the folder Codex scans.
+    await initializeKit(workspace, data);
+    // A skill the agent wrote by hand where Codex looks for repo skills.
+    const writtenByAgent = join(workspace, ".agents", "skills", "escrita-por-el-agente", "SKILL.md");
+    await mkdir(join(workspace, ".agents", "skills", "escrita-por-el-agente"), { recursive: true });
+    await writeFile(writtenByAgent, skillFile("escrita-por-el-agente", "Escrita a mano."), "utf8");
+    // A user skill with the same name as a kit skill: name alone must not pass.
+    const userCopy = join(home, "skills", "entrevista", "SKILL.md");
+    await mkdir(join(home, "skills", "entrevista"), { recursive: true });
+    await writeFile(userCopy, skillFile("entrevista", "Copia de la usuaria."), "utf8");
+    // The kit skill arrives switched off, the way a previous session could
+    // leave it: the engine has to turn it back on.
+    const kitSkillOff = join(workspace, ".agents", "skills", "entrevista", "SKILL.md");
+    await writeFile(
+      join(home, "config.toml"),
+      'windows.sandbox = "elevated"\n\n[[skills.config]]\n' +
+        `path = '${kitSkillOff}'\nenabled = false\n`,
+      "utf8",
+    );
+
+    const engine = new CodexEngine({
+      home,
+      workspace,
+      requestTimeoutMs: 60_000,
+      probeProtection: async () => false,
+    });
+    const details: string[] = [];
+    const unsubscribe = engine.subscribe((event) => {
+      if (event.type === "detail") details.push(event.text);
+    });
+    try {
+      await engine.start();
+      const created = await engine.createWork();
+      assert.ok(created.conversationId);
+      // The machine may have its own skills: only the ones this test created
+      // are its business, and none of them may produce a notice.
+      assert.deepEqual(
+        details.filter((text) => /entrevista|escrita-por-el-agente/.test(text)),
+        [],
+      );
+    } finally {
+      unsubscribe();
+      await engine.close();
+    }
+
+    // Verify with a fresh app-server reading the same CODEX_HOME and workspace.
+    const verifier = startRealAppServer(appServerArgs("elevated"), workspace, home);
+    try {
+      await verifier.rpc("initialize", {
+        clientInfo: { name: "bitacora_kit_skills", version: "0.1.0" },
+        capabilities: { experimentalApi: true, requestAttestation: false },
+      });
+      verifier.child.stdin.write('{"method":"initialized"}\n');
+
+      const { data: entries } = await verifier.rpc<{
+        data: Array<{ skills: Array<{ name: string; scope: string; enabled: boolean; path: string }> }>;
+      }>("skills/list", { cwds: [workspace], forceReload: true });
+      const listed = new Map(
+        entries.flatMap((entry) => entry.skills).map((skill) => [pathKey(skill.path), skill]),
+      );
+
+      for (const name of KIT_SKILLS) {
+        const skill = listed.get(pathKey(join(workspace, ".agents", "skills", name, "SKILL.md")));
+        assert.ok(skill, `${name} from the kit should be listed`);
+        assert.equal(skill.scope, "repo");
+        assert.equal(skill.enabled, true, `${name} from the kit must stay on`);
+      }
+      const written = listed.get(pathKey(writtenByAgent));
+      assert.ok(written, "the skill the agent wrote should be listed");
+      assert.equal(written.enabled, false);
+      const user = listed.get(pathKey(userCopy));
+      assert.ok(user, "the copy with the same name should be listed");
+      assert.equal(user.scope, "user");
+      assert.equal(user.enabled, false);
+    } finally {
+      await verifier.close();
+      await rm(base, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+    }
+  },
+);

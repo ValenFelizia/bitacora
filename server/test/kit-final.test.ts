@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, rm, readdir, rename, symlink, readFile, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { createRequire } from 'node:module';
 import { AgencyFiles } from '../src/tools/paths';
@@ -95,7 +96,11 @@ test('real data/agency aliases are rejected before startup; marker outside agenc
     assert.ok((await readdir(f.data)).some(n=>n.startsWith('kit-initialized-')));
     for(const file of await readdir(f.root)) await rm(join(f.root,file),{recursive:true,force:true});
     await initializeKit(safe.workspace,safe.data);
-    assert.deepEqual(await readdir(f.root),[]);
+    // The rest of the kit stays deleted, because the marker says it was already
+    // copied; only the kit skills come back, since they are refreshed on every
+    // start (DEC-011, issue #50).
+    assert.deepEqual(await readdir(f.root),['.agents']);
+    assert.ok(existsSync(join(f.root,'.agents','skills','entrevista','SKILL.md')));
   } finally {await f.close();}
 });
 test('reject uninspectable list/head/page content; count Unicode digits; operator pseudo and format characters', { timeout: 300000 }, async () => {
