@@ -196,6 +196,14 @@ try {
     await box.press("Enter");
     await desktop.waitForFunction(() => (document.getElementById("request") as HTMLTextAreaElement).value === "");
     assert.deepEqual(engine.sent, ["Sumá una placa\ncon el mapa"]);
+    // With the request running the button pauses, and Enter keeps its new line.
+    await desktop.getByRole("button", { name: "Pausar pedido" }).waitFor();
+    await box.pressSequentially("Después");
+    await box.press("Enter");
+    await box.pressSequentially("sumá otra");
+    assert.equal(await box.inputValue(), "Después\nsumá otra");
+    assert.equal(engine.sent.length, 1);
+    await box.fill("");
     engine.emit({ type: "finished", conversationId: "conversation-w-porto", status: "completed" });
     await desktop.getByRole("button", { name: "Enviar pedido" }).waitFor();
     await desktop.locator("main").click({ position: { x: 20, y: 20 } });
@@ -205,6 +213,21 @@ try {
     engine.emit({ type: "account", account: { connected: true } });
     await desktop.getByText(/no está disponible en tu cuenta/).waitFor();
     await desktop.screenshot({ path: file("selector-modelo-aviso"), clip: { x: 220, y: 400, width: 760, height: 400 } });
+
+    // Another account whose list fails: the old models are not offered, and
+    // the menu can ask again.
+    engine.catalogue = "fail";
+    engine.emit({ type: "account", account: { connected: true, email: "otra@example.test" } });
+    await desktop.getByText(/no está disponible en tu cuenta/).waitFor({ state: "detached" });
+    await picker.click();
+    const retry = desktop.getByRole("menuitem", { name: "Volver a intentar" });
+    await retry.waitFor();
+    await desktop.getByText("No pude traer la lista de modelos de tu cuenta.", { exact: false }).waitFor();
+    await desktop.screenshot({ path: file("selector-modelo-reintentar"), clip: { x: 220, y: 300, width: 760, height: 500 } });
+    engine.catalogue = FAKE_CATALOGUE;
+    await retry.click();
+    await desktop.getByRole("menuitemradio", { name: /GPT-6.1 Terra/ }).waitFor();
+    await desktop.keyboard.press("Escape");
   }
 
   if (errors.length) throw new Error(errors.join("\n"));
