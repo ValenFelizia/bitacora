@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import {
   ArrowDownToLine,
   ChevronLeft,
@@ -67,6 +67,178 @@ function useFetchedFile(file: FileRef | undefined, token?: string, fileRevision?
   return state;
 }
 
+type Size = { width: number; height: number };
+
+/** CSS size of an element, following the panel being dragged. */
+function useSize(element: React.RefObject<HTMLElement | null>) {
+  const [size, setSize] = useState<Size>();
+  useEffect(() => {
+    const target = element.current;
+    if (!target) return;
+    const observer = new ResizeObserver(() => {
+      const { width, height } = target.getBoundingClientRect();
+      setSize((previous) => (previous?.width === width && previous.height === height ? previous : { width, height }));
+    });
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [element]);
+  return size;
+}
+
+/** Device pixels per CSS pixel, updated when the window moves to a screen with another scale. */
+function useDensity() {
+  const [density, setDensity] = useState(() => window.devicePixelRatio || 1);
+  useEffect(() => {
+    // A resolution query matches only the current density, so it fires once
+    // when the density changes and is asked again for the new one.
+    let query: MediaQueryList | undefined;
+    const watch = () => {
+      query?.removeEventListener("change", changed);
+      query = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`);
+      query.addEventListener("change", changed);
+    };
+    const changed = () => {
+      setDensity(window.devicePixelRatio || 1);
+      watch();
+    };
+    watch();
+    return () => query?.removeEventListener("change", changed);
+  }, []);
+  return density;
+}
+
+/** True once the element came near the screen; a gallery far below is left alone. */
+function useNearScreen(element: React.RefObject<HTMLElement | null>) {
+  const [near, setNear] = useState(false);
+  useEffect(() => {
+    const target = element.current;
+    if (!target || near) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) setNear(true);
+      },
+      { rootMargin: "200px" },
+    );
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [element, near]);
+  return near;
+}
+
+/** Decoding a 1080×1920 plate is heavy: a few at a time, the rest wait their turn. */
+const DECODES_AT_ONCE = 2;
+let decoding = 0;
+const decodeQueue: (() => void)[] = [];
+async function inTurn<T>(work: () => Promise<T>): Promise<T> {
+  if (decoding >= DECODES_AT_ONCE) await new Promise<void>((resolve) => decodeQueue.push(resolve));
+  decoding++;
+  try {
+    return await work();
+  } finally {
+    decoding--;
+    decodeQueue.shift()?.();
+  }
+}
+
+/**
+ * An `<img>` that shows a copy of the image at the exact device size it is
+ * shown at. A 1080×1920 plate squeezed into a thumbnail by the browser loses
+ * its thin lines and small text; resized once with the high-quality filter it
+ * stays sharp. The original shows until the copy is ready, and stays when it
+ * is already small enough. A copy is released only once the next image is on
+ * screen.
+ */
+function SharpImage({
+  blob,
+  url,
+  alt,
+  className,
+  fit,
+}: {
+  blob?: Blob;
+  url: string;
+  alt: string;
+  className: string;
+  fit: "cover" | "contain";
+}) {
+  const element = useRef<HTMLImageElement>(null);
+  const size = useSize(element);
+  const density = useDensity();
+  const near = useNearScreen(element);
+  // The original's size, read when it loads: the copy is made from the file
+  // in one step, so its crop is worked out before decoding.
+  const [source, setSource] = useState<{ url: string } & Size>();
+  const [copy, setCopy] = useState<{ url: string; link: string }>();
+  const made = useRef<string[]>([]);
+
+  useEffect(() => () => made.current.forEach((link) => URL.revokeObjectURL(link)), []);
+
+  useEffect(() => {
+    if (!blob || !near || !size || size.width < 1 || size.height < 1 || source?.url !== url) return;
+    const scale =
+      fit === "cover"
+        ? Math.max(size.width / source.width, size.height / source.height)
+        : Math.min(size.width / source.width, size.height / source.height);
+    const cropWidth = fit === "cover" ? size.width / scale : source.width;
+    const cropHeight = fit === "cover" ? size.height / scale : source.height;
+    const width = Math.max(1, Math.round(cropWidth * scale * density));
+    const height = Math.max(1, Math.round(cropHeight * scale * density));
+    if (width >= cropWidth) {
+      setCopy(undefined);
+      return;
+    }
+    let cancelled = false;
+    // Waits for the size to settle while the panel is being dragged.
+    const timer = setTimeout(() => {
+      void inTurn(async () => {
+        if (cancelled) return;
+        const options: ImageBitmapOptions = { resizeWidth: width, resizeHeight: height, resizeQuality: "high" };
+        const resized =
+          fit === "cover"
+            ? await createImageBitmap(blob, (source.width - cropWidth) / 2, (source.height - cropHeight) / 2, cropWidth, cropHeight, options)
+            : await createImageBitmap(blob, options);
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext("2d")!.drawImage(resized, 0, 0);
+        resized.close();
+        const png = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/png"));
+        if (cancelled || !png) return;
+        const link = URL.createObjectURL(png);
+        made.current.push(link);
+        setCopy({ url, link });
+      }).catch(() => {
+        // The original stays: blurrier, but it is the same image.
+      });
+    }, 120);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [blob, url, near, size?.width, size?.height, density, fit, source]);
+
+  // A copy of another version of the file is never shown.
+  const shown = copy?.url === url ? copy.link : url;
+  return (
+    <img
+      ref={element}
+      src={shown}
+      alt={alt}
+      className={className}
+      onLoad={(event) => {
+        const image = event.currentTarget;
+        if (image.getAttribute("src") === url)
+          setSource((previous) =>
+            previous?.url === url ? previous : { url, width: image.naturalWidth, height: image.naturalHeight },
+          );
+        // The image on screen no longer needs the copies made before it.
+        for (const link of made.current) if (link !== shown) URL.revokeObjectURL(link);
+        made.current = made.current.filter((link) => link === shown);
+      }}
+    />
+  );
+}
+
 async function copyImageBlob(blob: Blob): Promise<boolean> {
   try {
     const png = (async () => {
@@ -130,10 +302,12 @@ export function FileCard({
     return (
       <figure className="min-w-0 rounded-[6px] border border-line bg-surface p-2.5 flex items-center gap-3">
         {image && !fetched.missing && fetched.url ? (
-          <img
+          <SharpImage
             className="w-12 h-12 shrink-0 rounded-[3px] object-cover border border-line bg-paper"
-            src={fetched.url}
+            blob={fetched.blob}
+            url={fetched.url}
             alt={file.name}
+            fit="cover"
           />
         ) : (
           <span className="w-12 h-12 shrink-0 rounded-[3px] border border-line bg-paper grid place-items-center text-muted">
@@ -190,10 +364,12 @@ export function FileCard({
           title={`Ver ${file.name}`}
           aria-label={`Ver ${file.name}`}
         >
-          <img
+          <SharpImage
             className="max-h-56 w-full object-contain"
-            src={fetched.url}
+            blob={fetched.blob}
+            url={fetched.url}
             alt={file.name}
+            fit="contain"
           />
         </button>
       )}
@@ -289,6 +465,7 @@ function PlateThumbnail({
   fileRevision,
   compact,
   moreCount,
+  fetched: given,
   onClick,
 }: {
   file: FileRef;
@@ -296,9 +473,12 @@ function PlateThumbnail({
   fileRevision?: number;
   compact: boolean;
   moreCount?: number;
+  /** The file the group already downloaded, so it is not asked for twice. */
+  fetched?: FetchedFile;
   onClick: () => void;
 }) {
-  const fetched = useFetchedFile(file, token, fileRevision);
+  const own = useFetchedFile(given ? undefined : file, token, fileRevision);
+  const fetched = given ?? own;
   const label =
     moreCount && moreCount > 0
       ? `Ver ${moreCount} más`
@@ -314,10 +494,12 @@ function PlateThumbnail({
       }`}
     >
       {fetched.url && !fetched.missing ? (
-        <img
-          src={fetched.url}
+        <SharpImage
+          blob={fetched.blob}
+          url={fetched.url}
           alt={file.name}
           className={compact ? "w-full h-full object-cover" : "w-full max-h-[240px] object-contain"}
+          fit={compact ? "cover" : "contain"}
         />
       ) : (
         <span className="w-full h-full min-h-[72px] grid place-items-center text-muted">
@@ -539,6 +721,7 @@ function FeaturedDeliverable({
                 fileRevision={fileRevision}
                 compact={isMulti}
                 moreCount={hasMoreTile ? overflowCount : undefined}
+                fetched={plate.id === group.primary.id ? primaryFetched : undefined}
                 onClick={() =>
                   onPreview(
                     hasMoreTile ? group.plates[6] : plate,

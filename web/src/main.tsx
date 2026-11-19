@@ -5,6 +5,9 @@ import {
   AlertCircle,
   ArrowRight,
   ArrowUp,
+  Check,
+  ChevronRight,
+  Copy,
   Info,
   LayoutGrid,
   LogIn,
@@ -30,9 +33,12 @@ import type {
   Upload,
   Work,
 } from "../../server/src/contracts";
+import { PANEL_WIDTH } from "../../server/src/contracts";
 import { MAX_TITLE } from "../../server/src/titles";
 import "./style.css";
 import { DeliverablesPanel, FileCard, FilePreviewModal } from "./files";
+import { ModelPicker } from "./model-picker";
+import { clampPanel, DESKTOP_MIN, panelBounds, panelKey } from "./panel";
 import { QuestionCard } from "./question";
 import { formatTime, formatWorkDate, undoSummary } from "./format";
 import { protectionText, protectionWarning } from "./protection-text";
@@ -42,6 +48,7 @@ import {
   clearSentText,
   isCurrentDraft,
   keepSelectedWork,
+  sendsOnEnter,
   type SentDraft,
 } from "./draft";
 
@@ -112,6 +119,44 @@ function DetailsToggle({
   );
 }
 
+/** Copies an answer as written (Markdown included) and says so for a moment. */
+function CopyMessageButton({ text }: { text: string }) {
+  const [status, setStatus] = useState<"" | "copied" | "failed">("");
+  useEffect(() => {
+    if (!status) return;
+    const timer = setTimeout(() => setStatus(""), 2000);
+    return () => clearTimeout(timer);
+  }, [status]);
+  return (
+    <div className="flex items-center gap-1.5 -ml-2.5 -mt-1">
+      <button
+        type="button"
+        className={iconButton}
+        title="Copiar mensaje"
+        aria-label="Copiar mensaje"
+        onClick={async () => {
+          // `navigator.clipboard` is missing outside a secure page: that is a failure too.
+          try {
+            await navigator.clipboard.writeText(text);
+            setStatus("copied");
+          } catch {
+            setStatus("failed");
+          }
+        }}
+      >
+        {status === "copied" ? (
+          <Check size={18} strokeWidth={1.75} className="text-ink" aria-hidden="true" />
+        ) : (
+          <Copy size={18} strokeWidth={1.75} aria-hidden="true" />
+        )}
+      </button>
+      <span role="status" className="text-[13px] text-muted">
+        {status === "copied" ? "Copiado" : status === "failed" ? "No pude copiar." : ""}
+      </span>
+    </div>
+  );
+}
+
 function App() {
   const [state, setState] = useState<Snapshot>({
     account: { connected: false },
@@ -154,6 +199,14 @@ function App() {
   const loginWindow = useRef<Window | null>(null);
   const socket = useRef<WebSocket | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
+  const [viewport, setViewport] = useState(() => window.innerWidth);
+  // Kept as the user left it; what is shown is clamped to the window.
+  const [panelWidth, setPanelWidth] = useState<number>(PANEL_WIDTH.default);
+  const [resizingPanel, setResizingPanel] = useState(false);
+  const panelDrag = useRef<{ startX: number; startWidth: number; width: number } | undefined>(undefined);
+  const panelSave = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const shownPanel = clampPanel(panelWidth, viewport);
+  const panelLimits = panelBounds(viewport);
   const work = state.works.find((w) => w.id === selected);
   const busy = state.works.some((w) => w.busy);
   const hasGalleryResults = state.works.some((w) =>
@@ -271,7 +324,19 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const mq = window.matchMedia("(min-width: 960px)");
+    if (state.panelWidth !== undefined && !panelDrag.current) setPanelWidth(state.panelWidth);
+  }, [state.panelWidth]);
+
+  useEffect(() => {
+    const resize = () => setViewport(window.innerWidth);
+    window.addEventListener("resize", resize);
+    return () => window.removeEventListener("resize", resize);
+  }, []);
+
+  useEffect(() => () => clearTimeout(panelSave.current), []);
+
+  useEffect(() => {
+    const mq = window.matchMedia(`(min-width: ${DESKTOP_MIN}px)`);
     const onChange = (e: MediaQueryListEvent) => {
       if (e.matches) {
         setNavOpen(false);
@@ -355,6 +420,26 @@ function App() {
     if (socket.current?.readyState !== WebSocket.OPEN) return;
     setProblem(undefined);
     socket.current.send(JSON.stringify(command));
+  }
+
+  /** For preferences: a problem on screen stays, it is not about them. */
+  function sendQuietly(command: ClientCommand) {
+    if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify(command));
+  }
+
+  function resizePanel(width: number) {
+    setPanelWidth(width);
+    clearTimeout(panelSave.current);
+    panelSave.current = setTimeout(() => sendQuietly({ type: "panelWidth", width }), 300);
+  }
+
+  /** Release, cancel or a capture taken away (the window lost focus): the drag ends where it is. */
+  function endPanelDrag() {
+    const drag = panelDrag.current;
+    if (!drag) return;
+    panelDrag.current = undefined;
+    setResizingPanel(false);
+    if (drag.width !== drag.startWidth) resizePanel(drag.width);
   }
 
   function startConnect() {
@@ -562,6 +647,14 @@ function App() {
     state.engine.safety.allowed &&
     state.account.connected;
 
+  // The send button and Enter follow the same rule; while busy the button pauses.
+  const sendBlocked =
+    busy ||
+    !canSend ||
+    pending ||
+    readingFiles ||
+    (!text.trim() && !attachments.length);
+
   const notConnected =
     online &&
     state.engine.available &&
@@ -592,8 +685,9 @@ function App() {
       className={`grid h-dvh grid-cols-1 bg-paper text-ink overflow-hidden ${
         gallery
           ? "min-[960px]:grid-cols-[220px_minmax(0,1fr)]"
-          : "min-[960px]:grid-cols-[220px_minmax(0,1fr)_300px]"
-      }`}
+          : "min-[960px]:grid-cols-[220px_minmax(0,1fr)_var(--panel-width)]"
+      } ${resizingPanel ? "select-none cursor-col-resize" : ""}`}
+      style={{ "--panel-width": `${shownPanel}px` } as React.CSSProperties}
     >
       {(navOpen || deliverablesOpen) && (
         <div
@@ -654,10 +748,10 @@ function App() {
         <button
           type="button"
           aria-pressed={gallery}
-          className={`flex items-center gap-2 px-[10px] py-[8px] text-[14px] cursor-pointer mb-3 border-l-2 transition-colors duration-150 ${focusRing} ${
+          className={`flex items-center gap-2 px-[10px] py-[8px] text-[14px] text-ink cursor-pointer mb-4 border-l-2 transition-colors duration-150 ${focusRing} ${
             gallery
-              ? "bg-surface text-ink font-bold border-accent rounded-r-[6px] rounded-l-none"
-              : "border-transparent rounded-[6px] text-muted hover:bg-soft hover:text-ink"
+              ? "bg-surface font-bold border-accent rounded-r-[6px] rounded-l-none"
+              : "border-transparent rounded-[6px] hover:bg-soft"
           }`}
           onClick={() => {
             setGallery(true);
@@ -671,21 +765,23 @@ function App() {
         </button>
 
         <nav
-          className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-[2px]"
-          aria-label="Trabajos anteriores"
+          className="flex-1 min-h-0 overflow-y-auto flex flex-col"
+          aria-labelledby="works-heading"
         >
-          <h2 className="sr-only">Tus trabajos</h2>
-          <ul className="flex flex-col gap-[2px]">
+          <h2 id="works-heading" className="px-[10px] pb-1.5 text-[13px] text-muted">
+            Trabajos
+          </h2>
+          <ul className={`flex flex-col ${state.works.length ? "border-t border-line" : ""}`}>
             {state.works.map((w) => {
               const active = !gallery && selected === w.id;
               return (
-                <li key={w.id}>
+                <li key={w.id} className="border-b border-line py-[3px]">
                   <button
                     type="button"
-                    className={`flex flex-col items-start gap-0.5 px-[10px] py-[9px] text-left w-full border-l-2 cursor-pointer transition-colors duration-150 ${focusRing} ${
+                    className={`grid grid-cols-[minmax(0,1fr)_16px] items-center gap-2 px-[10px] py-[7px] text-left w-full text-ink border-l-2 cursor-pointer transition-colors duration-150 ${focusRing} ${
                       active
-                        ? "bg-surface text-ink font-bold border-accent rounded-r-[6px] rounded-l-none"
-                        : "border-transparent rounded-[6px] text-muted hover:bg-soft hover:text-ink"
+                        ? "bg-surface font-bold border-accent rounded-r-[6px] rounded-l-none"
+                        : "border-transparent rounded-[6px] hover:bg-soft"
                     }`}
                     aria-current={active ? "page" : undefined}
                     onClick={() => {
@@ -697,16 +793,21 @@ function App() {
                       setProblem(undefined);
                     }}
                   >
-                    <span className="w-full truncate text-[15px]">{w.title}</span>
-                    <span className="flex items-center gap-1.5 text-[13px] font-normal tabular-nums text-muted">
-                      {w.busy && (
-                        <span
-                          className="w-1.5 h-1.5 rounded-full bg-accent shrink-0"
-                          aria-hidden="true"
-                        />
-                      )}
-                      {formatWorkDate(w.updatedAt)}
+                    <span className="min-w-0 flex flex-col items-start gap-0.5">
+                      <span className="w-full truncate text-[15px]">{w.title}</span>
+                      <span className="flex items-center gap-1.5 text-[13px] font-normal tabular-nums text-muted">
+                        {w.busy && (
+                          <span
+                            className="w-1.5 h-1.5 rounded-full bg-accent shrink-0"
+                            aria-hidden="true"
+                          />
+                        )}
+                        {formatWorkDate(w.updatedAt)}
+                      </span>
                     </span>
+                    {!active && (
+                      <ChevronRight size={16} strokeWidth={1.75} className="text-muted" aria-hidden="true" />
+                    )}
                   </button>
                 </li>
               );
@@ -1259,6 +1360,11 @@ function App() {
                             </ReactMarkdown>
                           </div>
                         )}
+                        {m.role === "assistant" &&
+                          m.text.trim() &&
+                          !(work.busy && i === work.messages.length - 1) && (
+                            <CopyMessageButton text={m.text} />
+                          )}
                         {!!m.attachments?.length && (
                           <div className="grid gap-2 sm:grid-cols-2">
                             {m.attachments.map((f) => (
@@ -1554,7 +1660,7 @@ function App() {
         {!gallery && (
           <div className="shrink-0 px-5 min-[960px]:px-7 pb-5">
             <form
-              className="mx-auto w-full max-w-[720px] bg-surface border border-line focus-within:border-ink has-[textarea:focus-visible]:outline-2 has-[textarea:focus-visible]:outline-accent has-[textarea:focus-visible]:outline-offset-2 rounded-[6px] px-3 py-2.5 flex flex-col gap-2"
+              className="relative mx-auto w-full max-w-[720px] bg-surface border border-line focus-within:border-ink has-[textarea:focus-visible]:outline-2 has-[textarea:focus-visible]:outline-accent has-[textarea:focus-visible]:outline-offset-2 rounded-[6px] px-3 py-2.5 flex flex-col gap-2"
               onSubmit={(e) => {
                 e.preventDefault();
                 submitRequest();
@@ -1604,7 +1710,32 @@ function App() {
                 </div>
               )}
 
-              <div className="flex items-end gap-2.5">
+              <label className="sr-only" htmlFor="request">
+                Tu pedido
+              </label>
+              <textarea
+                ref={composerInput}
+                id="request"
+                rows={1}
+                disabled={notConnected}
+                value={text}
+                maxLength={MAX_REQUEST_TEXT}
+                placeholder={
+                  notConnected
+                    ? "Conectá tu cuenta para escribir un pedido…"
+                    : "Escribí qué necesitás…"
+                }
+                onChange={(e) => setText(e.target.value)}
+                onKeyDown={(e) => {
+                  // When the button could not send, Enter keeps its usual new line.
+                  if (sendBlocked || !sendsOnEnter({ ...e, isComposing: e.nativeEvent.isComposing })) return;
+                  e.preventDefault();
+                  submitRequest();
+                }}
+                className="w-full resize-none min-h-[44px] max-h-48 border-0 bg-transparent px-1 py-2 text-[15px] leading-[1.45] text-ink placeholder:text-muted focus:outline-none disabled:cursor-default disabled:opacity-70"
+              />
+
+              <div className="flex items-center gap-1">
                 <button
                   type="button"
                   className={iconButton}
@@ -1615,25 +1746,15 @@ function App() {
                 >
                   <Paperclip size={18} strokeWidth={1.75} aria-hidden="true" />
                 </button>
-
-                <label className="sr-only" htmlFor="request">
-                  Tu pedido
-                </label>
-                <textarea
-                  ref={composerInput}
-                  id="request"
-                  rows={1}
-                  disabled={notConnected}
-                  value={text}
-                  maxLength={MAX_REQUEST_TEXT}
-                  placeholder={
-                    notConnected
-                      ? "Conectá tu cuenta para escribir un pedido…"
-                      : "Escribí qué necesitás…"
-                  }
-                  onChange={(e) => setText(e.target.value)}
-                  className="flex-1 min-w-0 resize-none min-h-[44px] max-h-48 border-0 bg-transparent py-2.5 text-[15px] leading-[1.45] text-ink placeholder:text-muted focus:outline-none disabled:cursor-default disabled:opacity-70"
-                />
+                {state.model && (
+                  <ModelPicker
+                    model={state.model}
+                    disabled={!online}
+                    onChoose={(model) => sendQuietly({ type: "chooseModel", model })}
+                    onRefresh={() => sendQuietly({ type: "refreshModels" })}
+                  />
+                )}
+                <span className="flex-1" />
 
                 {busy ? (
                   <button
@@ -1654,12 +1775,7 @@ function App() {
                   <button
                     key="send"
                     type="submit"
-                    disabled={
-                      !canSend ||
-                      pending ||
-                      readingFiles ||
-                      (!text.trim() && !attachments.length)
-                    }
+                    disabled={sendBlocked}
                     title="Enviar pedido"
                     aria-label="Enviar pedido"
                     className={`w-[36px] h-[36px] max-[959px]:w-[40px] max-[959px]:h-[40px] shrink-0 rounded-[6px] bg-ink text-surface grid place-items-center cursor-pointer enabled:hover:opacity-90 disabled:bg-ink/40 disabled:cursor-default transition-colors duration-150 ${focusRing}`}
@@ -1669,6 +1785,15 @@ function App() {
                 )}
               </div>
             </form>
+            {state.model?.notice && (
+              <p
+                role="status"
+                className="mx-auto w-full max-w-[720px] mt-2 flex items-start gap-2 text-[13px] text-muted"
+              >
+                <AlertCircle size={16} strokeWidth={1.75} className="text-accent-ink shrink-0 mt-[2px]" aria-hidden="true" />
+                <span>{state.model.notice}</span>
+              </p>
+            )}
           </div>
         )}
       </main>
@@ -1679,9 +1804,56 @@ function App() {
           className={`${
             deliverablesOpen
               ? "fixed inset-y-0 right-0 z-40 w-[min(320px,90vw)] flex"
-              : "hidden min-[960px]:flex"
+              : "hidden min-[960px]:flex relative"
           } flex-col border-l border-line bg-surface px-3 py-5 min-h-0`}
         >
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Ancho de los entregables"
+            aria-valuemin={panelLimits.min}
+            aria-valuemax={panelLimits.max}
+            aria-valuenow={shownPanel}
+            aria-valuetext={`${shownPanel} píxeles`}
+            tabIndex={0}
+            title="Arrastrá para cambiar el ancho"
+            className="group hidden min-[960px]:block absolute inset-y-0 -left-[6px] w-[11px] z-10 cursor-col-resize touch-none outline-none"
+            onPointerDown={(e) => {
+              if (e.button !== 0) return;
+              e.preventDefault();
+              e.currentTarget.setPointerCapture(e.pointerId);
+              panelDrag.current = { startX: e.clientX, startWidth: shownPanel, width: shownPanel };
+              setResizingPanel(true);
+            }}
+            onPointerMove={(e) => {
+              const drag = panelDrag.current;
+              if (!drag) return;
+              drag.width = clampPanel(drag.startWidth + drag.startX - e.clientX, viewport);
+              setPanelWidth(drag.width);
+            }}
+            onPointerUp={endPanelDrag}
+            onPointerCancel={endPanelDrag}
+            onLostPointerCapture={endPanelDrag}
+            onKeyDown={(e) => {
+              const next = panelKey(e.key, shownPanel, viewport, e.shiftKey);
+              if (next === undefined) return;
+              e.preventDefault();
+              resizePanel(next);
+            }}
+          >
+            <span
+              aria-hidden="true"
+              className={`absolute left-[5px] top-1/2 -translate-y-1/2 w-[3px] h-[40px] rounded-[6px] transition-colors duration-150 ${
+                resizingPanel
+                  ? "bg-accent"
+                  : "bg-line group-hover:bg-muted group-focus-visible:bg-accent"
+              }`}
+            />
+            <span
+              aria-hidden="true"
+              className={`absolute inset-y-0 left-[6px] w-px ${resizingPanel ? "bg-accent" : "group-focus-visible:bg-accent"}`}
+            />
+          </div>
           <DeliverablesPanel
             work={work}
             focusedMessageId={focusedMessageId}

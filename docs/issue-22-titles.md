@@ -76,6 +76,11 @@ perder lo escrito.
   usarlas y se manda `disableMcp: true`; si el modelo igual intenta una
   herramienta, la muestra no devuelve texto y el trabajo conserva el nombre
   provisorio.
+- Desde el issue #57 la muestra pide `effort: "low"`, aunque la usuaria trabaje
+  con razonamiento alto. `thread/sample` no acepta modelo en 0.168.0: corre con
+  el del trabajo, porque reusa su caché, y así quedó decidido (DEC-014). Falta
+  comprobar con un pedido real que el binario aplique ese esfuerzo sobre un
+  hilo en alto.
 - `thread/sample` exige que el hilo esté inactivo y que el turno indicado sea el
   último terminado. Si el hilo todavía se está cerrando, se reintenta una vez a
   los 200 ms; si la usuaria ya mandó otro pedido, la muestra no corre y el
