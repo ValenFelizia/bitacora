@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdir, mkdtemp, readdir, readFile, rm, rmdir, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, rmdir, symlink, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { KIT_SKILLS } from '../src/agency-environment';
@@ -145,6 +146,45 @@ test('the app opens but refuses requests when the single kit copy fails, until i
     assert.equal(app.snapshot().works.length, 1);
     assert.equal(await readFile(join(root, 'AGENTS.md'), 'utf8'), 'Instrucciones del kit\n');
     assert.deepEqual(await readdir(outside), [], 'the junction target was not written');
+  } finally {
+    await app.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+test('two requests at once after a failed kit copy never start together', async () => {
+  await mkdir(base, { recursive: true });
+  const dir = await mkdtemp(join(base, 'kit race '));
+  const root = join(dir, 'agencia'), data = join(dir, 'datos'), kit = join(dir, 'kit');
+  const outside = join(dir, 'afuera');
+  await mkdir(root); await mkdir(data); await mkdir(kit); await mkdir(outside);
+  await mkdir(join(kit, '.agents', 'skills', 'entrevista'), { recursive: true });
+  await writeFile(join(kit, '.agents', 'skills', 'entrevista', 'SKILL.md'), '---\nname: entrevista\ndescription: Del kit.\n---\n');
+  await writeFile(join(kit, 'AGENTS.md'), 'Instrucciones del kit\n');
+  await mkdir(join(kit, 'ejemplo'));
+  await writeFile(join(kit, 'ejemplo', 'pieza.html'), '<p>hola</p>');
+  await symlink(outside, join(root, 'ejemplo'), 'junction');
+  const files = new WorkspaceFiles(root);
+  const app = new App(new FakeEngine(), data, () => {}, undefined, files, kit);
+  const replies: Array<{ type: string; text?: string }> = [];
+  try {
+    await app.start();
+    assert.match(app.snapshot().notice ?? '', /No pude preparar la carpeta de tu agencia/);
+    await rmdir(join(root, 'ejemplo'));
+    // The copy already wrote every file; the marker is what a complete copy
+    // leaves, so both retries find the agency ready and the only thing under
+    // test is that they do not start together.
+    const workspace = await realpath(root);
+    const marker = `kit-initialized-${createHash('sha256').update(workspace.toLowerCase()).digest('hex')}.json`;
+    await writeFile(join(data, marker), JSON.stringify({ version: 1, workspace }), 'utf8');
+
+    await Promise.all([
+      app.command({ type: 'send', text: 'Uno' }, (message) => replies.push(message as { type: string; text?: string })),
+      app.command({ type: 'send', text: 'Dos' }, (message) => replies.push(message as { type: string; text?: string })),
+    ]);
+    assert.equal(replies.filter((reply) => reply.type === 'selected').length, 1);
+    assert.equal(replies.filter((reply) => reply.type === 'problem').length, 1);
+    assert.match(replies.find((reply) => reply.type === 'problem')?.text ?? '', /Esperá a que termine/);
+    assert.equal(app.snapshot().works.length, 1);
   } finally {
     await app.close();
     await rm(dir, { recursive: true, force: true });

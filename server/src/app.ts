@@ -132,6 +132,19 @@ export class App {
       return false;
     }
   }
+  /**
+   * Refuses a new request while another one is running (or waiting on a
+   * question). Used before starting and again after any wait, because the state
+   * can change while a request is preparing the kit.
+   */
+  private refuseWhileBusy(reply: (message: ServerMessage) => void): boolean {
+    if (!this.submitting && !this.works.some((work) => work.busy)) return false;
+    const asking = this.works.find((work) => work.busy && work.question && !work.question.closed);
+    reply(asking
+      ? { type: "problem", text: `Te hice una pregunta en «${asking.title}»: respondela para seguir.`, workId: asking.id }
+      : { type: "problem", text: "Esperá a que termine el pedido actual o pausalo." });
+    return true;
+  }
   async initialize() {
     await mkdir(this.data, { recursive: true });
     await this.workspace?.initialize();
@@ -639,13 +652,7 @@ export class App {
     )
       throw new Error("Invalid request");
     if (this.backups?.restoring) { reply({ type: "problem", text: "Primero elegí Reintentar deshacer o Dejar la carpeta como está." }); return; }
-    if (this.submitting || this.works.some((w) => w.busy)) {
-      const asking = this.works.find((w) => w.busy && w.question && !w.question.closed);
-      reply(asking
-        ? { type: "problem", text: `Te hice una pregunta en «${asking.title}»: respondela para seguir.`, workId: asking.id }
-        : { type: "problem", text: "Esperá a que termine el pedido actual o pausalo." });
-      return;
-    }
+    if (this.refuseWhileBusy(reply)) return;
     if (this.starting || !this.available || !this.engine.executionSafety().allowed) {
       const safety = this.engine.executionSafety();
       reply({
@@ -671,6 +678,9 @@ export class App {
       reply({ type: "problem", text: this.kitProblem, detail: this.kitDetail });
       return;
     }
+    // The wait above may have been long enough for another request to start:
+    // only one request at a time may touch the backups and the pending files.
+    if (this.refuseWhileBusy(reply)) return;
     this.submitting = true;
     let work: SavedWork | undefined;
     let attachments: FileRef[] = [];
