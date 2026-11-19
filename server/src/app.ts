@@ -311,6 +311,22 @@ export class App {
       }
     }
   }
+  /**
+   * Takes the account the engine reports. When it is another one (other mail,
+   * or connected now and not before) the list on hand is marked as the old
+   * account's before it is replaced, whoever read it first: an account event
+   * or a request.
+   */
+  private noteAccount(account: Account) {
+    const previous = this.accountState;
+    if (previous && (previous.connected !== account.connected || previous.email !== account.email))
+      this.catalogueStale = true;
+    this.accountState = account;
+  }
+  /** The list to choose from: none while the one on hand belongs to another account. */
+  private listOnHand() {
+    return this.catalogueStale ? undefined : this.catalogue;
+  }
   /** The menu opened: ask again when there is no list, or it is old or from another account. */
   private refreshModelsIfStale() {
     if (this.listing) return;
@@ -344,7 +360,7 @@ export class App {
       notice: this.notice,
       undo: !this.submitting && !this.works.some(w => w.busy) ? this.backups?.target : undefined,
       fileRevision: this.fileRevision,
-      model: { ...resolveModel(this.catalogue, this.settings.model).state, listing: this.listing },
+      model: { ...resolveModel(this.listOnHand(), this.settings.model).state, listing: this.listing },
       panelWidth: this.settings.panelWidth,
       works: this.works.map(({ conversationId: _, pendingFiles: __, titlePending: ___, renamedByUser: ____, ...work }) => work),
     };
@@ -526,11 +542,7 @@ export class App {
       return;
     }
     if (event.type === "account") {
-      const previous = this.accountState;
-      // Another account can offer other models: the list on hand is not its own.
-      if (previous && (previous.connected !== event.account.connected || previous.email !== event.account.email))
-        this.catalogueStale = true;
-      this.accountState = event.account;
+      this.noteAccount(event.account);
       this.publish({ type: "snapshot", state: this.snapshot() });
       if (this.available) void this.refreshModels();
       return;
@@ -723,7 +735,7 @@ export class App {
       return;
     }
     if (command.type === "chooseModel") {
-      const choices = resolveModel(this.catalogue, this.settings.model).state.choices;
+      const choices = resolveModel(this.listOnHand(), this.settings.model).state.choices;
       if (!choices.some((choice) => choice.id === command.model)) {
         reply({ type: "problem", text: "Ese modelo no está disponible en tu cuenta. Elegí otro de la lista." });
         return;
@@ -844,12 +856,17 @@ export class App {
     // before it commits leaves the queue exactly as it found it: the notices it
     // queued are dropped and the older ones stay for the work that is sent.
     const queuedDetails = [...this.pendingDetails];
-    // The same choice for the whole request, even if the user changes it meanwhile.
-    const model = resolveModel(this.catalogue, this.settings.model).selection;
     try {
-      this.accountState = await this.engine.account();
+      const account = await this.engine.account();
+      const wasCurrent = !this.catalogueStale;
+      this.noteAccount(account);
+      // Another account since the last list: that list is not this one's.
+      if (wasCurrent && this.catalogueStale && this.available) void this.refreshModels();
+      // Chosen after the account read, so another account's list is not used,
+      // and kept for the whole request even if the user changes it meanwhile.
+      const model = resolveModel(this.listOnHand(), this.settings.model).selection;
       this.publish({ type: "snapshot", state: this.snapshot() });
-      if (!this.accountState.connected) {
+      if (!account.connected) {
         reply({ type: "problem", text: problemText("disconnected") });
         return;
       }

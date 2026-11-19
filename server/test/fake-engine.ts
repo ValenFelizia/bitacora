@@ -62,8 +62,10 @@ export class FakeEngine implements Engine {
     this.emit({ type: "account", account: await this.account() });
     return { url: "https://example.test/login" };
   }
+  /** The account's mail; another value is another account. */
+  email?: string;
   async account(): Promise<Account> {
-    return { connected: this.connected };
+    return this.email ? { connected: this.connected, email: this.email } : { connected: this.connected };
   }
   async createWork(model?: ModelSelection) {
     this.modelRequests.push({ call: "create", model });

@@ -75,6 +75,18 @@ test("before the catalogue arrives the chosen model is still the one asked for",
   assert.equal(resolveModel(undefined).selection.model, "gpt-6.2-sol");
 });
 
+test("a catalogue that arrived empty, or with only Astra, is not a missing one", () => {
+  for (const catalogue of [[], FAKE_CATALOGUE.filter((model) => /astra/.test(model.id))]) {
+    const { selection, state } = resolveModel(catalogue);
+    assert.equal(selection.model, "gpt-6.2-sol");
+    assert.deepEqual(state.choices, []);
+    assert.equal(state.listed, true);
+    assert.equal(state.notice, "Tu cuenta no tiene modelos disponibles para Bitácora.");
+  }
+  assert.equal(resolveModel(undefined).state.listed, false);
+  assert.equal(resolveModel(FAKE_CATALOGUE).state.listed, true);
+});
+
 test("a model without high reasoning keeps its own default", () => {
   const plain: EngineModel = { id: "gpt-6-luna", displayName: "GPT-6-Luna", efforts: ["low", "medium"], defaultEffort: "medium", isDefault: false };
   const { selection, state } = resolveModel([plain], "gpt-6-luna");
@@ -379,6 +391,57 @@ test("after a change of account a failed list does not offer the old account's m
   } finally {
     await f.app.close();
     await rm(f.dir, { recursive: true, force: true });
+  }
+});
+
+test("another account read by a request does not use the old account's list", async () => {
+  await mkdir(".local", { recursive: true });
+  const dir = await mkdtemp(resolve(".local/models-app-"));
+  const engine = new FakeEngine();
+  engine.email = "fer@example.test";
+  // The first account has no GPT-6.2 Sol: its list falls back to GPT-6.1 Terra.
+  engine.catalogue = FAKE_CATALOGUE.filter((model) => model.id !== "gpt-6.2-sol");
+  const app = new App(engine, dir, () => {});
+  try {
+    await app.start();
+    await until(() => app.snapshot().model?.current.id === "gpt-6.1-terra" && app.snapshot().model?.listing === false);
+    // The account changes and the request reads it before any account event.
+    engine.email = "otra@example.test";
+    engine.catalogue = "fail";
+    await app.command({ type: "send", text: "Armame una propuesta" }, () => {});
+    assert.deepEqual(engine.modelRequests[0], { call: "create", model: { model: "gpt-6.2-sol", effort: "high" } });
+    // The event that follows sees the same mail; the old list is still not offered.
+    engine.emit({ type: "account", account: await engine.account() });
+    await until(() => app.snapshot().model?.listing === false);
+    assert.deepEqual(app.snapshot().model?.choices, []);
+    assert.equal(app.snapshot().model?.listed, false);
+    // And the menu asks again, even though the old list was recent.
+    engine.catalogue = FAKE_CATALOGUE;
+    await app.command({ type: "refreshModels" }, () => {});
+    await until(() => app.snapshot().model?.choices.length === 4);
+  } finally {
+    await app.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("an empty list that arrived is not asked again from the menu", async () => {
+  await mkdir(".local", { recursive: true });
+  const dir = await mkdtemp(resolve(".local/models-app-"));
+  const engine = new FakeEngine();
+  engine.catalogue = [];
+  const app = new App(engine, dir, () => {});
+  try {
+    await app.start();
+    await until(() => app.snapshot().model?.listing === false && app.snapshot().model?.listed === true);
+    assert.equal(app.snapshot().model?.notice, "Tu cuenta no tiene modelos disponibles para Bitácora.");
+    const lists = engine.modelLists;
+    await app.command({ type: "refreshModels" }, () => {});
+    await delay(20);
+    assert.equal(engine.modelLists, lists);
+  } finally {
+    await app.close();
+    await rm(dir, { recursive: true, force: true });
   }
 });
 

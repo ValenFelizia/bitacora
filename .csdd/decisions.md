@@ -401,8 +401,12 @@ accepted direction from implementation alone.
     (Codex arrancando o sin respuesta), el pedido sale igual con el modelo
     elegido. Abrir el menú vuelve a pedir la lista si no hay, si tiene más de
     10 minutos o si es de otra cuenta, y el menú ofrece «Volver a intentar».
-    Si cambia la cuenta y la lista nueva falla, no se ofrecen los modelos de la
-    cuenta anterior.
+    Si cambia la cuenta (lo note un aviso de Codex o la lectura de la cuenta que
+    hace cada pedido), la lista que había se marca como de la cuenta anterior:
+    ni el menú ni ese pedido la usan, y si la nueva falla no vuelve. Una lista
+    que llegó vacía, o solo con Astra, no es una lista que falta: se dice que la
+    cuenta no tiene modelos disponibles para Bitácora y no se ofrece el
+    reintento.
   - **Astra no sale nunca:** un Astra guardado en `settings.json` se descarta al
     leerlo y `resolveModel` no lo usa aunque falte la lista; en su lugar va el
     predeterminado. `thread/start` manda `allowProviderModelFallback: false`

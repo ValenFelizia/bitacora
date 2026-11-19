@@ -41,8 +41,10 @@ export type ModelState = {
   current: ModelChoice;
   /** The effort in plain words, for the screen. */
   effortText: string;
-  /** Empty while the account's catalogue is unknown. */
+  /** Empty while the account's catalogue is unknown, or when it has nothing allowed. */
   choices: ModelChoice[];
+  /** True once the catalogue arrived, even empty: only a missing one can be asked again. */
+  listed: boolean;
   /** Said when the chosen or the recommended model is not in the account. */
   notice?: string;
   /** True while the app is asking the engine for the catalogue. */
@@ -81,6 +83,9 @@ export function modelDescription(id: string): string {
   if (/luna/i.test(id)) return "Rápido y económico, para pedidos simples.";
   return "Otro modelo disponible en tu cuenta.";
 }
+
+/** A catalogue that arrived with nothing allowed in it: empty, or only Astra. */
+export const NO_MODELS = "Tu cuenta no tiene modelos disponibles para Bitácora.";
 
 const EFFORT_TEXT: Record<string, string> = {
   low: "razonamiento bajo",
@@ -123,6 +128,7 @@ export function resolveModel(
         current: choice(id, model?.displayName),
         effortText: EFFORT_TEXT[effort] ?? `razonamiento ${effort}`,
         choices,
+        listed: catalogue !== undefined,
         ...(notice ? { notice } : {}),
       },
     };
@@ -134,7 +140,7 @@ export function resolveModel(
     allowed.find((model) => model.id === DEFAULT_MODEL) ??
     allowed.find((model) => model.isDefault) ??
     allowed[0];
-  if (!fallback) return pick(undefined, "No encontré modelos disponibles en tu cuenta.");
+  if (!fallback) return pick(undefined, NO_MODELS);
   return pick(
     fallback,
     `${modelName(wanted)} no está disponible en tu cuenta. Uso ${modelName(fallback.id, fallback.displayName)}.`,

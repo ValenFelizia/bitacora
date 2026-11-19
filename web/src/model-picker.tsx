@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, RotateCcw } from "lucide-react";
 import type { ModelState } from "../../server/src/contracts";
+import { NO_MODELS } from "../../server/src/models";
 
 const focusRing =
   "focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2";
@@ -132,6 +133,10 @@ export function ModelPicker({
           {model.choices.length ? (
             <p className="mt-1 border-t border-line px-3 pt-2 pb-1.5 text-[13px] text-muted leading-snug">
               {`Trabaja con ${model.effortText}: cuanto más alto, más piensa antes de responder. El cambio vale para todos tus trabajos desde el próximo pedido.`}
+            </p>
+          ) : model.listed ? (
+            <p role="status" className="mt-1 border-t border-line px-3 pt-2 pb-1.5 text-[13px] text-muted leading-snug">
+              {`${NO_MODELS} Si pedís algo, lo intento con este.`}
             </p>
           ) : (
             <div className="mt-1 border-t border-line px-3 pt-2 pb-2 flex flex-col items-start gap-2">

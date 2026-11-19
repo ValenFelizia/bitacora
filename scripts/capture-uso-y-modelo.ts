@@ -228,6 +228,16 @@ try {
     await retry.click();
     await desktop.getByRole("menuitemradio", { name: /GPT-6.1 Terra/ }).waitFor();
     await desktop.keyboard.press("Escape");
+
+    // An account whose list arrived with nothing allowed: no retry to offer.
+    engine.catalogue = FAKE_CATALOGUE.filter((model) => /astra/.test(model.id));
+    engine.emit({ type: "account", account: { connected: true, email: "tercera@example.test" } });
+    await desktop.getByText("Tu cuenta no tiene modelos disponibles para Bitácora.", { exact: true }).waitFor();
+    await picker.click();
+    await desktop.getByText(/Si pedís algo, lo intento con este/).waitFor();
+    assert.equal(await desktop.getByRole("menuitem", { name: "Volver a intentar" }).count(), 0);
+    await desktop.screenshot({ path: file("selector-modelo-sin-modelos"), clip: { x: 220, y: 300, width: 760, height: 500 } });
+    await desktop.keyboard.press("Escape");
   }
 
   if (errors.length) throw new Error(errors.join("\n"));
