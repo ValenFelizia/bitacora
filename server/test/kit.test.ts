@@ -1,7 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, rmdir, symlink, writeFile } from 'node:fs/promises';
-import { createHash } from 'node:crypto';
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, rmdir, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { KIT_SKILLS } from '../src/agency-environment';
@@ -170,13 +169,8 @@ test('two requests at once after a failed kit copy never start together', async 
     await app.start();
     assert.match(app.snapshot().notice ?? '', /No pude preparar la carpeta de tu agencia/);
     await rmdir(join(root, 'ejemplo'));
-    // The copy already wrote every file; the marker is what a complete copy
-    // leaves, so both retries find the agency ready and the only thing under
-    // test is that they do not start together.
-    const workspace = await realpath(root);
-    const marker = `kit-initialized-${createHash('sha256').update(workspace.toLowerCase()).digest('hex')}.json`;
-    await writeFile(join(data, marker), JSON.stringify({ version: 1, workspace }), 'utf8');
-
+    // Both requests find the copy broken and try again. They share one copy:
+    // a second one racing the marker would leave a false failure notice.
     await Promise.all([
       app.command({ type: 'send', text: 'Uno' }, (message) => replies.push(message as { type: string; text?: string })),
       app.command({ type: 'send', text: 'Dos' }, (message) => replies.push(message as { type: string; text?: string })),
@@ -185,6 +179,45 @@ test('two requests at once after a failed kit copy never start together', async 
     assert.equal(replies.filter((reply) => reply.type === 'problem').length, 1);
     assert.match(replies.find((reply) => reply.type === 'problem')?.text ?? '', /Esperá a que termine/);
     assert.equal(app.snapshot().works.length, 1);
+    assert.equal(
+      (await readdir(data)).filter((name) => name.startsWith('kit-initialized-')).length,
+      1,
+      'the copy leaves one marker',
+    );
+    assert.equal(app.snapshot().notice, undefined, 'no false failure notice');
+  } finally {
+    await app.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+test('a successful copy clears the kit notice even when the request cannot start', async () => {
+  await mkdir(base, { recursive: true });
+  const dir = await mkdtemp(join(base, 'kit notice '));
+  const root = join(dir, 'agencia'), data = join(dir, 'datos'), kit = join(dir, 'kit');
+  const outside = join(dir, 'afuera');
+  await mkdir(root); await mkdir(data); await mkdir(kit); await mkdir(outside);
+  await mkdir(join(kit, '.agents', 'skills', 'entrevista'), { recursive: true });
+  await writeFile(join(kit, '.agents', 'skills', 'entrevista', 'SKILL.md'), '---\nname: entrevista\ndescription: Del kit.\n---\n');
+  await writeFile(join(kit, 'AGENTS.md'), 'Instrucciones del kit\n');
+  await mkdir(join(kit, 'ejemplo'));
+  await writeFile(join(kit, 'ejemplo', 'pieza.html'), '<p>hola</p>');
+  await symlink(outside, join(root, 'ejemplo'), 'junction');
+  const engine = new FakeEngine();
+  const app = new App(engine, data, () => {}, undefined, new WorkspaceFiles(root), kit);
+  const replies: Array<{ type: string; text?: string }> = [];
+  try {
+    await app.start();
+    assert.match(app.snapshot().notice ?? '', /No pude preparar la carpeta de tu agencia/);
+    // The copy will work this time, but the account is gone: the request stops
+    // before it starts. The old failure notice is no longer true.
+    engine.connected = false;
+    await rmdir(join(root, 'ejemplo'));
+    await app.command({ type: 'send', text: 'Un pedido' }, (message) => replies.push(message as { type: string; text?: string }));
+    assert.equal(replies[0]?.type, 'problem');
+    assert.match(replies[0]?.text ?? '', /cuenta de ChatGPT está desconectada/);
+    assert.equal(app.snapshot().notice, undefined, 'the kit failure notice is gone');
+    assert.equal(app.snapshot().works.length, 0);
+    assert.equal(await readFile(join(root, 'AGENTS.md'), 'utf8'), 'Instrucciones del kit\n');
   } finally {
     await app.close();
     await rm(dir, { recursive: true, force: true });

@@ -16,6 +16,12 @@ type SavedWork = Work & { conversationId: string; titlePending?: boolean; rename
 const isText = (value: unknown) => typeof value === "string";
 /** How long close() lets a title request already in flight finish before stopping the engine. */
 const TITLE_CLOSE_WAIT_MS = 400;
+/**
+ * What the app says when the single kit copy fails. Kept as one string so a
+ * copy that works can tell whether the visible notice is still that failure.
+ */
+const KIT_NOT_READY =
+  "No pude preparar la carpeta de tu agencia. Sin los archivos del kit no puedo empezar tus pedidos. Volvé a abrir Bitácora para intentarlo de nuevo.";
 const isFileRef = (value: unknown) => {
   const file = value as Partial<FileRef> | null;
   return !!file && isText(file.id) && isText(file.path) && isText(file.name) && isText(file.mime) && isText(file.createdAt);
@@ -62,6 +68,8 @@ export class App {
    */
   private kitProblem?: string;
   private kitDetail?: string;
+  /** The copy in flight, shared by every request that arrives meanwhile. */
+  private kitPreparing?: Promise<boolean>;
   private available = false;
   private starting = true;
   private exhausted = false;
@@ -113,20 +121,34 @@ export class App {
    * notice). Without the rest of the kit the agency would have no `AGENTS.md`,
    * so a failed copy leaves `kitProblem` set and `command()` refuses requests
    * until a copy works.
+   *
+   * One copy at a time: a second request waits for the promise already in
+   * flight instead of racing the marker and reporting a false failure.
    */
-  private async prepareKit(): Promise<boolean> {
-    if (!this.workspace) return true;
+  private prepareKit(): Promise<boolean> {
+    if (!this.workspace) return Promise.resolve(true);
+    this.kitPreparing ??= this.runPrepareKit().finally(() => {
+      this.kitPreparing = undefined;
+    });
+    return this.kitPreparing;
+  }
+  private async runPrepareKit(): Promise<boolean> {
     try {
-      const kit = await initializeKit(this.workspace.root, this.data, this.kitSource);
+      const kit = await initializeKit(this.workspace!.root, this.data, this.kitSource);
       this.kitProblem = undefined;
       this.kitDetail = undefined;
+      // A copy that works makes the old failure notice wrong: it said to reopen
+      // the app, and that is no longer true.
+      if (this.notice === KIT_NOT_READY) {
+        this.notice = undefined;
+        this.publish({ type: "snapshot", state: this.snapshot() });
+      }
       if (kit.skillsError)
         this.notice =
           "No pude poner al día las guías de trabajo del kit. Podés seguir trabajando; si faltan, reiniciá Bitácora.";
       return true;
     } catch (error) {
-      this.kitProblem =
-        "No pude preparar la carpeta de tu agencia. Sin los archivos del kit no puedo empezar tus pedidos. Volvé a abrir Bitácora para intentarlo de nuevo.";
+      this.kitProblem = KIT_NOT_READY;
       this.kitDetail = String(error);
       this.notice = this.kitProblem;
       return false;
