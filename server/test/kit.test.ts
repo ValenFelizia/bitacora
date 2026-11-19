@@ -1,8 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, symlink } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, rmdir, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
+import { KIT_SKILLS } from '../src/agency-environment';
+import { App } from '../src/app';
+import { WorkspaceFiles } from '../src/workspace-files';
+import { FakeEngine } from './fake-engine';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { callKitTool, connectKitClient, listKitTools } from './mcp-client';
@@ -36,6 +40,188 @@ test('path boundaries, Windows names, links and kit preservation', async () => {
     assert.equal(await f.files.read('AGENTS.md'), 'Instrucciones propias');
     assert.match(await f.files.read('ejemplo/pieza.html'), /data-cites/);
   } finally { await f.close(); }
+});
+test('kit skills arrive in an agency initialized before the kit shipped them', async () => {
+  const f = await fixture();
+  try {
+    await initializeKit(f.root, f.data);
+    const skill = '.agents/skills/entrevista/SKILL.md';
+    assert.match(await f.files.read(skill), /Armar tu agencia/);
+    // The agency edits a file outside the skills, and a skill gets removed as a
+    // previous app version would have left the folder.
+    await f.files.write('AGENTS.md', 'Instrucciones propias', false);
+    await rm(join(f.root, '.agents'), { recursive: true, force: true });
+    await initializeKit(f.root, f.data);
+    assert.equal(await f.files.read('AGENTS.md'), 'Instrucciones propias');
+    assert.match(await f.files.read(skill), /Armar tu agencia/);
+    // Every skill the policy allows is there, and nothing else in that folder.
+    const folders = (await readdir(join(f.root, '.agents', 'skills'), { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort();
+    assert.deepEqual(folders, [...KIT_SKILLS].sort());
+  } finally { await f.close(); }
+});
+test('a read-only or edited skill never keeps the app from opening, and the kit text comes back', async () => {
+  await mkdir(base, { recursive: true });
+  const dir = await mkdtemp(join(base, 'skills '));
+  const root = join(dir, 'agencia'), data = join(dir, 'datos'), kit = join(dir, 'kit');
+  await mkdir(root); await mkdir(data);
+  const skill = join(kit, '.agents', 'skills', 'entrevista');
+  await mkdir(skill, { recursive: true });
+  const text = '---\nname: entrevista\ndescription: Del kit.\n---\nContenido del kit.\n';
+  await writeFile(join(skill, 'SKILL.md'), text);
+  await writeFile(join(kit, 'AGENTS.md'), 'Instrucciones del kit\n');
+  const target = join(root, '.agents', 'skills', 'entrevista', 'SKILL.md');
+  const files = new WorkspaceFiles(root);
+  const start = async () => {
+    const app = new App(new FakeEngine(), data, () => {}, undefined, files, kit);
+    await app.start();
+    return app;
+  };
+  try {
+    let app = await start();
+    assert.equal(await readFile(target, 'utf8'), text);
+    await app.close();
+
+    // Read-only with the kit's bytes: nothing is written, so the start is clean.
+    await chmod(target, 0o444);
+    app = await start();
+    assert.equal(app.snapshot().engine.available, true);
+    assert.equal(app.snapshot().notice, undefined);
+    await app.close();
+
+    // Edited and read-only: the refresh cannot write it, and that is a notice,
+    // never a failed start.
+    await chmod(target, 0o666);
+    await writeFile(target, 'editado por la agencia', 'utf8');
+    await chmod(target, 0o444);
+    app = await start();
+    assert.equal(app.snapshot().engine.available, true);
+    assert.match(app.snapshot().notice ?? '', /No pude poner al día las guías/);
+    await app.close();
+
+    // Writable again: the kit's own text comes back.
+    await chmod(target, 0o666);
+    app = await start();
+    assert.equal(await readFile(target, 'utf8'), text);
+    await app.close();
+  } finally {
+    await chmod(target, 0o666).catch(() => {});
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+test('the app opens but refuses requests when the single kit copy fails, until it works', async () => {
+  await mkdir(base, { recursive: true });
+  const dir = await mkdtemp(join(base, 'kit copy '));
+  const root = join(dir, 'agencia'), data = join(dir, 'datos'), kit = join(dir, 'kit');
+  const outside = join(dir, 'afuera');
+  await mkdir(root); await mkdir(data); await mkdir(kit); await mkdir(outside);
+  await mkdir(join(kit, '.agents', 'skills', 'entrevista'), { recursive: true });
+  await writeFile(join(kit, '.agents', 'skills', 'entrevista', 'SKILL.md'), '---\nname: entrevista\ndescription: Del kit.\n---\n');
+  await writeFile(join(kit, 'AGENTS.md'), 'Instrucciones del kit\n');
+  await mkdir(join(kit, 'ejemplo'));
+  await writeFile(join(kit, 'ejemplo', 'pieza.html'), '<p>hola</p>');
+  // A junction where the single copy has to write: the copy cannot run, so the
+  // agency would have no rules if the request were allowed.
+  await symlink(outside, join(root, 'ejemplo'), 'junction');
+  const files = new WorkspaceFiles(root);
+  const app = new App(new FakeEngine(), data, () => {}, undefined, files, kit);
+  const replies: Array<{ type: string; text?: string }> = [];
+  try {
+    await app.start();
+    assert.equal(app.snapshot().engine.available, true);
+    assert.match(app.snapshot().notice ?? '', /No pude preparar la carpeta de tu agencia/);
+
+    await app.command({ type: 'send', text: 'Un pedido' }, (message) => replies.push(message as { type: string; text?: string }));
+    assert.equal(replies[0]?.type, 'problem');
+    assert.match(replies[0]?.text ?? '', /No pude preparar la carpeta de tu agencia/);
+    assert.equal(app.snapshot().works.length, 0, 'no request runs without the kit');
+
+    // The obstruction goes away: the next request copies the kit and runs.
+    await rmdir(join(root, 'ejemplo'));
+    await app.command({ type: 'send', text: 'Un pedido' }, (message) => replies.push(message as { type: string; text?: string }));
+    assert.equal(replies[1]?.type, 'selected');
+    assert.equal(app.snapshot().works.length, 1);
+    assert.equal(await readFile(join(root, 'AGENTS.md'), 'utf8'), 'Instrucciones del kit\n');
+    assert.deepEqual(await readdir(outside), [], 'the junction target was not written');
+  } finally {
+    await app.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+test('two requests at once after a failed kit copy never start together', async () => {
+  await mkdir(base, { recursive: true });
+  const dir = await mkdtemp(join(base, 'kit race '));
+  const root = join(dir, 'agencia'), data = join(dir, 'datos'), kit = join(dir, 'kit');
+  const outside = join(dir, 'afuera');
+  await mkdir(root); await mkdir(data); await mkdir(kit); await mkdir(outside);
+  await mkdir(join(kit, '.agents', 'skills', 'entrevista'), { recursive: true });
+  await writeFile(join(kit, '.agents', 'skills', 'entrevista', 'SKILL.md'), '---\nname: entrevista\ndescription: Del kit.\n---\n');
+  await writeFile(join(kit, 'AGENTS.md'), 'Instrucciones del kit\n');
+  await mkdir(join(kit, 'ejemplo'));
+  await writeFile(join(kit, 'ejemplo', 'pieza.html'), '<p>hola</p>');
+  await symlink(outside, join(root, 'ejemplo'), 'junction');
+  const files = new WorkspaceFiles(root);
+  const app = new App(new FakeEngine(), data, () => {}, undefined, files, kit);
+  const replies: Array<{ type: string; text?: string }> = [];
+  try {
+    await app.start();
+    assert.match(app.snapshot().notice ?? '', /No pude preparar la carpeta de tu agencia/);
+    await rmdir(join(root, 'ejemplo'));
+    // Both requests find the copy broken and try again. They share one copy:
+    // a second one racing the marker would leave a false failure notice.
+    await Promise.all([
+      app.command({ type: 'send', text: 'Uno' }, (message) => replies.push(message as { type: string; text?: string })),
+      app.command({ type: 'send', text: 'Dos' }, (message) => replies.push(message as { type: string; text?: string })),
+    ]);
+    assert.equal(replies.filter((reply) => reply.type === 'selected').length, 1);
+    assert.equal(replies.filter((reply) => reply.type === 'problem').length, 1);
+    assert.match(replies.find((reply) => reply.type === 'problem')?.text ?? '', /Esperá a que termine/);
+    assert.equal(app.snapshot().works.length, 1);
+    assert.equal(
+      (await readdir(data)).filter((name) => name.startsWith('kit-initialized-')).length,
+      1,
+      'the copy leaves one marker',
+    );
+    assert.equal(app.snapshot().notice, undefined, 'no false failure notice');
+  } finally {
+    await app.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+test('a successful copy clears the kit notice even when the request cannot start', async () => {
+  await mkdir(base, { recursive: true });
+  const dir = await mkdtemp(join(base, 'kit notice '));
+  const root = join(dir, 'agencia'), data = join(dir, 'datos'), kit = join(dir, 'kit');
+  const outside = join(dir, 'afuera');
+  await mkdir(root); await mkdir(data); await mkdir(kit); await mkdir(outside);
+  await mkdir(join(kit, '.agents', 'skills', 'entrevista'), { recursive: true });
+  await writeFile(join(kit, '.agents', 'skills', 'entrevista', 'SKILL.md'), '---\nname: entrevista\ndescription: Del kit.\n---\n');
+  await writeFile(join(kit, 'AGENTS.md'), 'Instrucciones del kit\n');
+  await mkdir(join(kit, 'ejemplo'));
+  await writeFile(join(kit, 'ejemplo', 'pieza.html'), '<p>hola</p>');
+  await symlink(outside, join(root, 'ejemplo'), 'junction');
+  const engine = new FakeEngine();
+  const app = new App(engine, data, () => {}, undefined, new WorkspaceFiles(root), kit);
+  const replies: Array<{ type: string; text?: string }> = [];
+  try {
+    await app.start();
+    assert.match(app.snapshot().notice ?? '', /No pude preparar la carpeta de tu agencia/);
+    // The copy will work this time, but the account is gone: the request stops
+    // before it starts. The old failure notice is no longer true.
+    engine.connected = false;
+    await rmdir(join(root, 'ejemplo'));
+    await app.command({ type: 'send', text: 'Un pedido' }, (message) => replies.push(message as { type: string; text?: string }));
+    assert.equal(replies[0]?.type, 'problem');
+    assert.match(replies[0]?.text ?? '', /cuenta de ChatGPT está desconectada/);
+    assert.equal(app.snapshot().notice, undefined, 'the kit failure notice is gone');
+    assert.equal(app.snapshot().works.length, 0);
+    assert.equal(await readFile(join(root, 'AGENTS.md'), 'utf8'), 'Instrucciones del kit\n');
+  } finally {
+    await app.close();
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 test('fetch with explicit test-only local grant, photos, append, SSRF and redirect rejection', async () => {
   const f = await fixture();

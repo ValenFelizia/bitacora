@@ -16,6 +16,12 @@ type SavedWork = Work & { conversationId: string; titlePending?: boolean; rename
 const isText = (value: unknown) => typeof value === "string";
 /** How long close() lets a title request already in flight finish before stopping the engine. */
 const TITLE_CLOSE_WAIT_MS = 400;
+/**
+ * What the app says when the single kit copy fails. Kept as one string so a
+ * copy that works can tell whether the visible notice is still that failure.
+ */
+const KIT_NOT_READY =
+  "No pude preparar la carpeta de tu agencia. Sin los archivos del kit no puedo empezar tus pedidos. Volvé a abrir Bitácora para intentarlo de nuevo.";
 const isFileRef = (value: unknown) => {
   const file = value as Partial<FileRef> | null;
   return !!file && isText(file.id) && isText(file.path) && isText(file.name) && isText(file.mime) && isText(file.createdAt);
@@ -54,6 +60,16 @@ export class App {
   private scanning = new Set<string>();
   private scans = new Set<Promise<void>>();
   private notice?: string;
+  /**
+   * Set when the single kit copy fails. The rest of the kit is what gives the
+   * agency its rules (`AGENTS.md`) and the example, so no request runs until
+   * the copy works; it is retried on each start and on each request. Only the
+   * skills refresh may fail softly (DEC-011).
+   */
+  private kitProblem?: string;
+  private kitDetail?: string;
+  /** The copy in flight, shared by every request that arrives meanwhile. */
+  private kitPreparing?: Promise<boolean>;
   private available = false;
   private starting = true;
   private exhausted = false;
@@ -99,10 +115,62 @@ export class App {
     await this.initialize();
     await this.startEngine();
   }
+  /**
+   * Copies the kit into a new agency and refreshes its skills on every start.
+   * Only the skills refresh may fail softly (a read-only or busy skill is a
+   * notice). Without the rest of the kit the agency would have no `AGENTS.md`,
+   * so a failed copy leaves `kitProblem` set and `command()` refuses requests
+   * until a copy works.
+   *
+   * One copy at a time: a second request waits for the promise already in
+   * flight instead of racing the marker and reporting a false failure.
+   */
+  private prepareKit(): Promise<boolean> {
+    if (!this.workspace) return Promise.resolve(true);
+    this.kitPreparing ??= this.runPrepareKit().finally(() => {
+      this.kitPreparing = undefined;
+    });
+    return this.kitPreparing;
+  }
+  private async runPrepareKit(): Promise<boolean> {
+    try {
+      const kit = await initializeKit(this.workspace!.root, this.data, this.kitSource);
+      this.kitProblem = undefined;
+      this.kitDetail = undefined;
+      // A copy that works makes the old failure notice wrong: it said to reopen
+      // the app, and that is no longer true.
+      if (this.notice === KIT_NOT_READY) {
+        this.notice = undefined;
+        this.publish({ type: "snapshot", state: this.snapshot() });
+      }
+      if (kit.skillsError)
+        this.notice =
+          "No pude poner al día las guías de trabajo del kit. Podés seguir trabajando; si faltan, reiniciá Bitácora.";
+      return true;
+    } catch (error) {
+      this.kitProblem = KIT_NOT_READY;
+      this.kitDetail = String(error);
+      this.notice = this.kitProblem;
+      return false;
+    }
+  }
+  /**
+   * Refuses a new request while another one is running (or waiting on a
+   * question). Used before starting and again after any wait, because the state
+   * can change while a request is preparing the kit.
+   */
+  private refuseWhileBusy(reply: (message: ServerMessage) => void): boolean {
+    if (!this.submitting && !this.works.some((work) => work.busy)) return false;
+    const asking = this.works.find((work) => work.busy && work.question && !work.question.closed);
+    reply(asking
+      ? { type: "problem", text: `Te hice una pregunta en «${asking.title}»: respondela para seguir.`, workId: asking.id }
+      : { type: "problem", text: "Esperá a que termine el pedido actual o pausalo." });
+    return true;
+  }
   async initialize() {
     await mkdir(this.data, { recursive: true });
     await this.workspace?.initialize();
-    if (this.workspace) await initializeKit(this.workspace.root, this.data, this.kitSource);
+    if (this.workspace) await this.prepareKit();
     try {
       const saved = JSON.parse(
         await readFile(join(this.data, "works.json"), "utf8"),
@@ -374,7 +442,12 @@ export class App {
         void this.engine.answer(event.conversationId, event.id, {}).catch(() => {});
       if (event.type === "detail" && !event.conversationId) {
         this.pendingDetails.push({ text: event.text, key: event.key });
-        if (this.pendingDetails.length > 50) this.pendingDetails.shift();
+        if (this.pendingDetails.length > 50) {
+          // A notice the cap pushes out is never shown, so the engine has to
+          // say it again: its key cannot stay as if it had been said.
+          const dropped = this.pendingDetails.shift();
+          if (dropped?.key) this.engine.forgetDetails([dropped.key]);
+        }
       } else if (event.type === "problem")
         this.publish({
           type: "problem",
@@ -601,13 +674,7 @@ export class App {
     )
       throw new Error("Invalid request");
     if (this.backups?.restoring) { reply({ type: "problem", text: "Primero elegí Reintentar deshacer o Dejar la carpeta como está." }); return; }
-    if (this.submitting || this.works.some((w) => w.busy)) {
-      const asking = this.works.find((w) => w.busy && w.question && !w.question.closed);
-      reply(asking
-        ? { type: "problem", text: `Te hice una pregunta en «${asking.title}»: respondela para seguir.`, workId: asking.id }
-        : { type: "problem", text: "Esperá a que termine el pedido actual o pausalo." });
-      return;
-    }
+    if (this.refuseWhileBusy(reply)) return;
     if (this.starting || !this.available || !this.engine.executionSafety().allowed) {
       const safety = this.engine.executionSafety();
       reply({
@@ -625,6 +692,17 @@ export class App {
     }
     const uploads = this.workspace?.validate(command.attachments);
     if (command.attachments?.length && !this.workspace) throw new Error("Attachments unavailable");
+    // The kit carries the agency rules, so a request does not run without it.
+    // The copy is tried again here: the file that failed may be free by now,
+    // and the notice stays until it works.
+    if (this.kitProblem && !(await this.prepareKit())) {
+      this.notice = this.kitProblem;
+      reply({ type: "problem", text: this.kitProblem, detail: this.kitDetail });
+      return;
+    }
+    // The wait above may have been long enough for another request to start:
+    // only one request at a time may touch the backups and the pending files.
+    if (this.refuseWhileBusy(reply)) return;
     this.submitting = true;
     let work: SavedWork | undefined;
     let attachments: FileRef[] = [];

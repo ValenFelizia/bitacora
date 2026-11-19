@@ -109,9 +109,14 @@ adjuntos, galería y Deshacer.
 Al iniciar la app, antes del motor y del primer escaneo, se copia `kit/turismo/` a la carpeta de la agencia
 una sola vez, sin reemplazar archivos existentes, y deja la marca
 `kit-initialized-<identidad de la agencia>.json` en la carpeta de datos, fuera de
-la agencia. No repone archivos borrados aunque se vacíe toda la agencia.
+la agencia. No repone archivos borrados aunque se vacíe toda la agencia, salvo
+`.agents/skills`: esas skills se copian en cada arranque, solo si los bytes
+cambiaron, para que una agencia ya inicializada también las reciba. Un error al
+refrescarlas no impide abrir la app: queda como aviso.
 Las instrucciones, el HTML de ejemplo y las reglas son
-archivos que el agente puede modificar conversando con la usuaria. No incluyen
+archivos que el agente puede modificar conversando con la usuaria; las skills de
+`.agents/skills` no, porque Bitácora las repone. Los ajustes de tono y estilo
+van a `marca/voz.md` o a `AGENTS.md`. El kit no incluye
 marca ni tono de una agencia: eso corresponde a #7.
 
 La app registra un servidor MCP por stdio en **su propio** `CODEX_HOME`.
