@@ -13,9 +13,11 @@ import { agentAnswer, answerRecord } from "./questions";
 import type { FileRef, Message, Work, Snapshot, ClientCommand, ServerMessage, PendingQuestion } from "./contracts";
 import { PANEL_WIDTH } from "./contracts";
 import { isAllowedModel, resolveModel, type EngineModel } from "./models";
+import { readWelcomeProfile, saveWelcomeProfile } from "./welcome-profile";
+import { WelcomeProblem, profileNotes, welcomeAnswers, type WelcomeAnswers, type WelcomeUseId } from "./welcome";
 
 /** Choices kept for the whole app in `settings.json`, not per work (DEC-014). */
-type Settings = { model?: string; panelWidth?: number };
+type Settings = { model?: string; panelWidth?: number; welcome?: "done" | "skipped" };
 
 type SavedWork = Work & { conversationId: string; titlePending?: boolean; renamedByUser?: boolean; pendingFiles?: { messageId: string; before?: Record<string, string> } };
 const isText = (value: unknown) => typeof value === "string";
@@ -112,6 +114,13 @@ export class App {
   private queuedQuestions = new Map<string, PendingQuestion[]>();
   private settings: Settings = {};
   private settingsWrites: Promise<void> = Promise.resolve();
+  /** Uses the welcome marked, which pick the suggested routes. */
+  private uses: WelcomeUseId[] = [];
+  /**
+   * A welcome command is being saved. Set synchronously before any wait, so a
+   * second one (a double click, two windows) does not pass the same check.
+   */
+  private welcomeSaving = false;
   /** The account's models; undefined until the engine answers. */
   private catalogue?: EngineModel[];
   private catalogueAt = 0;
@@ -236,6 +245,19 @@ export class App {
     }
     for (const work of this.works) if (work.pendingFiles) { await this.collectResults(work); this.dirty = true; }
     await this.loadSettings();
+    if (this.workspace) {
+      // The profile is the agency's file, not a preference: it is read at each
+      // start, so an edit the agent or the person made counts from then on.
+      try {
+        const profile = await readWelcomeProfile(this.workspace.root);
+        this.uses = profile.uses;
+        // A profile with names, or an agency that already has its brand, means
+        // the questions were answered (or are not needed): a lost or damaged
+        // `settings.json` does not make Bitácora ask them again.
+        if (!this.settings.welcome && (profile.agency || profile.person)) this.settings.welcome = "done";
+        if (!this.settings.welcome && existsSync(join(this.workspace.root, "marca", "datos.md"))) this.settings.welcome = "done";
+      } catch { this.uses = []; this.addNotice("No pude leer el perfil de tu agencia. Las sugerencias son las de siempre."); }
+    }
   }
   /**
    * A missing file only means nothing was chosen yet. A damaged one is set
@@ -250,7 +272,7 @@ export class App {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") this.addNotice("No pude leer tus preferencias. Uso las de siempre.");
       return;
     }
-    let saved: { version?: unknown; model?: unknown; panelWidth?: unknown };
+    let saved: { version?: unknown; model?: unknown; panelWidth?: unknown; welcome?: unknown };
     try {
       saved = JSON.parse(text);
       if (!saved || typeof saved !== "object" || saved.version !== 1) throw new SyntaxError("Invalid settings");
@@ -270,6 +292,17 @@ export class App {
     if (typeof saved.model === "string" && saved.model && isAllowedModel({ id: saved.model })) this.settings.model = saved.model;
     if (typeof saved.panelWidth === "number" && Number.isFinite(saved.panelWidth))
       this.settings.panelWidth = Math.round(Math.min(PANEL_WIDTH.max, Math.max(PANEL_WIDTH.min, saved.panelWidth)));
+    if (saved.welcome === "done" || saved.welcome === "skipped") this.settings.welcome = saved.welcome;
+  }
+  /**
+   * The welcome answers as a sentence for the agent's developer instructions,
+   * with the values quoted and marked as data. A missing or unreadable profile
+   * is not a failure: the base instructions already say to ask for the names.
+   */
+  private async developerNotes(): Promise<string | undefined> {
+    if (!this.workspace) return undefined;
+    try { return profileNotes(await readWelcomeProfile(this.workspace.root)); }
+    catch { return undefined; }
   }
   private addNotice(text: string) {
     this.notice = this.notice ? `${this.notice} ${text}` : text;
@@ -362,6 +395,8 @@ export class App {
       fileRevision: this.fileRevision,
       model: { ...resolveModel(this.listOnHand(), this.settings.model).state, listing: this.listing },
       panelWidth: this.settings.panelWidth,
+      welcome: this.workspace ? (this.settings.welcome ?? "pending") : undefined,
+      uses: this.workspace ? [...this.uses] : undefined,
       works: this.works.map(({ conversationId: _, pendingFiles: __, titlePending: ___, renamedByUser: ____, ...work }) => work),
     };
   }
@@ -711,6 +746,47 @@ export class App {
       reply({ type: "login", ...(await this.engine.connectAccount()) });
       return;
     }
+    if (command.type === "welcome" || command.type === "skipWelcome") {
+      if (!this.workspace) throw new Error("Welcome unavailable");
+      // Another window answered first, or the previous answer is still being
+      // saved: the first one wins. Checked synchronously, before any await, so
+      // two commands that arrive together cannot both pass. The one that loses
+      // still gets the state, so its screen stops saying «Guardando…».
+      if (this.settings.welcome || this.welcomeSaving) {
+        reply({ type: "snapshot", state: this.snapshot() });
+        return;
+      }
+      this.welcomeSaving = true;
+      try {
+        if (command.type === "welcome") {
+          let answers: WelcomeAnswers;
+          try { answers = welcomeAnswers(command.answers); }
+          catch (error) {
+            if (error instanceof WelcomeProblem) { reply({ type: "problem", text: error.message }); return; }
+            throw error;
+          }
+          try { await saveWelcomeProfile(this.workspace.root, answers); }
+          catch (error) {
+            reply({ type: "problem", text: "No pude guardar tus respuestas en la carpeta de tu agencia. Probá de nuevo.", detail: String(error) });
+            return;
+          }
+          this.uses = answers.uses;
+        }
+        this.settings.welcome = command.type === "welcome" ? "done" : "skipped";
+        this.publish({ type: "snapshot", state: this.snapshot() });
+        try { await this.saveSettings(); }
+        catch (error) {
+          reply({
+            type: "problem",
+            text: command.type === "welcome"
+              ? "Guardé tus respuestas, pero no pude recordar que la bienvenida ya está hecha."
+              : "Seguimos, pero no pude recordar que salteaste la bienvenida.",
+            detail: String(error),
+          });
+        }
+      } finally { this.welcomeSaving = false; }
+      return;
+    }
     if (command.type === "rename") {
       const work = this.works.find((w) => w.id === command.workId);
       if (!work) throw new Error("Unknown work");
@@ -870,15 +946,17 @@ export class App {
         reply({ type: "problem", text: problemText("disconnected") });
         return;
       }
+      // What the welcome knows travels with the thread, quoted as data, so the
+      // agent does not ask again and does not read `perfil.md` every time.
       if (command.workId) {
         work = this.works.find((w) => w.id === command.workId);
         if (!work) throw new Error("Unknown work");
         if (!this.resumed.has(work.id)) {
-          await this.engine.resumeWork(work.conversationId, model);
+          await this.engine.resumeWork(work.conversationId, model, await this.developerNotes());
           this.resumed.add(work.id);
         }
       } else {
-        const created = await this.engine.createWork(model);
+        const created = await this.engine.createWork(model, await this.developerNotes());
         const now = new Date().toISOString();
         work = {
           id: randomUUID(),

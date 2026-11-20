@@ -443,3 +443,35 @@ accepted direction from implementation alone.
   el navegador no lo recordaría. Si `settings.json` está dañado, se aparta como
   `settings.corrupt-<fecha>.json`, igual que `works.json`, y la app vuelve a las
   preferencias de siempre con un aviso de una línea.
+
+## DEC-015 — La bienvenida se pregunta una vez, antes de conectar la cuenta
+
+- Status: accepted (2026-11-20, issue #67)
+- Context: la entrevista del agente preguntaba siempre lo mismo (el nombre de la
+  agencia, el de la persona y para qué va a usar Bitácora), y eso gastaba cupo y
+  tiempo en datos que se pueden saber desde el principio.
+- Decision: la primera vez que se abre Bitácora, la pantalla —sin agente— hace
+  tres preguntas, una por pantalla, con «Atrás» y «Saltear»: agencia, nombre y
+  usos (varias opciones más «Otra»). Va **antes de conectar ChatGPT**: no
+  necesita el motor ni la cuenta, así la app sirve desde el primer segundo y el
+  estado sin cuenta mantiene su única acción. Las respuestas quedan en
+  `perfil.md`, en la raíz de la carpeta de la agencia, en texto simple y
+  editable; si la carpeta todavía no existe, se crea solo la carpeta, no el kit
+  (eso es #65). Que ya se hizo o se salteó se recuerda en `settings.json`
+  (`welcome: "done" | "skipped"`).
+- Consequences: al crear o retomar la conversación, Bitácora lee `perfil.md` y
+  le pasa esos datos al agente en las instrucciones de desarrollador, entre
+  comillas y aclarando que son datos y no instrucciones; el `AGENTS.md` del kit
+  dice lo mismo y la skill `entrevista` nombra `perfil.md` como datos. Con esos
+  datos el agente no vuelve a preguntar los nombres (la entrevista pregunta solo
+  la firma si la agencia está) y no necesita leer el archivo en cada
+  conversación; si no hay perfil, las instrucciones le dicen que pregunte la
+  agencia y la firma. Los «Rumbos sugeridos» de la pantalla vacía salen de los
+  usos marcados, uno por tema; sin usos son los tres de siempre. `perfil.md` se
+  lee al arrancar (para las sugerencias) y al crear un trabajo o retomarlo por
+  primera vez en la sesión (para el agente): un cambio cuenta en los trabajos
+  nuevos; en uno ya abierto vale lo que se habló. **Sin verificar:** si
+  `developerInstructions` en `thread/resume` reemplaza o se suma a las del hilo
+  en el Codex real. Si se borra la carpeta de la agencia, la bienvenida no vuelve
+  a aparecer y `perfil.md` se pierde con ella: arreglarlo es parte de #65. Una
+  agencia que ya tiene `marca/datos.md` se toma como bienvenida.
