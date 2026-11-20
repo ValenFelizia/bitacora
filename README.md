@@ -10,6 +10,10 @@ Ejecutá **Bitácora … setup** y abrí **Bitácora** desde el menú Inicio.
 Si a tu compu le falta WebView2, el instalador lo descarga. Para dibujar las
 piezas, Bitácora usa Microsoft Edge, que viene con Windows.
 Tocá **Conectar cuenta** y seguí los pasos de ChatGPT en tu navegador.
+La primera vez que abrís Bitácora te hace tres preguntas (el nombre de tu
+agencia, el tuyo y para qué la vas a usar) y las guarda en `perfil.md`, dentro de
+la carpeta de la agencia: el agente las lee y no vuelve a preguntarlas, y podés
+pedirle que las cambie. Se pueden saltear.
 Para dictar, tocá el micrófono al lado de **Adjuntar archivos** y volvé a
 tocarlo para terminar. ChatGPT pasa el audio a texto y Bitácora lo agrega
 donde tenías el cursor. Revisalo y mandalo con Enter. Cada grabación dura

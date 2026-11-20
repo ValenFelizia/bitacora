@@ -99,6 +99,19 @@ Bitácora es el cuaderno de a bordo de la agencia: un registro de lo que se hizo
   - Conectada: abajo a la izquierda, el mail con el ícono `mail`. Sin puntito de estado.
   - Sin conectar: título en Young Serif («Conectá tu cuenta») con ícono `log-in`, una frase, un solo botón con borde («Conectar cuenta») y la caja de texto deshabilitada con un placeholder que explica el motivo.
 - **Estados vacíos:** el título en Young Serif es el ancla, alineado al borde izquierdo de la caja de texto y sin cajita alrededor de un ícono. En el estado listo vacío, debajo de «¿En qué trabajamos hoy?» se muestran «Rumbos sugeridos»: exactamente 3 filas de texto plano separadas por líneas de `1 px` en `--line` con una flecha a la derecha (`arrow-right`) que cargan el texto en la caja y la enfocan sin enviar. Sigue prohibido usar tarjetas o cajas con borde para sugerencias.
+- **Bienvenida (primer arranque):** tres preguntas, una por pantalla, sin agente
+  y antes de conectar la cuenta. Volanta «Antes de empezar» en `--muted`, la
+  pregunta en Young Serif `25 px` y una línea de ayuda en `15 px` `--muted`, en
+  una columna de 560 px sobre `--paper`, sin tarjetas. Arriba a la derecha, «1 de
+  3» con `tabular-nums` (al lector de pantalla, «Paso 1 de 3»). La tercera
+  pregunta es una lista de casillas separadas por líneas de `1 px` en `--line`,
+  con «Otra» al final que abre un campo. Abajo: «Atrás» como texto con flecha
+  desde el segundo paso, «Saltear» con borde en `--line` y «Seguir»/«Listo» con
+  borde en `--ink`. El error de validación va en `--danger` debajo del campo y se
+  borra al cambiar de paso. Si se corta la conexión, la pantalla queda como está,
+  avisa con `wifi-off` y «Reintentar», y no deja enviar hasta que vuelva. En la
+  última pregunta, «Saltear» guarda la agencia y el nombre ya escritos; en las
+  anteriores no guarda nada.
 - **Botones:**
   - Relleno en `--ink` (al 40 % de opacidad cuando está deshabilitado): solo para enviar.
   - Con borde de 1 px en `--ink`: acciones únicas, como «Conectar cuenta» o «Reintentar».
