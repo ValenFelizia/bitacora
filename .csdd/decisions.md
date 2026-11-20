@@ -443,3 +443,27 @@ accepted direction from implementation alone.
   el navegador no lo recordaría. Si `settings.json` está dañado, se aparta como
   `settings.corrupt-<fecha>.json`, igual que `works.json`, y la app vuelve a las
   preferencias de siempre con un aviso de una línea.
+
+## DEC-015 — La bienvenida se pregunta una vez, antes de conectar la cuenta
+
+- Status: accepted (2026-11-20, issue #67)
+- Context: la entrevista del agente preguntaba siempre lo mismo (el nombre de la
+  agencia, el de la persona y para qué va a usar Bitácora), y eso gastaba cupo y
+  tiempo en datos que se pueden saber desde el principio.
+- Decision: la primera vez que se abre Bitácora, la pantalla —sin agente— hace
+  tres preguntas, una por pantalla, con «Atrás» y «Saltear»: agencia, nombre y
+  usos (varias opciones más «Otra»). Va **antes de conectar ChatGPT**: no
+  necesita el motor ni la cuenta, así la app sirve desde el primer segundo y el
+  estado sin cuenta mantiene su única acción. Las respuestas quedan en
+  `perfil.md`, en la raíz de la carpeta de la agencia, en texto simple y
+  editable; si la carpeta todavía no existe, se crea solo la carpeta, no el kit
+  (eso es #65). Que ya se hizo o se salteó se recuerda en `settings.json`
+  (`welcome: "done" | "skipped"`).
+- Consequences: `AGENCY_DEVELOPER_INSTRUCTIONS`, `kit/turismo/AGENTS.md` y la
+  skill `entrevista` leen `perfil.md` y no vuelven a preguntar esos datos (si el
+  nombre de la agencia está, la entrevista pregunta solo la firma). Los «Rumbos
+  sugeridos» de la pantalla vacía salen de los usos marcados; sin usos son los
+  tres de siempre. El archivo se lee al arrancar, así que un cambio que hace el
+  agente cuenta desde el próximo arranque. Si se borra la carpeta de la agencia,
+  la bienvenida no vuelve a aparecer y `perfil.md` se pierde con ella: arreglarlo
+  es parte de #65.
