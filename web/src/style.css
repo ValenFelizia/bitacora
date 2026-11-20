@@ -47,6 +47,34 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* "Escribiendo la respuesta…": the pen writes and the dots appear one by one. */
+.writing-pen {
+  transform-origin: 15% 85%;
+  animation: writing-pen 1.2s ease-in-out infinite;
+}
+@keyframes writing-pen {
+  0%, 100% { transform: translateX(0) rotate(0deg); }
+  25% { transform: translateX(1.5px) rotate(-8deg); }
+  50% { transform: translateX(3px) rotate(0deg); }
+  75% { transform: translateX(1.5px) rotate(-8deg); }
+}
+.writing-dots span {
+  animation: 1.6s steps(1, end) infinite;
+}
+.writing-dots span:nth-child(1) { animation-name: writing-dot-1; }
+.writing-dots span:nth-child(2) { animation-name: writing-dot-2; }
+.writing-dots span:nth-child(3) { animation-name: writing-dot-3; }
+@keyframes writing-dot-1 { 0% { opacity: 0; } 25% { opacity: 1; } }
+@keyframes writing-dot-2 { 0% { opacity: 0; } 50% { opacity: 1; } }
+@keyframes writing-dot-3 { 0% { opacity: 0; } 75% { opacity: 1; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .writing-pen,
+  .writing-dots span {
+    animation: none !important;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

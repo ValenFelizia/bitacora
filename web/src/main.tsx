@@ -585,22 +585,25 @@ function App() {
   const isPausedProgress = work?.progress === "Trabajo pausado.";
   const isDoneProgress = work?.progress === "Listo.";
 
-  const inProgressBlock = work?.busy && (
+  // While a question card is open, the card itself says Bitácora is waiting.
+  const inProgressBlock = work?.busy && !work.question && (
     <div
-      className="grid grid-cols-[48px_20px_minmax(0,1fr)] gap-y-[7px] items-center text-[14px] text-muted"
+      className="flex items-center gap-2 text-[14px] text-accent-ink font-bold"
       role="status"
     >
-      <time className="text-[13px] tabular-nums text-accent-ink font-bold">
-        ahora
-      </time>
       <PenLine
         size={18}
         strokeWidth={1.75}
-        className="text-accent-ink"
+        className="writing-pen shrink-0"
         aria-hidden="true"
       />
-      <span className="text-accent-ink font-bold">
-        {work.progress || "Preparando la respuesta…"}
+      <span>
+        {(work.progress || "Preparando la respuesta").replace(/[.…\s]+$/, "")}
+        <span className="writing-dots" aria-hidden="true">
+          <span>.</span>
+          <span>.</span>
+          <span>.</span>
+        </span>
       </span>
     </div>
   );
@@ -1396,11 +1399,10 @@ function App() {
                         {m.results.length === 1 ? "entregable" : "entregables"}
                       </button>
                     )}
-                    {i === lastUserIndex && (inProgressBlock || pausedProgressBlock)}
                   </React.Fragment>
                 ))}
 
-              {!gallery && work && lastUserIndex === -1 && (inProgressBlock || pausedProgressBlock)}
+              {!gallery && work && (inProgressBlock || pausedProgressBlock)}
 
               {!gallery && work?.question && (
                 <QuestionCard

@@ -30,7 +30,7 @@ Bitácora es el cuaderno de a bordo de la agencia: un registro de lo que se hizo
 | `--line` | `#e1d8c6` | Bordes y divisores de 1 px |
 | `--soft` | `#ece4d3` | Fondo al pasar el mouse |
 | `--accent` | `#d4612a` | Punto marcador de `6 px`, íconos de acento, subrayados, filete del trabajo activo (no para texto chico) |
-| `--accent-ink` | `#b34a17` | Texto en naranja («ahora», avisos): 5,2:1 sobre `--surface` |
+| `--accent-ink` | `#b34a17` | Texto en naranja (paso en curso, avisos): 5,2:1 sobre `--surface` |
 | `--ok` | `#2f7d5b` | Token reservado para confirmaciones |
 | `--danger` | `#a63d2a` | Errores y borrar |
 
@@ -66,10 +66,10 @@ Bitácora es el cuaderno de a bordo de la agencia: un registro de lo que se hizo
 
 ## Patrones
 
-- **El punto del logo:** el círculo naranja de `6 px` (`--accent`) de «Bitácora.» es el marcador de estado en la barra izquierda (junto al trabajo en curso, en lugar de texto suelto como «ahora») y delante de cada respuesta de Bitácora.
+- **El punto del logo:** el círculo naranja de `6 px` (`--accent`) de «Bitácora.» es el marcador de estado en la barra izquierda (junto al trabajo en curso, en lugar de texto suelto) y delante de cada respuesta de Bitácora.
 - **Progreso del agente:**
   - **Cierre como asiento:** cuando termina una respuesta, el asiento final se dibuja como una línea horizontal completa de `1 px` en `--line`, con la hora a la izquierda (`tabular-nums`) y «Listo.» a la derecha.
-  - **Paso en curso:** «ahora» con `pen-line`, en `--accent-ink`.
+  - **Paso en curso:** al final de la conversación, `pen-line` y el texto del paso en `--accent-ink`, sin hora. El lápiz se mueve como si escribiera y los tres puntos aparecen de a uno (Valentín, 20/11/2026). Mientras hay una pregunta abierta no se muestra: la tarjeta ya dice que Bitácora espera.
   - **Detalle:** cada respuesta puede abrir su detalle técnico con el botón de ícono `info` (`16 px`).
   - Sin porcentajes ni pasos técnicos visibles por defecto.
 - **Trabajos:** en la barra izquierda, bajo el título de sección «Trabajos» (`13 px`, `--muted`). Cada trabajo es una fila separada por líneas de `1 px` en `--line`: el nombre en `--ink` ocupa la línea y debajo va la fecha corta en `--muted` (junto al punto naranja si está en curso). Los que no están abiertos llevan `chevron-right` (`16 px`, `--muted`) a la derecha, para que se vean tocables sin pasar el mouse. El activo va en `--surface`, en negrita y con un filete naranja a la izquierda, sin flecha.
@@ -105,7 +105,7 @@ Bitácora es el cuaderno de a bordo de la agencia: un registro de lo que se hizo
 
 ## Movimiento
 
-Casi nada. Cambios de opacidad de 150 ms como máximo, y ninguno con `prefers-reduced-motion: reduce`. Nada que lata, rebote ni brille. El paso en curso se reconoce por el color y la palabra «ahora», no por una animación.
+Casi nada. Cambios de opacidad de 150 ms como máximo, y ninguno con `prefers-reduced-motion: reduce`. Nada que lata, rebote ni brille. La única animación continua es la del paso en curso (lápiz y puntos), y se apaga con `prefers-reduced-motion: reduce`.
 
 ## Queda para después
 
