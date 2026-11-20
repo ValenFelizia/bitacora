@@ -13,9 +13,11 @@ import { agentAnswer, answerRecord } from "./questions";
 import type { FileRef, Message, Work, Snapshot, ClientCommand, ServerMessage, PendingQuestion } from "./contracts";
 import { PANEL_WIDTH } from "./contracts";
 import { isAllowedModel, resolveModel, type EngineModel } from "./models";
+import { readWelcomeProfile, saveWelcomeProfile } from "./welcome-profile";
+import { WelcomeProblem, welcomeAnswers, type WelcomeAnswers, type WelcomeUseId } from "./welcome";
 
 /** Choices kept for the whole app in `settings.json`, not per work (DEC-014). */
-type Settings = { model?: string; panelWidth?: number };
+type Settings = { model?: string; panelWidth?: number; welcome?: "done" | "skipped" };
 
 type SavedWork = Work & { conversationId: string; titlePending?: boolean; renamedByUser?: boolean; pendingFiles?: { messageId: string; before?: Record<string, string> } };
 const isText = (value: unknown) => typeof value === "string";
@@ -112,6 +114,8 @@ export class App {
   private queuedQuestions = new Map<string, PendingQuestion[]>();
   private settings: Settings = {};
   private settingsWrites: Promise<void> = Promise.resolve();
+  /** Uses the welcome marked, which pick the suggested routes. */
+  private uses: WelcomeUseId[] = [];
   /** The account's models; undefined until the engine answers. */
   private catalogue?: EngineModel[];
   private catalogueAt = 0;
@@ -236,6 +240,17 @@ export class App {
     }
     for (const work of this.works) if (work.pendingFiles) { await this.collectResults(work); this.dirty = true; }
     await this.loadSettings();
+    if (this.workspace) {
+      // The profile is the agency's file, not a preference: it is read at each
+      // start, so an edit the agent or the person made counts from then on.
+      try {
+        const profile = await readWelcomeProfile(this.workspace.root);
+        this.uses = profile.uses;
+        // A profile with names means the questions were answered: a lost or
+        // damaged `settings.json` does not make Bitácora ask them again.
+        if (!this.settings.welcome && (profile.agency || profile.person)) this.settings.welcome = "done";
+      } catch { this.uses = []; this.addNotice("No pude leer el perfil de tu agencia. Las sugerencias son las de siempre."); }
+    }
   }
   /**
    * A missing file only means nothing was chosen yet. A damaged one is set
@@ -250,7 +265,7 @@ export class App {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") this.addNotice("No pude leer tus preferencias. Uso las de siempre.");
       return;
     }
-    let saved: { version?: unknown; model?: unknown; panelWidth?: unknown };
+    let saved: { version?: unknown; model?: unknown; panelWidth?: unknown; welcome?: unknown };
     try {
       saved = JSON.parse(text);
       if (!saved || typeof saved !== "object" || saved.version !== 1) throw new SyntaxError("Invalid settings");
@@ -270,6 +285,7 @@ export class App {
     if (typeof saved.model === "string" && saved.model && isAllowedModel({ id: saved.model })) this.settings.model = saved.model;
     if (typeof saved.panelWidth === "number" && Number.isFinite(saved.panelWidth))
       this.settings.panelWidth = Math.round(Math.min(PANEL_WIDTH.max, Math.max(PANEL_WIDTH.min, saved.panelWidth)));
+    if (saved.welcome === "done" || saved.welcome === "skipped") this.settings.welcome = saved.welcome;
   }
   private addNotice(text: string) {
     this.notice = this.notice ? `${this.notice} ${text}` : text;
@@ -362,6 +378,8 @@ export class App {
       fileRevision: this.fileRevision,
       model: { ...resolveModel(this.listOnHand(), this.settings.model).state, listing: this.listing },
       panelWidth: this.settings.panelWidth,
+      welcome: this.workspace ? (this.settings.welcome ?? "pending") : undefined,
+      uses: this.workspace ? [...this.uses] : undefined,
       works: this.works.map(({ conversationId: _, pendingFiles: __, titlePending: ___, renamedByUser: ____, ...work }) => work),
     };
   }
@@ -709,6 +727,38 @@ export class App {
         return;
       }
       reply({ type: "login", ...(await this.engine.connectAccount()) });
+      return;
+    }
+    if (command.type === "welcome" || command.type === "skipWelcome") {
+      if (!this.workspace) throw new Error("Welcome unavailable");
+      // Another window answered first: the state on screen is the one that counts.
+      if (this.settings.welcome) return;
+      if (command.type === "welcome") {
+        let answers: WelcomeAnswers;
+        try { answers = welcomeAnswers(command.answers); }
+        catch (error) {
+          if (error instanceof WelcomeProblem) { reply({ type: "problem", text: error.message }); return; }
+          throw error;
+        }
+        try { await saveWelcomeProfile(this.workspace.root, answers); }
+        catch (error) {
+          reply({ type: "problem", text: "No pude guardar tus respuestas en la carpeta de tu agencia. Probá de nuevo o salteá la bienvenida.", detail: String(error) });
+          return;
+        }
+        this.uses = answers.uses;
+      }
+      this.settings.welcome = command.type === "welcome" ? "done" : "skipped";
+      this.publish({ type: "snapshot", state: this.snapshot() });
+      try { await this.saveSettings(); }
+      catch (error) {
+        reply({
+          type: "problem",
+          text: command.type === "welcome"
+            ? "Guardé tus respuestas, pero no pude recordar que la bienvenida ya está hecha."
+            : "Seguimos, pero no pude recordar que salteaste la bienvenida.",
+          detail: String(error),
+        });
+      }
       return;
     }
     if (command.type === "rename") {

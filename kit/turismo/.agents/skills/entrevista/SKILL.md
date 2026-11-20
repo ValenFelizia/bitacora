@@ -18,7 +18,16 @@ mensaje, sin opciones: no le propongas datos para que elija.
 
 ## Conocernos
 
-1. «¿Cómo se llama tu agencia y cómo te gusta firmar los mensajes?»
+Antes de preguntar, leé `perfil.md` en la raíz de la carpeta. Si ya trae el
+nombre de la agencia y el nombre de la usuaria, no los vuelvas a preguntar:
+usá esos nombres y preguntá solo cómo le gusta firmar los mensajes. Lo que
+marcó como uso de Bitácora orienta qué ofrecer primero: si marcó imágenes para
+vender, empezá por las plantillas para historias y WhatsApp; si marcó
+presupuestos, por la de propuestas; si marcó responder consultas, por los
+mensajes para clientes.
+
+1. «¿Cómo se llama tu agencia y cómo te gusta firmar los mensajes?» Si el
+   perfil ya tiene la agencia, preguntá solo la firma.
 2. «¿Qué datos querés que vean tus clientes para contactarte?» Preguntá por
    WhatsApp, correo, dirección, redes y legajo u otros datos legales que quiera
    dar. No son obligatorios. Repetí lo recibido para confirmar; nunca inventes.
@@ -107,7 +116,9 @@ No digas que algo quedó guardado hasta haberlo escrito y comprobado.
 ## Cambiar después
 
 Leé marca y plantilla antes de editar. Un dato nuevo va a `datos.md` y a los
-HTML que esté usando, con sus citas; una forma de hablar va a `voz.md`.
+HTML que esté usando, con sus citas; una forma de hablar va a `voz.md`. Si
+cambia el nombre de la agencia o de la persona, actualizalo en `perfil.md`
+además de `datos.md`.
 Antes de cambiar el estilo guardado, dibujá una muestra con el cambio y esperá
 su elección. Después actualizá `estilo.json` y las plantillas para que sigan
 coincidiendo. Conservá los originales hasta la confirmación. Volvé a controlar

@@ -42,6 +42,8 @@ import { clampPanel, DESKTOP_MIN, panelBounds, panelKey } from "./panel";
 import { QuestionCard } from "./question";
 import { formatTime, formatWorkDate, undoSummary } from "./format";
 import { protectionText, protectionWarning } from "./protection-text";
+import { Welcome, type WelcomeAnswer } from "./welcome";
+import { suggestedRoutes } from "../../server/src/welcome";
 import {
   appendReadFiles,
   clearSentAttachments,
@@ -58,12 +60,6 @@ const MAX_REQUEST_TEXT = 20000;
 function isDesktop() {
   return (window as Window & { __BITACORA_DESKTOP__?: boolean }).__BITACORA_DESKTOP__ === true;
 }
-
-const SUGGESTED_ROUTES = [
-  "Armame una propuesta con este link",
-  "Armame una cotización rápida",
-  "Revisá este PDF",
-] as const;
 
 const latestResult = (work: Work) =>
   work.messages
@@ -214,6 +210,8 @@ function App() {
   );
   const workResultCount =
     work?.messages.reduce((sum, m) => sum + (m.results?.length || 0), 0) || 0;
+  // The welcome marked what the agency needs: those come first (issue #67).
+  const routes = suggestedRoutes(state.uses);
 
   useEffect(() => {
     let disposed = false;
@@ -682,6 +680,22 @@ function App() {
     setFocusedMessageId(undefined);
     if (restoreFocus) deliverablesToggleRef.current?.focus();
   }
+
+  function saveWelcome(answers: WelcomeAnswer) {
+    send({ type: "welcome", answers: { ...answers } });
+  }
+
+  // The first-run questions come before the account: they need no engine and
+  // no cupo, so the app is useful from the first screen (DEC-015). Without the
+  // connection they wait, so the offline state is never hidden behind them.
+  if (state.welcome === "pending" && online)
+    return (
+      <Welcome
+        problem={problem?.text}
+        onSave={saveWelcome}
+        onSkip={() => send({ type: "skipWelcome" })}
+      />
+    );
 
   return (
     <div
@@ -1277,7 +1291,7 @@ function App() {
                   <div className="w-full flex flex-col gap-1">
                     <h3 className="text-[13px] text-muted">Rumbos sugeridos</h3>
                     <div className="w-full divide-y divide-line border-t border-b border-line">
-                      {SUGGESTED_ROUTES.map((route) => (
+                      {routes.map((route) => (
                         <button
                           key={route}
                           type="button"

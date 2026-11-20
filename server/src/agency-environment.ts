@@ -57,6 +57,8 @@ export type AgencyEnvironment = {
 export const AGENCY_DEVELOPER_INSTRUCTIONS =
   "Respondé en castellano rioplatense, simple y sin términos técnicos. " +
   "Trabajá en la carpeta actual. " +
+  "La agencia completó `perfil.md` al abrir Bitácora: leelo antes de empezar, " +
+  "usá el nombre de la persona y el de la agencia, y no vuelvas a preguntar lo que ya está ahí. " +
   "Usá imágenes generadas con IA solo si la usuaria te lo pide explícitamente, " +
   "y nunca presentes una imagen con IA como si fuera una foto real de un hotel o un destino. " +
   "Para armar la agencia, seguí `.agents/skills/entrevista/SKILL.md`. " +

@@ -40,6 +40,13 @@ export type Snapshot = {
   model?: ModelState;
   /** Width the user dragged the deliverables panel to, remembered between sessions. */
   panelWidth?: number;
+  /**
+   * The welcome questions (issue #67). `pending` shows them; any other value
+   * means the server remembers they were answered or skipped.
+   */
+  welcome?: "pending" | "done" | "skipped";
+  /** Uses marked in the welcome, which pick the suggested routes. */
+  uses?: string[];
 };
 export type ClientCommand =
   | { type: "undo"; id: string }
@@ -57,7 +64,11 @@ export type ClientCommand =
   | { type: "chooseModel"; model: string }
   /** The model menu opened: list again if there is no fresh list. */
   | { type: "refreshModels" }
-  | { type: "panelWidth"; width: number };
+  | { type: "panelWidth"; width: number }
+  /** Answers to the welcome questions: names first, then what she will use it for. */
+  | { type: "welcome"; answers: { agency: string; person: string; uses: string[]; other?: string } }
+  /** The welcome is closed without answers. */
+  | { type: "skipWelcome" };
 export type ServerMessage =
   | { type: "snapshot"; state: Snapshot }
   | {
