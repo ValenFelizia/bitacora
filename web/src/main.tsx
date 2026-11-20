@@ -691,6 +691,8 @@ function App() {
   function sendWelcome(command: ClientCommand) {
     // Offline the screen already says so and its buttons are off: nothing to do.
     if (socket.current?.readyState !== WebSocket.OPEN) return;
+    // A problem from before does not belong on the screen that comes next.
+    setProblem(undefined);
     setWelcomeSending(true);
     send(command);
   }

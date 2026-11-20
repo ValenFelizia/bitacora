@@ -313,8 +313,12 @@ export function Welcome({
               <button type="submit" className={buttonBordered} disabled={waiting}>
                 {step === 2 ? (
                   <>
-                    <Check size={18} strokeWidth={1.75} aria-hidden="true" />
-                    {sending ? "Guardando…" : "Listo"}
+                    {problem && !sending ? (
+                      <RotateCcw size={18} strokeWidth={1.75} aria-hidden="true" />
+                    ) : (
+                      <Check size={18} strokeWidth={1.75} aria-hidden="true" />
+                    )}
+                    {sending ? "Guardando…" : problem ? "Reintentar" : "Listo"}
                   </>
                 ) : (
                   <>

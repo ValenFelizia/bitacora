@@ -23,6 +23,8 @@ export class FakeEngine implements Engine {
   catalogue: EngineModel[] | "fail" = FAKE_CATALOGUE;
   /** The model each thread start, resume and turn asked for, in order. */
   modelRequests: { call: "create" | "resume" | "send"; model?: ModelSelection }[] = [];
+  /** The profile notes each thread start or resume carried, in order. */
+  instructionNotes: { call: "create" | "resume"; notes?: string }[] = [];
   /** How many times the app asked for the list. */
   modelLists = 0;
   async models() {
@@ -67,13 +69,15 @@ export class FakeEngine implements Engine {
   async account(): Promise<Account> {
     return this.email ? { connected: this.connected, email: this.email } : { connected: this.connected };
   }
-  async createWork(model?: ModelSelection) {
+  async createWork(model?: ModelSelection, notes?: string) {
     this.modelRequests.push({ call: "create", model });
+    this.instructionNotes.push({ call: "create", notes });
     return { conversationId: `conversation-${++this.count}` };
   }
-  async resumeWork(id: string, model?: ModelSelection) {
+  async resumeWork(id: string, model?: ModelSelection, notes?: string) {
     if (this.resumeFails) throw new Error("resume failed");
     this.modelRequests.push({ call: "resume", model });
+    this.instructionNotes.push({ call: "resume", notes });
     this.resumed.push(id);
   }
   async suggestTitle(id: string): Promise<SuggestedTitle | undefined> {

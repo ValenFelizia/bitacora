@@ -750,8 +750,12 @@ export class App {
       if (!this.workspace) throw new Error("Welcome unavailable");
       // Another window answered first, or the previous answer is still being
       // saved: the first one wins. Checked synchronously, before any await, so
-      // two commands that arrive together cannot both pass.
-      if (this.settings.welcome || this.welcomeSaving) return;
+      // two commands that arrive together cannot both pass. The one that loses
+      // still gets the state, so its screen stops saying «Guardando…».
+      if (this.settings.welcome || this.welcomeSaving) {
+        reply({ type: "snapshot", state: this.snapshot() });
+        return;
+      }
       this.welcomeSaving = true;
       try {
         if (command.type === "welcome") {
@@ -763,7 +767,7 @@ export class App {
           }
           try { await saveWelcomeProfile(this.workspace.root, answers); }
           catch (error) {
-            reply({ type: "problem", text: "No pude guardar tus respuestas en la carpeta de tu agencia. Probá de nuevo o salteá la bienvenida.", detail: String(error) });
+            reply({ type: "problem", text: "No pude guardar tus respuestas en la carpeta de tu agencia. Probá de nuevo.", detail: String(error) });
             return;
           }
           this.uses = answers.uses;

@@ -61,6 +61,8 @@ export const AGENCY_DEVELOPER_INSTRUCTIONS =
   "(su agencia, su nombre y para qué la va a usar), usalos para hablarle y no vuelvas " +
   "a preguntar lo que ya está; si no vienen, preguntale el nombre de la agencia y cómo " +
   "firma antes de armar la marca. " +
+  "Si lo que dice la usuaria en la conversación no coincide con estos datos, vale lo " +
+  "que diga ella; si te pide cambiarlos, actualizá `perfil.md`. " +
   "Usá imágenes generadas con IA solo si la usuaria te lo pide explícitamente, " +
   "y nunca presentes una imagen con IA como si fuera una foto real de un hotel o un destino. " +
   "Para armar la agencia, seguí `.agents/skills/entrevista/SKILL.md`. " +

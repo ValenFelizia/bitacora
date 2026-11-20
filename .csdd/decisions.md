@@ -468,8 +468,10 @@ accepted direction from implementation alone.
   conversación; si no hay perfil, las instrucciones le dicen que pregunte la
   agencia y la firma. Los «Rumbos sugeridos» de la pantalla vacía salen de los
   usos marcados, uno por tema; sin usos son los tres de siempre. `perfil.md` se
-  lee al arrancar (para las sugerencias) y al abrir la conversación (para el
-  agente), así que un cambio cuenta desde el próximo arranque o el próximo
-  pedido. Si se borra la carpeta de la agencia, la bienvenida no vuelve a
-  aparecer y `perfil.md` se pierde con ella: arreglarlo es parte de #65. Una
+  lee al arrancar (para las sugerencias) y al crear un trabajo o retomarlo por
+  primera vez en la sesión (para el agente): un cambio cuenta en los trabajos
+  nuevos; en uno ya abierto vale lo que se habló. **Sin verificar:** si
+  `developerInstructions` en `thread/resume` reemplaza o se suma a las del hilo
+  en el Codex real. Si se borra la carpeta de la agencia, la bienvenida no vuelve
+  a aparecer y `perfil.md` se pierde con ella: arreglarlo es parte de #65. Una
   agencia que ya tiene `marca/datos.md` se toma como bienvenida.
