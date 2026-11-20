@@ -1,5 +1,6 @@
 import { toolProgress } from './tools/progress';
 import type { EngineModel, ModelSelection } from './models';
+import type { DictationClip } from './dictation';
 export type Account = { connected: boolean; email?: string };
 export type ExecutionSafety = {
   allowed: boolean;
@@ -83,6 +84,7 @@ export interface Engine {
   prepareProtection(): Promise<void>;
   connectAccount(): Promise<{ url: string }>;
   account(): Promise<Account>;
+  transcribe?(clip: DictationClip, signal: AbortSignal): Promise<string>;
   /** The models the account offers, without hidden ones. Asking costs no quota. */
   models(): Promise<EngineModel[]>;
   createWork(model?: ModelSelection): Promise<{ conversationId: string; title?: string }>;

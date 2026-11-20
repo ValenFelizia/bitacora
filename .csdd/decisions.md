@@ -443,3 +443,31 @@ accepted direction from implementation alone.
   el navegador no lo recordaría. Si `settings.json` está dañado, se aparta como
   `settings.corrupt-<fecha>.json`, igual que `works.json`, y la app vuelve a las
   preferencias de siempre con un aviso de una línea.
+
+## DEC-015 — Dictado de clips con la sesión de ChatGPT
+
+- Estado: aceptada (2026-11-20, decisión de Valentín en #60).
+- Contexto: Fer dicta en Codex, revisa el texto y lo manda con Enter. Probó
+  Win+H y prefirió el dictado de Codex. El app-server 0.168.0 ofrece voz en
+  tiempo real para conversar, pero aún no tiene un método para transcribir un clip.
+- Decisión: grabar con `MediaRecorder`, preferentemente WebM/Opus, y enviar el
+  audio al servidor local con el mismo token de sesión que protege los
+  entregables, en un encabezado. Por dictado, la pantalla corta al minuto y
+  tanto la pantalla como el servidor limitan el audio a 2 MiB. El servidor
+  mantiene el audio en memoria y manda un campo multipart `file` a
+  `https://chatgpt.com/backend-api/transcribe`, como el
+  [cliente de Codex](https://github.com/openai/codex/pull/62142). Pide el token
+  por `getAuthStatus` al app-server del `CODEX_HOME` de Bitácora. Si ChatGPT
+  responde 401, le pide a Codex que renueve el token y reintenta una vez.
+  Bitácora no registra el token ni el audio. El texto vuelve al borrador.
+- Permiso: WebView2 maneja el permiso con su comportamiento de navegador. La
+  página instalada restringe el micrófono a su propio origen local y deshabilita
+  la cámara con `Permissions-Policy`.
+- Consumo: el servicio usa la sesión de ChatGPT y responde con el texto.
+  No encontramos documentación pública de cuánto descuenta de la cuota y
+  la respuesta de transcripción no informa consumo.
+- Riesgo y migración: es un servicio interno, sin contrato público. Si cambia
+  o deja de funcionar, la pantalla muestra un aviso y permite seguir escribiendo.
+  Cuando el app-server publique un método oficial para clips, reemplazar
+  `server/src/codex/transcribe.ts` y su llamada en el motor por ese método y
+  quitar el pedido de credenciales propio del dictado.

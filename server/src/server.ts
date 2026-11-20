@@ -8,6 +8,8 @@ import { problemText, EngineFailure } from "./engine";
 import type { ClientCommand, ServerMessage } from "./contracts";
 import { App } from "./app";
 import { desktopAssets } from "./desktop-assets";
+import { DICTATION_PATH } from "./dictation";
+import { handleDictation } from "./dictation-http";
 
 export async function serve(
   engine: Engine,
@@ -27,13 +29,20 @@ export async function serve(
         res.writeHead(403); res.end(); return;
       }
       if (sendAsset && sendAsset(url.pathname, req.method, res, boundPort())) return;
-      if (sendAsset && url.pathname !== "/files") {
+      if (sendAsset && url.pathname !== "/files" && url.pathname !== DICTATION_PATH) {
         res.writeHead(404); res.end(); return;
       }
-      const supplied = url.searchParams.get("token") || "";
+      const dictation = url.pathname === DICTATION_PATH;
+      const supplied = dictation
+        ? req.headers.authorization?.match(/^Bearer (\S+)$/i)?.[1] || ""
+        : url.searchParams.get("token") || "";
       const validToken = Buffer.byteLength(supplied) === Buffer.byteLength(token) && timingSafeEqual(Buffer.from(supplied), Buffer.from(token));
       if (!validToken) {
         res.writeHead(403); res.end(); return;
+      }
+      if (dictation && req.method === "POST") {
+        await handleDictation(req, res, engine);
+        return;
       }
       if (url.pathname !== "/files" || !["GET", "HEAD"].includes(req.method || "") || !files) { res.writeHead(404); res.end(); return; }
       const ref = app.file(url.searchParams.get("id") || "");

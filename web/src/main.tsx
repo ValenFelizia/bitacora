@@ -13,6 +13,7 @@ import {
   LogIn,
   Mail,
   Menu,
+  Mic,
   Package,
   Paperclip,
   Pencil,
@@ -38,6 +39,7 @@ import { MAX_TITLE } from "../../server/src/titles";
 import "./style.css";
 import { DeliverablesPanel, FileCard, FilePreviewModal } from "./files";
 import { ModelPicker } from "./model-picker";
+import { useDictation } from "./dictation";
 import { clampPanel, DESKTOP_MIN, panelBounds, panelKey } from "./panel";
 import { QuestionCard } from "./question";
 import { formatTime, formatWorkDate, undoSummary } from "./format";
@@ -208,6 +210,27 @@ function App() {
   const shownPanel = clampPanel(panelWidth, viewport);
   const panelLimits = panelBounds(viewport);
   const work = state.works.find((w) => w.id === selected);
+  const dictationToken =
+    online && state.account.connected && state.engine.available && !gallery ? state.fileToken : undefined;
+  const dictation = useDictation({
+    token: dictationToken,
+    workId: selected,
+    onText(transcript) {
+      const input = composerInput.current;
+      if (!input) return false;
+      const { selectionStart, selectionEnd, value } = input;
+      const before = value.slice(0, selectionStart);
+      const after = value.slice(selectionEnd);
+      const leadingSpace = before && !/\s$/.test(before) && !/^[,.;:!?)]/.test(transcript) ? " " : "";
+      const trailingSpace = after && !/^[\s,.;:!?)]/.test(after) ? " " : "";
+      const insertion = leadingSpace + transcript + trailingSpace;
+      if (before.length + insertion.length + after.length > MAX_REQUEST_TEXT) return false;
+      input.setRangeText(insertion, selectionStart, selectionEnd, "end");
+      setText(input.value);
+      input.focus();
+      return true;
+    },
+  });
   const busy = state.works.some((w) => w.busy);
   const hasGalleryResults = state.works.some((w) =>
     w.messages.some((m) => m.results?.length),
@@ -456,6 +479,7 @@ function App() {
     if (
       (!typed && !attachments.length && !opening) ||
       readingFiles ||
+      dictation.active() ||
       busy ||
       pending ||
       !online ||
@@ -651,11 +675,17 @@ function App() {
     state.account.connected;
 
   // The send button and Enter follow the same rule; while busy the button pauses.
+  const dictationStatus = dictation.status;
+  const dictating = dictationStatus.kind === "recording" ||
+    dictationStatus.kind === "permission" || dictationStatus.kind === "transcribing";
+  const micLabel = dictationStatus.kind === "recording" ? "Terminar dictado"
+    : dictationStatus.kind === "permission" ? "Cancelar dictado" : "Dictar";
   const sendBlocked =
     busy ||
     !canSend ||
     pending ||
     readingFiles ||
+    dictating ||
     (!text.trim() && !attachments.length);
 
   const notConnected =
@@ -738,6 +768,7 @@ function App() {
             setNavOpen(false);
             setFocusedMessageId(undefined);
             draftGeneration.current++;
+            dictation.cancel();
             setAttachments([]);
             setSelected(undefined);
             setText("");
@@ -1712,6 +1743,12 @@ function App() {
                 </div>
               )}
 
+              <div role="status" className={dictationStatus.kind === "idle" ? "sr-only" : "text-[13px] text-accent-ink"}>
+                {dictationStatus.kind === "permission" && "Esperando permiso para usar el micrófono…"}
+                {dictationStatus.kind === "recording" && "Escuchando…"}
+                {dictationStatus.kind === "transcribing" && "Transcribiendo…"}
+                {dictationStatus.kind === "error" && <span className="text-danger">{dictationStatus.message}</span>}
+              </div>
               <label className="sr-only" htmlFor="request">
                 Tu pedido
               </label>
@@ -1747,6 +1784,24 @@ function App() {
                   onClick={() => fileInput.current?.click()}
                 >
                   <Paperclip size={18} strokeWidth={1.75} aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  className={`${iconButton} ${dictationStatus.kind === "recording" ? "bg-soft !text-accent-ink" : ""}`}
+                  disabled={!dictationToken || pending || dictationStatus.kind === "transcribing"}
+                  title={micLabel}
+                  aria-label={micLabel}
+                  onClick={() => {
+                    if (dictationStatus.kind === "recording") dictation.stop();
+                    else if (dictationStatus.kind === "permission") dictation.cancel();
+                    else void dictation.start();
+                  }}
+                >
+                  {dictationStatus.kind === "recording" || dictationStatus.kind === "permission" ? (
+                    <Square size={18} strokeWidth={1.75} aria-hidden="true" />
+                  ) : (
+                    <Mic size={18} strokeWidth={1.75} aria-hidden="true" />
+                  )}
                 </button>
                 {state.model && (
                   <ModelPicker
