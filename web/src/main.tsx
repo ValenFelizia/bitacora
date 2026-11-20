@@ -215,20 +215,25 @@ function App() {
   const dictation = useDictation({
     token: dictationToken,
     workId: selected,
+    online,
+    desktop: isDesktop(),
+    focusInput: () => composerInput.current?.focus(),
     onText(transcript) {
       const input = composerInput.current;
-      if (!input) return false;
+      if (!input) return;
       const { selectionStart, selectionEnd, value } = input;
       const before = value.slice(0, selectionStart);
       const after = value.slice(selectionEnd);
-      const leadingSpace = before && !/\s$/.test(before) && !/^[,.;:!?)]/.test(transcript) ? " " : "";
-      const trailingSpace = after && !/^[\s,.;:!?)]/.test(after) ? " " : "";
-      const insertion = leadingSpace + transcript + trailingSpace;
-      if (before.length + insertion.length + after.length > MAX_REQUEST_TEXT) return false;
-      input.setRangeText(insertion, selectionStart, selectionEnd, "end");
-      setText(input.value);
+      const room = Math.max(0, MAX_REQUEST_TEXT - before.length - after.length);
+      const leadingSpace = room > 1 && before && !/\s$/.test(before) && !/^[,.;:!?)]/.test(transcript) ? " " : "";
+      // Do not split a surrogate pair at the text box's UTF-16 limit.
+      const clipped = transcript.slice(0, room - leadingSpace.length).replace(/[\uD800-\uDBFF]$/, "");
       input.focus();
-      return true;
+      if (!clipped) return "No quedó lugar para agregar el dictado. Acortá el pedido y volvé a dictar.";
+      const trailingSpace = leadingSpace.length + clipped.length < room && after && !/^[\s,.;:!?)]/.test(after) ? " " : "";
+      input.setRangeText(leadingSpace + clipped + trailingSpace, selectionStart, selectionEnd, "end");
+      setText(input.value);
+      if (clipped !== transcript) return "Agregué la parte del dictado que entraba. El pedido llegó al límite de texto.";
     },
   });
   const busy = state.works.some((w) => w.busy);
@@ -679,7 +684,7 @@ function App() {
   const dictating = dictationStatus.kind === "recording" ||
     dictationStatus.kind === "permission" || dictationStatus.kind === "transcribing";
   const micLabel = dictationStatus.kind === "recording" ? "Terminar dictado"
-    : dictationStatus.kind === "permission" ? "Cancelar dictado" : "Dictar";
+    : dictating ? "Cancelar dictado" : "Dictar";
   const sendBlocked =
     busy ||
     !canSend ||
@@ -1744,10 +1749,11 @@ function App() {
               )}
 
               <div role="status" className={dictationStatus.kind === "idle" ? "sr-only" : "text-[13px] text-accent-ink"}>
-                {dictationStatus.kind === "permission" && "Esperando permiso para usar el micrófono…"}
+                {dictationStatus.kind === "permission" && "Abriendo el micrófono…"}
                 {dictationStatus.kind === "recording" && "Escuchando…"}
                 {dictationStatus.kind === "transcribing" && "Transcribiendo…"}
                 {dictationStatus.kind === "error" && <span className="text-danger">{dictationStatus.message}</span>}
+                {dictationStatus.kind === "notice" && dictationStatus.message}
               </div>
               <label className="sr-only" htmlFor="request">
                 Tu pedido
@@ -1788,16 +1794,19 @@ function App() {
                 <button
                   type="button"
                   className={`${iconButton} ${dictationStatus.kind === "recording" ? "bg-soft !text-accent-ink" : ""}`}
-                  disabled={!dictationToken || pending || dictationStatus.kind === "transcribing"}
+                  disabled={!dictationToken || pending}
                   title={micLabel}
                   aria-label={micLabel}
                   onClick={() => {
                     if (dictationStatus.kind === "recording") dictation.stop();
-                    else if (dictationStatus.kind === "permission") dictation.cancel();
+                    else if (dictating) {
+                      dictation.cancel();
+                      composerInput.current?.focus();
+                    }
                     else void dictation.start();
                   }}
                 >
-                  {dictationStatus.kind === "recording" || dictationStatus.kind === "permission" ? (
+                  {dictating ? (
                     <Square size={18} strokeWidth={1.75} aria-hidden="true" />
                   ) : (
                     <Mic size={18} strokeWidth={1.75} aria-hidden="true" />

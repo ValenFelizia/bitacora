@@ -17,11 +17,17 @@ function chatgptHeaders(auth: GetAuthStatusResponse) {
   // Use the account claim only as a routing hint. ChatGPT validates the bearer.
   const payload = auth.authToken.split(".")[1];
   if (payload) {
-    const claims: unknown = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    let claims: unknown;
+    try {
+      claims = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    } catch {
+      return headers;
+    }
     if (claims && typeof claims === "object" && "https://api.openai.com/auth" in claims) {
       const account = claims["https://api.openai.com/auth"];
       if (account && typeof account === "object") {
-        if ("chatgpt_account_id" in account && typeof account.chatgpt_account_id === "string") {
+        if ("chatgpt_account_id" in account && typeof account.chatgpt_account_id === "string" &&
+            /^[a-zA-Z0-9_-]+$/.test(account.chatgpt_account_id)) {
           headers.set("ChatGPT-Account-Id", account.chatgpt_account_id);
         }
         if ("chatgpt_account_is_fedramp" in account && account.chatgpt_account_is_fedramp === true) {
@@ -85,7 +91,9 @@ export async function transcribeWithCodex(
     signal.throwIfAborted();
     const renewed = chatgptHeaders(await readAuth(true));
     signal.throwIfAborted();
-    if (renewed.get("ChatGPT-Account-Id") !== headers.get("ChatGPT-Account-Id")) {
+    const account = headers.get("ChatGPT-Account-Id");
+    const renewedAccount = renewed.get("ChatGPT-Account-Id");
+    if (account && renewedAccount && renewedAccount !== account) {
       throw new DictationError(409, "Cambió tu cuenta de ChatGPT. Volvé a dictar.");
     }
     response = await submit(renewed);

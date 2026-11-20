@@ -460,9 +460,13 @@ accepted direction from implementation alone.
   por `getAuthStatus` al app-server del `CODEX_HOME` de Bitácora. Si ChatGPT
   responde 401, le pide a Codex que renueve el token y reintenta una vez.
   Bitácora no registra el token ni el audio. El texto vuelve al borrador.
-- Permiso: WebView2 maneja el permiso con su comportamiento de navegador. La
-  página instalada restringe el micrófono a su propio origen local y deshabilita
-  la cámara con `Permissions-Policy`.
+- Permiso: la ventana de WebView2 concede el micrófono sin aviso al origen
+  exacto del servidor local en curso y deniega los demás pedidos de permiso.
+  La decisión se toma por pedido, sin guardarla en el perfil, porque el
+  puerto cambia entre arranques. La privacidad de Windows sigue vigente. Si
+  bloquea el micrófono, Bitácora indica cómo habilitarlo en Windows. La página
+  instalada también restringe el micrófono a su origen y deshabilita la
+  cámara con `Permissions-Policy`.
 - Consumo: el servicio usa la sesión de ChatGPT y responde con el texto.
   No encontramos documentación pública de cuánto descuenta de la cuota y
   la respuesta de transcripción no informa consumo.

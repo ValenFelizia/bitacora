@@ -5,7 +5,7 @@ import {
 
 type Status =
   | { kind: "idle" | "permission" | "recording" | "transcribing" }
-  | { kind: "error"; message: string };
+  | { kind: "error" | "notice"; message: string };
 
 type Session = {
   abort: AbortController;
@@ -14,30 +14,37 @@ type Session = {
   timer?: number;
 };
 
-function release(session: Session) {
+function releaseMicrophone(session: Session) {
   window.clearTimeout(session.timer);
-  if (session.recorder && session.recorder.state !== "inactive") session.recorder.stop();
   session.stream?.getTracks().forEach((track) => track.stop());
 }
 
-function microphoneError(error: unknown) {
+const CONNECTION_LOST = "Se cortó la conexión con Bitácora. Volvé a dictar cuando se reconecte.";
+const WINDOWS_MICROPHONE = "Activá el micrófono para las aplicaciones de escritorio en la configuración de privacidad de Windows y volvé a probar.";
+
+function microphoneError(error: unknown, desktop: boolean) {
   switch (error instanceof DOMException ? error.name : "") {
     case "NotAllowedError":
     case "SecurityError":
-      return "Dale permiso a Bitácora para usar el micrófono y volvé a probar.";
+      return desktop ? WINDOWS_MICROPHONE : "Dale permiso al navegador para usar el micrófono y volvé a probar.";
     case "NotFoundError":
       return "No encontré un micrófono. Conectá uno y volvé a probar.";
     case "NotReadableError":
-      return "No pude usar el micrófono. Fijate si otra app lo está usando.";
+      return desktop
+        ? "No pude usar el micrófono. Revisá la privacidad de Windows o si otra app lo está usando."
+        : "No pude usar el micrófono. Fijate si otra app lo está usando.";
     default:
       return "No pude grabar. Revisá el micrófono y volvé a probar.";
   }
 }
 
-export function useDictation({ token, workId, onText }: {
+export function useDictation({ token, workId, online, desktop, onText, focusInput }: {
   token?: string;
   workId?: string;
-  onText: (text: string) => boolean;
+  online: boolean;
+  desktop: boolean;
+  onText: (text: string) => string | undefined;
+  focusInput: () => void;
 }) {
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const session = useRef<Session>(null);
@@ -47,7 +54,8 @@ export function useDictation({ token, workId, onText }: {
     session.current = null;
     if (!current) return;
     current.abort.abort();
-    release(current);
+    if (current.recorder && current.recorder.state !== "inactive") current.recorder.stop();
+    releaseMicrophone(current);
   }
 
   function cancel() {
@@ -55,21 +63,26 @@ export function useDictation({ token, workId, onText }: {
     setStatus({ kind: "idle" });
   }
 
-  useLayoutEffect(() => {
-    setStatus({ kind: "idle" });
-    return clearSession;
-  }, [token, workId]);
-
   function fail(message: string) {
     clearSession();
     setStatus({ kind: "error", message });
+    focusInput();
   }
+
+  useLayoutEffect(() => clearSession, []);
+  useLayoutEffect(cancel, [workId]);
+  useLayoutEffect(() => {
+    if (!session.current) return;
+    if (!online) fail(CONNECTION_LOST);
+    else cancel();
+  }, [token, online]);
 
   function stop() {
     const current = session.current;
     if (current?.recorder?.state !== "recording") return;
     setStatus({ kind: "transcribing" });
-    release(current);
+    window.clearTimeout(current.timer);
+    current.recorder.stop();
   }
 
   async function start() {
@@ -85,7 +98,7 @@ export function useDictation({ token, workId, onText }: {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       current.stream = stream;
       if (session.current !== current) {
-        release(current);
+        releaseMicrophone(current);
         return;
       }
       const preferred = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"]
@@ -101,11 +114,12 @@ export function useDictation({ token, workId, onText }: {
         else chunks.push(data);
       });
       recorder.addEventListener("error", () => {
-        if (session.current === current) fail(microphoneError(undefined));
+        if (session.current === current) fail(microphoneError(undefined, desktop));
       });
       recorder.addEventListener("stop", async () => {
         if (session.current !== current) return;
-        release(current);
+        // The final dataavailable fires before stop. Keep the tracks live until then.
+        releaseMicrophone(current);
         setStatus({ kind: "transcribing" });
         if (!size) {
           fail("No se grabó audio. Probá de nuevo.");
@@ -123,22 +137,25 @@ export function useDictation({ token, workId, onText }: {
           if (session.current !== current) return;
           if (response.ok && result && typeof result === "object" && "text" in result &&
               typeof result.text === "string" && result.text.trim()) {
-            if (onText(result.text)) cancel();
-            else fail("El pedido quedó demasiado largo. Acortalo y volvé a dictar.");
+            const notice = onText(result.text);
+            clearSession();
+            setStatus(notice ? { kind: "notice", message: notice } : { kind: "idle" });
           } else {
             const message = result && typeof result === "object" && "error" in result
               && typeof result.error === "string" ? result.error : DICTATION_FAILED;
             fail(message);
           }
-        } catch {
-          if (session.current === current) fail(DICTATION_FAILED);
+        } catch (error) {
+          if (session.current === current) {
+            fail(error instanceof TypeError ? CONNECTION_LOST : DICTATION_FAILED);
+          }
         }
       }, { once: true });
       recorder.start(250);
       setStatus({ kind: "recording" });
       current.timer = window.setTimeout(stop, MAX_DICTATION_MS);
     } catch (error) {
-      if (session.current === current) fail(microphoneError(error));
+      if (session.current === current) fail(microphoneError(error, desktop));
     }
   }
 
