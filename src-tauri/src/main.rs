@@ -12,10 +12,15 @@ use tauri::{webview::NewWindowResponse, Manager, RunEvent, Url, WebviewUrl, Webv
 use webview2_com::{
     take_pwstr,
     Microsoft::Web::WebView2::Win32::{
-        ICoreWebView2_22, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT,
+        ICoreWebView2PermissionRequestedEventArgs3, ICoreWebView2_22, COREWEBVIEW2_PERMISSION_KIND,
+        COREWEBVIEW2_PERMISSION_KIND_MICROPHONE,
+        COREWEBVIEW2_PERMISSION_KIND_MULTIPLE_AUTOMATIC_DOWNLOADS,
+        COREWEBVIEW2_PERMISSION_STATE_ALLOW, COREWEBVIEW2_PERMISSION_STATE_DENY,
+        COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT,
         COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_ALL,
     },
-    NavigationStartingEventHandler, WebResourceRequestedEventHandler,
+    NavigationStartingEventHandler, PermissionRequestedEventHandler,
+    WebResourceRequestedEventHandler,
 };
 use windows_core::{w, Interface};
 
@@ -37,6 +42,7 @@ fn restrict_webview(
     endpoint: Arc<Mutex<Option<Url>>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let frame_endpoint = Arc::clone(&endpoint);
+    let permission_endpoint = Arc::clone(&endpoint);
     let handler = NavigationStartingEventHandler::create(Box::new(move |_, args| {
         if let Some(args) = args {
             let mut uri = Default::default();
@@ -61,6 +67,39 @@ fn restrict_webview(
         let env = webview.environment();
         let core = webview.controller().CoreWebView2()?;
         core.add_FrameNavigationStarting(&handler, &mut 0)?;
+        core.add_PermissionRequested(
+            &PermissionRequestedEventHandler::create(Box::new(move |_, args| {
+                let Some(args) = args else { return Ok(()) };
+                let mut kind = COREWEBVIEW2_PERMISSION_KIND::default();
+                args.PermissionKind(&mut kind)?;
+                let mut uri = Default::default();
+                args.Uri(&mut uri)?;
+                let uri = take_pwstr(uri);
+                // The next server can get a different port. Never persist a grant.
+                let transient = args
+                    .cast::<ICoreWebView2PermissionRequestedEventArgs3>()
+                    .is_ok_and(|profile| profile.SetSavesInProfile(false).is_ok());
+                // The microphone for dictation, and several files at once for
+                // "Descargar todas"; everything else (camera, location...) is denied.
+                let allowed = (kind == COREWEBVIEW2_PERMISSION_KIND_MICROPHONE
+                    || kind == COREWEBVIEW2_PERMISSION_KIND_MULTIPLE_AUTOMATIC_DOWNLOADS)
+                    && transient
+                    && Url::parse(&uri).is_ok_and(|url| {
+                        url.scheme() == "http"
+                            && permission_endpoint
+                                .lock()
+                                .unwrap()
+                                .as_ref()
+                                .is_some_and(|local| url.origin() == local.origin())
+                    });
+                args.SetState(if allowed {
+                    COREWEBVIEW2_PERMISSION_STATE_ALLOW
+                } else {
+                    COREWEBVIEW2_PERMISSION_STATE_DENY
+                })
+            })),
+            &mut 0,
+        )?;
         // PDF links can start an HTTP document request before WebView2 emits
         // the navigation or new-window callback. Reject it before it goes out.
         let filter = w!("http*://*");
