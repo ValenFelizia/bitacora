@@ -42,6 +42,8 @@ import { clampPanel, DESKTOP_MIN, panelBounds, panelKey } from "./panel";
 import { QuestionCard } from "./question";
 import { formatTime, formatWorkDate, undoSummary } from "./format";
 import { protectionText, protectionWarning } from "./protection-text";
+import { Welcome, type WelcomeAnswer } from "./welcome";
+import { suggestedRoutes } from "../../server/src/welcome";
 import {
   appendReadFiles,
   clearSentAttachments,
@@ -58,12 +60,6 @@ const MAX_REQUEST_TEXT = 20000;
 function isDesktop() {
   return (window as Window & { __BITACORA_DESKTOP__?: boolean }).__BITACORA_DESKTOP__ === true;
 }
-
-const SUGGESTED_ROUTES = [
-  "Armame una propuesta con este link",
-  "Armame una cotización rápida",
-  "Revisá este PDF",
-] as const;
 
 const latestResult = (work: Work) =>
   work.messages
@@ -195,6 +191,9 @@ function App() {
   const [answering, setAnswering] = useState<string>();
   const answeringRef = useRef<string | undefined>(undefined);
   const [problem, setProblem] = useState<{ text: string; detail?: string; workId?: string }>();
+  // The welcome answer was sent and no reply arrived yet. Any message from the
+  // server releases it, with or without an error.
+  const [welcomeSending, setWelcomeSending] = useState(false);
   const [login, setLogin] = useState<string>();
   const loginWindow = useRef<Window | null>(null);
   const socket = useRef<WebSocket | null>(null);
@@ -214,6 +213,8 @@ function App() {
   );
   const workResultCount =
     work?.messages.reduce((sum, m) => sum + (m.results?.length || 0), 0) || 0;
+  // The welcome marked what the agency needs: those come first (issue #67).
+  const routes = suggestedRoutes(state.uses);
 
   useEffect(() => {
     let disposed = false;
@@ -224,6 +225,9 @@ function App() {
       ws.onopen = () => setOnline(true);
       ws.onmessage = (e) => {
         const message = JSON.parse(e.data) as ServerMessage;
+        // Any answer proves the server is there: the welcome button can be
+        // pressed again even when the same error comes back.
+        setWelcomeSending(false);
         if (message.type === "snapshot") {
           setState(message.state);
           if (message.state.account.connected) setLogin(undefined);
@@ -290,6 +294,7 @@ function App() {
       ws.onclose = () => {
         setOnline(false);
         setPending(false);
+        setWelcomeSending(false);
         // An answer in flight may never arrive: the card can send it again.
         answeringRef.current = undefined;
         setAnswering(undefined);
@@ -682,6 +687,38 @@ function App() {
     setFocusedMessageId(undefined);
     if (restoreFocus) deliverablesToggleRef.current?.focus();
   }
+
+  function sendWelcome(command: ClientCommand) {
+    // Offline the screen already says so and its buttons are off: nothing to do.
+    if (socket.current?.readyState !== WebSocket.OPEN) return;
+    // A problem from before does not belong on the screen that comes next.
+    setProblem(undefined);
+    setWelcomeSending(true);
+    send(command);
+  }
+
+  function saveWelcome(answers: WelcomeAnswer) {
+    sendWelcome({ type: "welcome", answers: { ...answers } });
+  }
+
+  function skipWelcome() {
+    sendWelcome({ type: "skipWelcome" });
+  }
+
+  // The first-run questions come before the account: they need no engine and
+  // no cupo, so the app is useful from the first screen (DEC-015). They stay
+  // mounted without a connection, with the answers still there.
+  if (state.welcome === "pending")
+    return (
+      <Welcome
+        problem={problem?.text}
+        sending={welcomeSending}
+        offline={!online}
+        onSave={saveWelcome}
+        onSkip={skipWelcome}
+        onRetry={() => reconnectRef.current()}
+      />
+    );
 
   return (
     <div
@@ -1277,7 +1314,7 @@ function App() {
                   <div className="w-full flex flex-col gap-1">
                     <h3 className="text-[13px] text-muted">Rumbos sugeridos</h3>
                     <div className="w-full divide-y divide-line border-t border-b border-line">
-                      {SUGGESTED_ROUTES.map((route) => (
+                      {routes.map((route) => (
                         <button
                           key={route}
                           type="button"

@@ -1262,7 +1262,7 @@ export class CodexEngine implements Engine {
     }
     return models;
   }
-  private settings(model?: ModelSelection) {
+  private settings(model?: ModelSelection, notes?: string) {
     return {
       cwd: this.options.workspace,
       approvalPolicy: "never" as const,
@@ -1272,7 +1272,12 @@ export class CodexEngine implements Engine {
       ...(this.backend === "elevated"
         ? { sandbox: "workspace-write" as const }
         : { permissions: PERMISSIONS_PROFILE }),
-      developerInstructions: AGENCY_ENVIRONMENT.developerInstructions,
+      // The welcome answers travel with the thread, quoted as data the user
+      // said, so the agent does not have to read `perfil.md` every time and
+      // cannot take its words as instructions (DEC-015).
+      developerInstructions: notes
+        ? `${AGENCY_ENVIRONMENT.developerInstructions} ${notes}`
+        : AGENCY_ENVIRONMENT.developerInstructions,
       // `thread/start` and `thread/resume` have no effort field: it travels as
       // the config override, verified against 0.168.0 (DEC-014).
       ...(model && { model: model.model, config: { model_reasoning_effort: model.effort } }),
@@ -1630,10 +1635,10 @@ export class CodexEngine implements Engine {
     this.skillsSync = slot;
     return slot.promise;
   }
-  async createWork(model?: ModelSelection) {
+  async createWork(model?: ModelSelection, notes?: string) {
     await this.syncSkills();
     const { thread, activePermissionProfile } = await this.rpc("thread/start", {
-      ...this.settings(model),
+      ...this.settings(model, notes),
       // A model the account lacks must fail, not be swapped for another one
       // the owner may have ruled out. `thread/resume` has no such field.
       ...(model && { allowProviderModelFallback: false }),
@@ -1641,11 +1646,11 @@ export class CodexEngine implements Engine {
     this.checkProfile(activePermissionProfile, true);
     return { conversationId: thread.id, title: thread.name || undefined };
   }
-  async resumeWork(conversationId: string, model?: ModelSelection) {
+  async resumeWork(conversationId: string, model?: ModelSelection, notes?: string) {
     await this.syncSkills(conversationId);
     const { activePermissionProfile } = await this.rpc("thread/resume", {
       threadId: conversationId,
-      ...this.settings(model),
+      ...this.settings(model, notes),
     });
     this.checkProfile(activePermissionProfile, false);
   }
