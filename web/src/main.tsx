@@ -13,6 +13,7 @@ import {
   LogIn,
   Mail,
   Menu,
+  Mic,
   Package,
   Paperclip,
   Pencil,
@@ -38,6 +39,7 @@ import { MAX_TITLE } from "../../server/src/titles";
 import "./style.css";
 import { DeliverablesPanel, FileCard, FilePreviewModal } from "./files";
 import { ModelPicker } from "./model-picker";
+import { useDictation } from "./dictation";
 import { clampPanel, DESKTOP_MIN, panelBounds, panelKey } from "./panel";
 import { QuestionCard } from "./question";
 import { formatTime, formatWorkDate, undoSummary } from "./format";
@@ -207,6 +209,32 @@ function App() {
   const shownPanel = clampPanel(panelWidth, viewport);
   const panelLimits = panelBounds(viewport);
   const work = state.works.find((w) => w.id === selected);
+  const dictationToken =
+    online && state.account.connected && state.engine.available && !gallery ? state.fileToken : undefined;
+  const dictation = useDictation({
+    token: dictationToken,
+    workId: selected,
+    online,
+    desktop: isDesktop(),
+    focusInput: () => composerInput.current?.focus(),
+    onText(transcript) {
+      const input = composerInput.current;
+      if (!input) return "No pude agregar el dictado al pedido. Volvé a dictar.";
+      const { selectionStart, selectionEnd, value } = input;
+      const before = value.slice(0, selectionStart);
+      const after = value.slice(selectionEnd);
+      const room = Math.max(0, MAX_REQUEST_TEXT - before.length - after.length);
+      const leadingSpace = room > 1 && before && !/\s$/.test(before) && !/^[,.;:!?)]/.test(transcript) ? " " : "";
+      // Do not split a surrogate pair at the text box's UTF-16 limit.
+      const clipped = transcript.slice(0, room - leadingSpace.length).replace(/[\uD800-\uDBFF]$/, "");
+      input.focus();
+      if (!clipped) return "No quedó lugar para agregar el dictado. Acortá el pedido y volvé a dictar.";
+      const trailingSpace = leadingSpace.length + clipped.length < room && after && !/^[\s,.;:!?)]/.test(after) ? " " : "";
+      input.setRangeText(leadingSpace + clipped + trailingSpace, selectionStart, selectionEnd, "end");
+      setText(input.value);
+      if (clipped !== transcript) return "Agregué la parte del dictado que entraba. El pedido llegó al límite de texto.";
+    },
+  });
   const busy = state.works.some((w) => w.busy);
   const hasGalleryResults = state.works.some((w) =>
     w.messages.some((m) => m.results?.length),
@@ -461,6 +489,7 @@ function App() {
     if (
       (!typed && !attachments.length && !opening) ||
       readingFiles ||
+      dictation.active() ||
       busy ||
       pending ||
       !online ||
@@ -656,11 +685,17 @@ function App() {
     state.account.connected;
 
   // The send button and Enter follow the same rule; while busy the button pauses.
+  const dictationStatus = dictation.status;
+  const dictating = dictationStatus.kind === "recording" ||
+    dictationStatus.kind === "permission" || dictationStatus.kind === "transcribing";
+  const micLabel = dictationStatus.kind === "recording" ? "Terminar dictado"
+    : dictating ? "Cancelar dictado" : "Dictar";
   const sendBlocked =
     busy ||
     !canSend ||
     pending ||
     readingFiles ||
+    dictating ||
     (!text.trim() && !attachments.length);
 
   const notConnected =
@@ -775,6 +810,7 @@ function App() {
             setNavOpen(false);
             setFocusedMessageId(undefined);
             draftGeneration.current++;
+            dictation.cancel();
             setAttachments([]);
             setSelected(undefined);
             setText("");
@@ -1749,6 +1785,13 @@ function App() {
                 </div>
               )}
 
+              <div role="status" className={dictationStatus.kind === "idle" ? "sr-only" : "text-[13px] text-accent-ink"}>
+                {dictationStatus.kind === "permission" && "Abriendo el micrófono…"}
+                {dictationStatus.kind === "recording" && "Escuchando…"}
+                {dictationStatus.kind === "transcribing" && "Transcribiendo…"}
+                {dictationStatus.kind === "error" && <span className="text-danger">{dictationStatus.message}</span>}
+                {dictationStatus.kind === "notice" && dictationStatus.message}
+              </div>
               <label className="sr-only" htmlFor="request">
                 Tu pedido
               </label>
@@ -1784,6 +1827,27 @@ function App() {
                   onClick={() => fileInput.current?.click()}
                 >
                   <Paperclip size={18} strokeWidth={1.75} aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  className={`${iconButton} ${dictationStatus.kind === "recording" ? "bg-soft !text-accent-ink" : ""}`}
+                  disabled={!dictationToken || pending}
+                  title={micLabel}
+                  aria-label={micLabel}
+                  onClick={() => {
+                    if (dictationStatus.kind === "recording") dictation.stop();
+                    else if (dictating) {
+                      dictation.cancel();
+                      composerInput.current?.focus();
+                    }
+                    else void dictation.start();
+                  }}
+                >
+                  {dictating ? (
+                    <Square size={18} strokeWidth={1.75} aria-hidden="true" />
+                  ) : (
+                    <Mic size={18} strokeWidth={1.75} aria-hidden="true" />
+                  )}
                 </button>
                 {state.model && (
                   <ModelPicker

@@ -25,6 +25,9 @@ import type { RequestId } from "./generated/RequestId";
 import type { ServerNotification } from "./generated/ServerNotification";
 import type { ToolRequestUserInputResponse } from "./generated/v2/ToolRequestUserInputResponse";
 import type { GetAccountResponse } from "./generated/v2/GetAccountResponse";
+import type { GetAuthStatusResponse } from "./generated/GetAuthStatusResponse";
+import { transcribeWithCodex } from "./transcribe";
+import type { DictationClip } from "../dictation";
 import type { LoginAccountResponse } from "./generated/v2/LoginAccountResponse";
 import type { ThreadStartResponse } from "./generated/v2/ThreadStartResponse";
 import type { ThreadResumeResponse } from "./generated/v2/ThreadResumeResponse";
@@ -114,6 +117,7 @@ type Responses = {
   "skills/config/write": SkillsConfigWriteResponse;
   "windowsSandbox/setupStart": { started: boolean };
   "account/read": GetAccountResponse;
+  "getAuthStatus": GetAuthStatusResponse;
   "account/login/start": LoginAccountResponse;
   "account/login/cancel": unknown;
   "model/list": ModelListResponse;
@@ -1227,6 +1231,12 @@ export class CodexEngine implements Engine {
       ? { connected: true, email: account.email || undefined }
       : { connected: false };
   }
+  transcribe(clip: DictationClip, signal: AbortSignal) {
+    return transcribeWithCodex(clip, signal, (refreshToken) =>
+      this.rpc("getAuthStatus", { includeToken: true, refreshToken }, 10_000),
+    );
+  }
+
   async connectAccount() {
     // The engine is about to be replaced: a login started now would be lost.
     if (!this.available || this.safety.status === "preparing")
