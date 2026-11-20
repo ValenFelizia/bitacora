@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
-import { AlertCircle, ArrowLeft, ArrowRight, Check } from "lucide-react";
+import { AlertCircle, ArrowLeft, ArrowRight, Check, RotateCcw, WifiOff } from "lucide-react";
 import { MAX_NAME, MAX_OTHER, WELCOME_USES, type WelcomeUseId } from "../../server/src/welcome";
 
 const focusRing =
@@ -9,7 +9,7 @@ const buttonQuiet = `inline-flex items-center justify-center gap-2 px-3 py-2 rou
 const backLink = `inline-flex items-center gap-1.5 text-[13px] text-muted hover:text-ink cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors duration-150 ${focusRing}`;
 const row =
   "flex items-start gap-3 px-2 py-2.5 cursor-pointer hover:bg-soft transition-colors duration-150";
-const checkbox = `mt-[3px] w-4 h-4 shrink-0 accent-[#1d2838] cursor-pointer ${focusRing}`;
+const checkbox = `mt-[3px] w-4 h-4 shrink-0 accent-ink cursor-pointer ${focusRing}`;
 
 const STEPS = [
   {
@@ -38,18 +38,27 @@ export type WelcomeAnswer = {
 
 /**
  * The first-run questions (issue #67): one per screen, no agent involved, so
- * they cost neither cupo nor time. They can be skipped, and going back keeps
- * what was already written.
+ * they cost neither cupo nor time. They can be skipped, going back keeps what
+ * was already written, and a lost connection leaves the answers on screen
+ * instead of starting over.
  */
 export function Welcome({
   problem,
+  sending,
+  offline,
   onSave,
   onSkip,
+  onRetry,
 }: {
   /** What the server said when it could not save, in plain words. */
   problem?: string;
+  /** Sent and not answered yet: the buttons wait for any reply (issue #67). */
+  sending: boolean;
+  /** The socket is down: nothing can be saved, so nothing is sent. */
+  offline: boolean;
   onSave: (answers: WelcomeAnswer) => void;
   onSkip: () => void;
+  onRetry: () => void;
 }) {
   const base = useId();
   const titleId = `${base}-title`;
@@ -60,7 +69,6 @@ export function Welcome({
   const [other, setOther] = useState("");
   const [writing, setWriting] = useState(false);
   const [missing, setMissing] = useState<"agency" | "person" | undefined>();
-  const [sending, setSending] = useState(false);
   const heading = useRef<HTMLHeadingElement>(null);
   const field = useRef<HTMLInputElement>(null);
 
@@ -71,16 +79,18 @@ export function Welcome({
     else field.current?.focus();
   }, [step]);
 
-  // A refused save must leave the buttons usable again.
-  useEffect(() => {
-    if (problem) setSending(false);
-  }, [problem]);
-
   const current = STEPS[step];
+  const waiting = sending || offline;
+
+  /** Every step change starts without the previous step's validation note. */
+  function go(next: 0 | 1 | 2) {
+    setMissing(undefined);
+    setStep(next);
+  }
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    if (sending) return;
+    if (waiting) return;
     if (step === 0 && !agency.trim()) {
       setMissing("agency");
       field.current?.focus();
@@ -91,12 +101,10 @@ export function Welcome({
       field.current?.focus();
       return;
     }
-    setMissing(undefined);
     if (step < 2) {
-      setStep((value) => (value + 1) as 0 | 1 | 2);
+      go((step + 1) as 1 | 2);
       return;
     }
-    setSending(true);
     const written = writing ? other.trim() : "";
     onSave({ agency: agency.trim(), person: person.trim(), uses, ...(written ? { other: written } : {}) });
   }
@@ -108,8 +116,11 @@ export function Welcome({
   }
 
   function skip() {
-    setSending(true);
-    onSkip();
+    if (waiting) return;
+    // On the last question the names are worth keeping; on the first ones
+    // there is nothing yet, so skipping the whole welcome saves nothing.
+    if (step === 2) onSave({ agency: agency.trim(), person: person.trim(), uses: [] });
+    else onSkip();
   }
 
   const fieldError =
@@ -129,8 +140,11 @@ export function Welcome({
               .
             </em>
           </div>
-          <span className="text-[13px] tabular-nums text-muted">
+          <span aria-hidden="true" className="text-[13px] tabular-nums text-muted">
             {step + 1} de {STEPS.length}
+          </span>
+          <span role="status" className="sr-only">
+            Paso {step + 1} de {STEPS.length}
           </span>
         </header>
 
@@ -197,7 +211,7 @@ export function Welcome({
           )}
 
           {step === 2 && (
-            <fieldset className="flex min-w-0 flex-col gap-2" aria-labelledby={titleId}>
+            <fieldset className="flex min-w-0 flex-col gap-2">
               <legend className="sr-only">{current.question}</legend>
               <div className="flex flex-col divide-y divide-line border-y border-line">
                 {WELCOME_USES.map((use) => (
@@ -258,16 +272,27 @@ export function Welcome({
             </p>
           )}
 
-          {problem && (
+          {offline ? (
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[13px] text-ink">
+              <WifiOff size={16} strokeWidth={1.75} className="shrink-0 text-muted" aria-hidden="true" />
+              <span role="status">
+                Sin conexión con Bitácora. Lo que escribiste sigue acá; lo guardo cuando vuelva.
+              </span>
+              <button type="button" className={backLink} onClick={onRetry}>
+                <RotateCcw size={16} strokeWidth={1.75} aria-hidden="true" />
+                Reintentar
+              </button>
+            </div>
+          ) : problem ? (
             <p role="alert" className="flex items-start gap-2 text-[13px] text-danger">
               <AlertCircle size={16} strokeWidth={1.75} className="mt-0.5 shrink-0" aria-hidden="true" />
               <span>{problem}</span>
             </p>
-          )}
+          ) : null}
 
           <div className="flex items-center justify-between gap-3">
             {step > 0 ? (
-              <button type="button" className={backLink} disabled={sending} onClick={() => setStep((value) => (value - 1) as 0 | 1 | 2)}>
+              <button type="button" className={backLink} disabled={sending} onClick={() => go((step - 1) as 0 | 1)}>
                 <ArrowLeft size={16} strokeWidth={1.75} aria-hidden="true" />
                 Atrás
               </button>
@@ -278,14 +303,14 @@ export function Welcome({
               <button
                 type="button"
                 className={buttonQuiet}
-                disabled={sending}
+                disabled={waiting}
                 onClick={skip}
                 title="Saltear las preguntas"
                 aria-label="Saltear las preguntas de la bienvenida"
               >
                 Saltear
               </button>
-              <button type="submit" className={buttonBordered} disabled={sending}>
+              <button type="submit" className={buttonBordered} disabled={waiting}>
                 {step === 2 ? (
                   <>
                     <Check size={18} strokeWidth={1.75} aria-hidden="true" />

@@ -191,6 +191,9 @@ function App() {
   const [answering, setAnswering] = useState<string>();
   const answeringRef = useRef<string | undefined>(undefined);
   const [problem, setProblem] = useState<{ text: string; detail?: string; workId?: string }>();
+  // The welcome answer was sent and no reply arrived yet. Any message from the
+  // server releases it, with or without an error.
+  const [welcomeSending, setWelcomeSending] = useState(false);
   const [login, setLogin] = useState<string>();
   const loginWindow = useRef<Window | null>(null);
   const socket = useRef<WebSocket | null>(null);
@@ -222,6 +225,9 @@ function App() {
       ws.onopen = () => setOnline(true);
       ws.onmessage = (e) => {
         const message = JSON.parse(e.data) as ServerMessage;
+        // Any answer proves the server is there: the welcome button can be
+        // pressed again even when the same error comes back.
+        setWelcomeSending(false);
         if (message.type === "snapshot") {
           setState(message.state);
           if (message.state.account.connected) setLogin(undefined);
@@ -288,6 +294,7 @@ function App() {
       ws.onclose = () => {
         setOnline(false);
         setPending(false);
+        setWelcomeSending(false);
         // An answer in flight may never arrive: the card can send it again.
         answeringRef.current = undefined;
         setAnswering(undefined);
@@ -681,19 +688,33 @@ function App() {
     if (restoreFocus) deliverablesToggleRef.current?.focus();
   }
 
+  function sendWelcome(command: ClientCommand) {
+    // Offline the screen already says so and its buttons are off: nothing to do.
+    if (socket.current?.readyState !== WebSocket.OPEN) return;
+    setWelcomeSending(true);
+    send(command);
+  }
+
   function saveWelcome(answers: WelcomeAnswer) {
-    send({ type: "welcome", answers: { ...answers } });
+    sendWelcome({ type: "welcome", answers: { ...answers } });
+  }
+
+  function skipWelcome() {
+    sendWelcome({ type: "skipWelcome" });
   }
 
   // The first-run questions come before the account: they need no engine and
-  // no cupo, so the app is useful from the first screen (DEC-015). Without the
-  // connection they wait, so the offline state is never hidden behind them.
-  if (state.welcome === "pending" && online)
+  // no cupo, so the app is useful from the first screen (DEC-015). They stay
+  // mounted without a connection, with the answers still there.
+  if (state.welcome === "pending")
     return (
       <Welcome
         problem={problem?.text}
+        sending={welcomeSending}
+        offline={!online}
         onSave={saveWelcome}
-        onSkip={() => send({ type: "skipWelcome" })}
+        onSkip={skipWelcome}
+        onRetry={() => reconnectRef.current()}
       />
     );
 

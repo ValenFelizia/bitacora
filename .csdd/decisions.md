@@ -459,11 +459,17 @@ accepted direction from implementation alone.
   editable; si la carpeta todavía no existe, se crea solo la carpeta, no el kit
   (eso es #65). Que ya se hizo o se salteó se recuerda en `settings.json`
   (`welcome: "done" | "skipped"`).
-- Consequences: `AGENCY_DEVELOPER_INSTRUCTIONS`, `kit/turismo/AGENTS.md` y la
-  skill `entrevista` leen `perfil.md` y no vuelven a preguntar esos datos (si el
-  nombre de la agencia está, la entrevista pregunta solo la firma). Los «Rumbos
-  sugeridos» de la pantalla vacía salen de los usos marcados; sin usos son los
-  tres de siempre. El archivo se lee al arrancar, así que un cambio que hace el
-  agente cuenta desde el próximo arranque. Si se borra la carpeta de la agencia,
-  la bienvenida no vuelve a aparecer y `perfil.md` se pierde con ella: arreglarlo
-  es parte de #65.
+- Consequences: al crear o retomar la conversación, Bitácora lee `perfil.md` y
+  le pasa esos datos al agente en las instrucciones de desarrollador, entre
+  comillas y aclarando que son datos y no instrucciones; el `AGENTS.md` del kit
+  dice lo mismo y la skill `entrevista` nombra `perfil.md` como datos. Con esos
+  datos el agente no vuelve a preguntar los nombres (la entrevista pregunta solo
+  la firma si la agencia está) y no necesita leer el archivo en cada
+  conversación; si no hay perfil, las instrucciones le dicen que pregunte la
+  agencia y la firma. Los «Rumbos sugeridos» de la pantalla vacía salen de los
+  usos marcados, uno por tema; sin usos son los tres de siempre. `perfil.md` se
+  lee al arrancar (para las sugerencias) y al abrir la conversación (para el
+  agente), así que un cambio cuenta desde el próximo arranque o el próximo
+  pedido. Si se borra la carpeta de la agencia, la bienvenida no vuelve a
+  aparecer y `perfil.md` se pierde con ella: arreglarlo es parte de #65. Una
+  agencia que ya tiene `marca/datos.md` se toma como bienvenida.
