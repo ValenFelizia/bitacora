@@ -219,7 +219,7 @@ function App() {
     focusInput: () => composerInput.current?.focus(),
     onText(transcript) {
       const input = composerInput.current;
-      if (!input) return;
+      if (!input) return "No pude agregar el dictado al pedido. Volvé a dictar.";
       const { selectionStart, selectionEnd, value } = input;
       const before = value.slice(0, selectionStart);
       const after = value.slice(selectionEnd);

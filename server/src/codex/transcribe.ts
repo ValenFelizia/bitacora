@@ -93,7 +93,8 @@ export async function transcribeWithCodex(
     signal.throwIfAborted();
     const account = headers.get("ChatGPT-Account-Id");
     const renewedAccount = renewed.get("ChatGPT-Account-Id");
-    if (account && renewedAccount && renewedAccount !== account) {
+    // A renewed token without an account id cannot prove it is the same account.
+    if (account && renewedAccount !== account) {
       throw new DictationError(409, "Cambió tu cuenta de ChatGPT. Volvé a dictar.");
     }
     response = await submit(renewed);

@@ -13,8 +13,10 @@ use webview2_com::{
     take_pwstr,
     Microsoft::Web::WebView2::Win32::{
         ICoreWebView2PermissionRequestedEventArgs3, ICoreWebView2_22, COREWEBVIEW2_PERMISSION_KIND,
-        COREWEBVIEW2_PERMISSION_KIND_MICROPHONE, COREWEBVIEW2_PERMISSION_STATE_ALLOW,
-        COREWEBVIEW2_PERMISSION_STATE_DENY, COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT,
+        COREWEBVIEW2_PERMISSION_KIND_MICROPHONE,
+        COREWEBVIEW2_PERMISSION_KIND_MULTIPLE_AUTOMATIC_DOWNLOADS,
+        COREWEBVIEW2_PERMISSION_STATE_ALLOW, COREWEBVIEW2_PERMISSION_STATE_DENY,
+        COREWEBVIEW2_WEB_RESOURCE_CONTEXT_DOCUMENT,
         COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_ALL,
     },
     NavigationStartingEventHandler, PermissionRequestedEventHandler,
@@ -77,7 +79,10 @@ fn restrict_webview(
                 let transient = args
                     .cast::<ICoreWebView2PermissionRequestedEventArgs3>()
                     .is_ok_and(|profile| profile.SetSavesInProfile(false).is_ok());
-                let allowed = kind == COREWEBVIEW2_PERMISSION_KIND_MICROPHONE
+                // The microphone for dictation, and several files at once for
+                // "Descargar todas"; everything else (camera, location...) is denied.
+                let allowed = (kind == COREWEBVIEW2_PERMISSION_KIND_MICROPHONE
+                    || kind == COREWEBVIEW2_PERMISSION_KIND_MULTIPLE_AUTOMATIC_DOWNLOADS)
                     && transient
                     && Url::parse(&uri).is_ok_and(|url| {
                         url.scheme() == "http"
