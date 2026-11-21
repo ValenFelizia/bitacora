@@ -55,11 +55,12 @@ test('the kit comes back when the agency folder is deleted', async () => {
     await initializeKit(f.root, f.data);
     assert.match(await f.files.read('AGENTS.md'), /\S/);
     assert.match(await f.files.read('ejemplo/pieza.html'), /data-cites/);
-    // Removing only AGENTS.md leaves an existing folder with its own work.
+    // A kit folder that lost AGENTS.md gets the kit back without
+    // overwriting the agency's own work (#65).
     await f.files.write('ejemplo/pieza.html', 'Pieza propia', false);
     await rm(join(f.root, 'AGENTS.md'));
     await initializeKit(f.root, f.data);
-    await assert.rejects(f.files.read('AGENTS.md'), { code: 'ENOENT' });
+    assert.match(await f.files.read('AGENTS.md'), /\S/);
     assert.equal(await f.files.read('ejemplo/pieza.html'), 'Pieza propia');
     // A copy cut short after AGENTS.md is written still resumes even though
     // the original empty folder now contains some kit files.

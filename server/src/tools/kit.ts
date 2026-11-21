@@ -68,7 +68,11 @@ export async function initializeKit(
   const state = new AgencyFiles(data);
   const marker = `kit-initialized-${createHash('sha256').update(root.toLowerCase()).digest('hex')}.json`;
   const previous = await kitState(state, marker, root, identity);
-  const copyFullKit = (await readdir(root)).length === 0 || previous === 'copying';
+  // A folder the kit set up that lost its AGENTS.md was emptied or moved
+  // (#65): it gets the missing kit files back, without overwriting anything.
+  const kitOwned = previous === 'ready' || previous === 'legacy';
+  const lostRules = kitOwned && !(await readdir(root)).some(name => name.toLowerCase() === 'agents.md');
+  const copyFullKit = (await readdir(root)).length === 0 || previous === 'copying' || lostRules;
 
   async function saveMarker(status: 'copying' | 'ready' | 'add-only') {
     await state.write(marker, JSON.stringify({ version: 2, workspace: root, identity, status }), false);
@@ -92,7 +96,7 @@ export async function initializeKit(
     await saveMarker('ready');
   }
   try {
-    await refreshKitSkills(target, kitSource, !copyFullKit && (previous === 'ready' || previous === 'legacy'));
+    await refreshKitSkills(target, kitSource, !copyFullKit && kitOwned);
     if (copyFullKit) await saveMarker(previous === 'copying' ? 'add-only' : 'ready');
     return {};
   } catch (error) {
