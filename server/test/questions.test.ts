@@ -15,6 +15,7 @@ import { AGENCY_DEVELOPER_INSTRUCTIONS } from "../src/agency-environment";
 import { agentAnswer, answerRecord, optionLabel } from "../src/questions";
 import { fakeAppServerArgs } from "./fake-app-server";
 import { FakeEngine } from "./fake-engine";
+import { screenProtocols, screenSecret } from "./screen-fixture";
 
 async function until<T>(read: () => T | undefined | false | Promise<T | undefined | false>, label: string, timeoutMs = 15000): Promise<T> {
   const deadline = Date.now() + timeoutMs;
@@ -28,7 +29,7 @@ async function until<T>(read: () => T | undefined | false | Promise<T | undefine
 
 /** A screen: one WebSocket connection that keeps what the server says. */
 async function screen(port: number) {
-  const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, { origin: "http://127.0.0.1:5173" });
+  const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, screenProtocols, { origin: "http://127.0.0.1:5173" });
   const received: ServerMessage[] = [];
   ws.on("message", (data) => received.push(JSON.parse(String(data))));
   ws.on("error", () => {});
@@ -86,7 +87,7 @@ async function harness() {
   const events: EngineEvent[] = [];
   engine.subscribe((event) => events.push(event));
   const data = join(dir, "data");
-  const server = await serve(engine, data, 0);
+  const server = await serve(engine, data, 0, undefined, undefined, undefined, screenSecret);
   const screens: Awaited<ReturnType<typeof screen>>[] = [];
   let closed = false;
   const records = async () =>

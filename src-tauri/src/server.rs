@@ -14,6 +14,9 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+use windows_sys::Win32::Security::Cryptography::{
+    BCryptGenRandom, BCRYPT_USE_SYSTEM_PREFERRED_RNG,
+};
 use windows_sys::Win32::System::{
     JobObjects::{
         AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
@@ -51,7 +54,11 @@ impl Server {
         }
     }
 
-    pub fn start(&self, runtime: &Path) -> io::Result<mpsc::Receiver<io::Result<u16>>> {
+    pub fn start(
+        &self,
+        runtime: &Path,
+        screen_secret: &str,
+    ) -> io::Result<mpsc::Receiver<io::Result<u16>>> {
         let mut active = self.process.lock().unwrap();
         if self.exiting() {
             return Err(io::ErrorKind::Interrupted.into());
@@ -103,7 +110,7 @@ impl Server {
             }
         });
         // Only now can Node start Codex and let it spawn its helpers.
-        stdin.write_all(b"\n")?;
+        stdin.write_all(format!("{screen_secret}\n").as_bytes())?;
         *active = Some(Process { child, stdin, job });
         Ok(ready)
     }
@@ -200,6 +207,22 @@ fn create_job() -> io::Result<OwnedHandle> {
         return Err(io::Error::last_os_error());
     }
     Ok(job)
+}
+
+pub fn screen_secret() -> io::Result<String> {
+    let mut bytes = [0_u8; 32];
+    let status = unsafe {
+        BCryptGenRandom(
+            std::ptr::null_mut(),
+            bytes.as_mut_ptr(),
+            bytes.len() as u32,
+            BCRYPT_USE_SYSTEM_PREFERRED_RNG,
+        )
+    };
+    if status < 0 {
+        return Err(io::Error::other("Could not generate a screen session"));
+    }
+    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
 }
 
 pub fn ready_port(ready: mpsc::Receiver<io::Result<u16>>) -> io::Result<u16> {

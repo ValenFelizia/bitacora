@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 // Screenshots for issues #56 and #57 on the built screen, in Edge: the works
 // list, the model picker, the copy button and the deliverables panel, on a
 // desktop window and a narrow one. `antes` was taken on main (cd47e21) before
@@ -86,10 +87,11 @@ try {
   await writeFile(join(data, "works.json"), JSON.stringify({ version: 1, works }, null, 2));
 
   const engine = new FakeEngine();
+  const screenSecret = randomBytes(32).toString("hex");
   server = await serve(engine, data, 0, undefined, workspace, {
     webRoot: resolve("web/dist"),
     kitSource: resolve("kit/turismo"),
-  });
+  }, screenSecret);
   await server.app.startEngine();
 
   async function open(width: number, height: number) {
@@ -101,7 +103,12 @@ try {
     });
     const page = await context.newPage();
     page.on("pageerror", (error) => errors.push(String(error)));
-    await page.goto(`http://127.0.0.1:${server!.port}`);
+    const origin = `http://127.0.0.1:${server!.port}`;
+    await page.addInitScript(({ origin, secret }) => {
+      if (window === window.top && location.origin === origin)
+        Object.defineProperty(window, "__BITACORA_SCREEN_SECRET__", { value: secret });
+    }, { origin, secret: screenSecret });
+    await page.goto(origin);
     await page.getByLabel("Tu pedido", { exact: true }).waitFor();
     await page.evaluate(() => document.fonts.ready);
     return page;

@@ -1,17 +1,35 @@
 import { paths, preparePaths } from "./paths";
 import { CodexEngine } from "./codex/engine";
 import { serve } from "./server";
+import { isScreenSecret } from "./screen-session";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const installed = process.argv.includes("--desktop");
-if (installed) {
+const screenSecret = installed ? await readDesktopSecret() : undefined;
+
+async function readDesktopSecret(): Promise<string> {
   // The shell releases startup only after owning this process tree.
-  const started = await new Promise<boolean>((resolve) => {
-    process.stdin.once("data", () => resolve(true));
-    process.stdin.once("end", () => resolve(false));
+  const line = await new Promise<string | undefined>((resolve) => {
+    let input = "";
+    const stdin = process.stdin;
+    const onEnd = () => {
+      stdin.off("data", onData);
+      resolve(input === "" ? undefined : "");
+    };
+    const onData = (chunk: Buffer) => {
+      input += chunk.toString("utf8");
+      if (input.length < 65 && !input.includes("\n")) return;
+      stdin.off("data", onData);
+      stdin.off("end", onEnd);
+      resolve(input.endsWith("\n") ? input.slice(0, -1) : "");
+    };
+    stdin.once("end", onEnd);
+    stdin.on("data", onData);
   });
-  if (!started) process.exit(0);
+  if (line === undefined) process.exit(0);
+  if (!isScreenSecret(line)) throw new Error("Missing or invalid desktop screen session");
+  return line;
 }
 const runtime = fileURLToPath(new URL("../", import.meta.url));
 const locations = await preparePaths(paths());
@@ -31,6 +49,7 @@ const server = await serve(
   installed ? undefined : process.env.BITACORA_WEB_ORIGIN,
   locations.workspace,
   desktop,
+  screenSecret,
 );
 let closing = false;
 function close(code = 0) {

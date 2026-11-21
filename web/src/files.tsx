@@ -14,8 +14,8 @@ import {
 import type { FileRef, Work } from "../../server/src/contracts";
 import { formatTime, groupDeliverables, type DeliverableGroup } from "./format";
 
-export function fileUrl(file: FileRef, token?: string) {
-  return `/files?id=${encodeURIComponent(file.id)}&token=${encodeURIComponent(token || "")}`;
+function fileUrl(file: FileRef) {
+  return `/files?id=${encodeURIComponent(file.id)}`;
 }
 
 type FetchedFile = {
@@ -47,7 +47,7 @@ function useFetchedFile(file: FileRef | undefined, token?: string, fileRevision?
     setState({ missing: false, loading: true });
     const controller = new AbortController();
     let objectUrl: string | undefined;
-    void fetch(fileUrl(file, token), { signal: controller.signal })
+    void fetch(fileUrl(file), { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) throw new Error("unavailable");
         const blob = await response.blob();
@@ -672,7 +672,7 @@ function FeaturedDeliverable({
     let count = 0;
     for (const file of filesToGet) {
       try {
-        const res = await fetch(fileUrl(file, token));
+        const res = await fetch(fileUrl(file), { headers: { Authorization: `Bearer ${token}` } });
         if (!res.ok) continue;
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);

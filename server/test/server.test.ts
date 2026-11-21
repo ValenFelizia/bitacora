@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { once } from "node:events";
 import { WebSocket } from "ws";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -9,6 +10,8 @@ import { randomBytes } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { serve } from "../src/server";
 import { FakeEngine } from "./fake-engine";
+import { DEV_SESSION_PATH, SCREEN_PROTOCOL } from "../src/screen-session";
+import { screenProtocols, screenSecret } from "./screen-fixture";
 
 test("desktop serves only bundled assets and accepts the window's assigned origin", async () => {
   await mkdir(".local", { recursive: true });
@@ -20,7 +23,7 @@ test("desktop serves only bundled assets and accepts the window's assigned origi
   await writeFile(join(dir, "private.html"), "private");
   const server = await serve(new FakeEngine(), data, 0, undefined, undefined, {
     webRoot, kitSource: join(dir, "kit"),
-  });
+  }, screenSecret);
   const origin = `http://127.0.0.1:${server.port}`;
   try {
     const page = await fetch(origin);
@@ -39,22 +42,84 @@ test("desktop serves only bundled assets and accepts the window's assigned origi
     assert.equal(aliasStatus, 403);
 
     const url = `ws://127.0.0.1:${server.port}/ws`;
-    const socket = new WebSocket(url, { origin });
+    const socket = new WebSocket(url, screenProtocols, { origin });
     const message = await new Promise<string>((resolve, reject) => {
       socket.once("message", (data) => resolve(String(data)));
       socket.once("error", reject);
     });
     assert.equal(JSON.parse(message).type, "snapshot");
+    assert.ok(!message.includes(screenSecret));
+    assert.equal(socket.protocol, SCREEN_PROTOCOL);
     await terminateAndClose(socket);
-    const foreign = new WebSocket(url, { origin: "http://127.0.0.1:5173" });
-    await assert.rejects(new Promise<void>((resolve, reject) => {
-      foreign.once("open", resolve);
-      foreign.once("error", reject);
-    }));
-    await waitForClose(foreign);
+
+    const dev = await fetch(origin + DEV_SESSION_PATH, { method: "POST", headers: { Origin: origin } });
+    assert.equal(dev.status, 404);
+    assert.equal(await dev.text(), "");
+    for (const [protocols, claimedOrigin] of [
+      [[], origin],
+      [[SCREEN_PROTOCOL, "0".repeat(64)], origin],
+      [[SCREEN_PROTOCOL, screenSecret.slice(1)], origin],
+      [[SCREEN_PROTOCOL, screenSecret.toUpperCase()], origin],
+      [[screenSecret], origin],
+      [[screenSecret, SCREEN_PROTOCOL], origin],
+      [[SCREEN_PROTOCOL, screenSecret, "extra"], origin],
+      [screenProtocols, "http://127.0.0.1:5173"],
+    ] as const) {
+      const denied = new WebSocket(url, [...protocols], { origin: claimedOrigin });
+      await assert.rejects(new Promise<void>((resolve, reject) => {
+        denied.once("open", () => {
+          denied.terminate();
+          resolve();
+        });
+        denied.once("error", reject);
+      }));
+      await waitForClose(denied);
+
+      const healthy = new WebSocket(url, screenProtocols, { origin });
+      try {
+        const [data] = await once(healthy, "message", { signal: AbortSignal.timeout(15_000) });
+        assert.equal(JSON.parse(String(data)).type, "snapshot");
+        assert.equal(healthy.protocol, SCREEN_PROTOCOL);
+      } finally {
+        await terminateAndClose(healthy);
+      }
+    }
   } finally {
     await server.close();
     await rm(dir, { recursive: true });
+  }
+});
+
+test("development bootstrap issues the server's credential to the Vite origin", async () => {
+  await mkdir(".local", { recursive: true });
+  const dir = await mkdtemp(resolve(".local/dev-session-"));
+  const server = await serve(new FakeEngine(), dir, 0);
+  const base = `http://127.0.0.1:${server.port}`;
+  const origin = "http://localhost:5173";
+  try {
+    const request = (origin?: string) => fetch(base + DEV_SESSION_PATH, {
+      method: "POST", headers: origin ? { Origin: origin } : {},
+    });
+    assert.equal((await request()).status, 403);
+    assert.equal((await request("https://untrusted.example")).status, 403);
+    const response = await request(origin);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.equal(response.headers.get("access-control-allow-origin"), null);
+    const secret = await response.text();
+    assert.match(secret, /^[0-9a-f]{64}$/);
+    const socket = new WebSocket(base.replace("http:", "ws:") + "/ws", [SCREEN_PROTOCOL, secret], { origin });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        socket.once("open", resolve);
+        socket.once("error", reject);
+      });
+    } finally {
+      await terminateAndClose(socket);
+    }
+  } finally {
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
   }
 });
 
@@ -108,11 +173,11 @@ test("localhost websocket serves snapshots, connects an account and blocks forei
   const dir = await mkdtemp(resolve(".local/ws-"));
   const engine = new FakeEngine();
   engine.connected = false;
-  const server = await serve(engine, dir, 0);
+  const server = await serve(engine, dir, 0, undefined, undefined, undefined, screenSecret);
   const socketErrors: Error[] = [];
   const socketMessages: string[] = [];
   const waiters: (() => void)[] = [];
-  const socket = new WebSocket(`ws://127.0.0.1:${server.port}/ws`, {
+  const socket = new WebSocket(`ws://127.0.0.1:${server.port}/ws`, screenProtocols, {
     origin: "http://127.0.0.1:5173",
   });
   socket.on("error", (err) => {
@@ -172,7 +237,7 @@ test("localhost websocket serves snapshots, connects an account and blocks forei
         { origin: "http://localhost:5174" },
         { origin: "http://localhost.evil:5173" },
       ]) {
-        const bad = new WebSocket(`ws://127.0.0.1:${server.port}/ws`, options);
+        const bad = new WebSocket(`ws://127.0.0.1:${server.port}/ws`, screenProtocols, options);
         let opened = false;
         let errored = false;
         bad.on("open", () => {
@@ -190,7 +255,7 @@ test("localhost websocket serves snapshots, connects an account and blocks forei
     });
 
     await t.test("accepts localhost origin alias and survives abrupt client disconnect", async () => {
-      const local = new WebSocket(`ws://127.0.0.1:${server.port}/ws`, {
+      const local = new WebSocket(`ws://127.0.0.1:${server.port}/ws`, screenProtocols, {
         origin: "http://localhost:5173",
         headers: { Host: `localhost:${server.port}` },
       });
@@ -255,13 +320,14 @@ test("localhost websocket serves snapshots, connects an account and blocks forei
             "Connection: Upgrade",
             `Sec-WebSocket-Key: ${randomBytes(16).toString("base64")}`,
             "Sec-WebSocket-Version: 13",
+            `Sec-WebSocket-Protocol: ${screenProtocols.join(", ")}`,
             "",
             "",
           ].join("\r\n"),
         );
       });
 
-      const healthy = new WebSocket(`ws://127.0.0.1:${server.port}/ws`, {
+      const healthy = new WebSocket(`ws://127.0.0.1:${server.port}/ws`, screenProtocols, {
         origin: "http://127.0.0.1:5173",
       });
       healthy.on("error", () => {});

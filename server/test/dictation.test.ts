@@ -5,11 +5,11 @@ import { createServer, request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
-import { WebSocket } from "ws";
 import { transcribeWithCodex } from "../src/codex/transcribe";
 import { DICTATION_FAILED, DICTATION_PATH, DICTATION_TOO_LARGE, MAX_DICTATION_BYTES, type DictationClip } from "../src/dictation";
 import { serve } from "../src/server";
 import { FakeEngine } from "./fake-engine";
+import { screenHeaders, screenSecret } from "./screen-fixture";
 
 const account = "test-workspace";
 function bearer(version: string, accountId = account) {
@@ -99,23 +99,14 @@ async function setup(
 
   const server = await serve(new DictationEngine(), join(directory, "data"), 0, undefined, undefined, {
     webRoot, kitSource: join(directory, "kit"),
-  });
+  }, screenSecret);
   t.after(() => server.close());
   const origin = `http://127.0.0.1:${server.port}`;
-  const socket = new WebSocket(`ws://127.0.0.1:${server.port}/ws`, { origin });
-  try {
-    const [snapshot] = await once(socket, "message");
-    const token: unknown = JSON.parse(String(snapshot)).state.fileToken;
-    assert.equal(typeof token, "string");
-    const url = origin + DICTATION_PATH;
-    const headers = { Authorization: `Bearer ${token}`, "Content-Type": "audio/webm;codecs=opus" };
-    const send = (body = fakeAudio, requestHeaders: Record<string, string> = headers) =>
-      fetch(url, { method: "POST", headers: requestHeaders, body });
-    return { send, url, headers, received, refreshes, upstreamEvents };
-  } finally {
-    socket.terminate();
-    await once(socket, "close");
-  }
+  const url = origin + DICTATION_PATH;
+  const headers = { ...screenHeaders, Origin: origin, "Content-Type": "audio/webm;codecs=opus" };
+  const send = (body = fakeAudio, requestHeaders: Record<string, string> = headers) =>
+    fetch(url, { method: "POST", headers: requestHeaders, body });
+  return { send, url, headers, received, refreshes, upstreamEvents };
 }
 
 test("dictation sends a multipart audio file and returns only the transcript", async (t) => {
@@ -204,8 +195,8 @@ test("dictation rejects oversized uploads with or without Content-Length", async
   assert.deepEqual(refreshes, []);
 });
 
-test("dictation rejects a missing token and a foreign origin before reading audio", async (t) => {
-  const { url, headers, received, refreshes } = await setup(t, []);
+test("dictation rejects missing or wrong credentials and a foreign origin before reading audio", async (t) => {
+  const { send, url, headers, received, refreshes } = await setup(t, [200, 200]);
   const expectRejection = (requestHeaders: Record<string, string>) =>
     new Promise<number | undefined>((resolve, reject) => {
       const upload = request(url, {
@@ -221,10 +212,20 @@ test("dictation rejects a missing token and a foreign origin before reading audi
       // Send just the headers. Waiting for any body bytes would time out.
       upload.flushHeaders();
     });
-  assert.equal(await expectRejection({ "Content-Type": "audio/webm" }), 403);
+  assert.equal(await expectRejection({ Origin: headers.Origin, "Content-Type": "audio/webm" }), 403);
+  assert.equal(await expectRejection({ ...headers, Authorization: `Bearer ${"0".repeat(64)}` }), 403);
   assert.equal(await expectRejection({ ...headers, Origin: "https://example.org" }), 403);
-  assert.deepEqual(received, []);
+  assert.equal(received.length, 0);
   assert.deepEqual(refreshes, []);
+  for (const secret of [screenSecret.slice(1), screenSecret.toUpperCase()]) {
+    const previousRequests: number = received.length;
+    assert.equal(await expectRejection({ ...headers, Authorization: `Bearer ${secret}` }), 403);
+    assert.equal(received.length, previousRequests);
+    const healthy = await send();
+    assert.equal(healthy.status, 200);
+    await healthy.json();
+    assert.equal(received.length, previousRequests + 1);
+  }
 });
 
 test("closing the local connection aborts the pending upstream transcription", async (t) => {

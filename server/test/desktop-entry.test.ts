@@ -9,6 +9,7 @@ import { test } from "node:test";
 import { build } from "esbuild";
 import { parse } from "smol-toml";
 import { WebSocket } from "ws";
+import { screenProtocols, screenSecret } from "./screen-fixture";
 import { codexBinary } from "../../scripts/codex-runtime.mjs";
 import { registerKit } from "../src/codex/kit";
 
@@ -68,20 +69,21 @@ test("desktop entry waits for stdin, announces its port, and closes on EOF", {
     const lines: string[] = [];
     stdout.on("line", (line) => lines.push(line));
     try {
-      // Starting without the shell's handshake should leave the data dir untouched.
+      // A partial handshake should leave the data dir untouched.
+      child.stdin.write(screenSecret.slice(0, 32));
       await delay(300);
       assert.equal(child.exitCode, null, stderr);
-      assert.deepEqual(lines, []);
+      assert.equal(lines.length, 0);
       await assert.rejects(readFile(join(data, "codex", "config.toml")), { code: "ENOENT" });
       const ready = once(stdout, "line", { signal: AbortSignal.timeout(40_000) })
         .then(([line]) => line);
-      child.stdin.write("\n");
+      child.stdin.write(screenSecret.slice(32) + "\n");
       const line = await Promise.race([ready, closed.then(() => { throw new Error(stderr); })]);
       const port = /^BITACORA_READY (\d+)$/.exec(line)?.[1];
       assert.ok(port, line);
       const url = `http://127.0.0.1:${port}/`;
       assert.equal(await (await fetch(url)).text(), "<title>Bitácora</title>");
-      const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`, { origin: new URL(url).origin });
+      const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`, screenProtocols, { origin: new URL(url).origin });
       try {
         for await (const [raw] of on(socket, "message", { signal: AbortSignal.timeout(45_000) })) {
           const message = JSON.parse(String(raw));
@@ -92,6 +94,8 @@ test("desktop entry waits for stdin, announces its port, and closes on EOF", {
       }
       child.stdin.end();
       assert.deepEqual(await closed, [0, null], stderr);
+      assert.ok(!lines.some((line) => line.includes(screenSecret)));
+      assert.ok(!stderr.includes(screenSecret));
       await assert.rejects(fetch(url));
     } finally {
       child.stdin.end();
@@ -129,6 +133,8 @@ test("desktop serves while Codex prepares, then saves buffered changes on stdin 
               import { FakeEngine } from "./fake-engine";
               export class CodexEngine extends FakeEngine {
                 async start() {
+                  if (process.env.BITACORA_SCREEN_SECRET !== undefined)
+                    throw new Error("Screen session leaked into the engine environment");
                   await new Promise(resolve => process.once("message", resolve));
                 }
                 async send(id, text) {
@@ -159,13 +165,13 @@ test("desktop serves while Codex prepares, then saves buffered changes on stdin 
     const stdout = createInterface({ input: output });
     try {
       const ready = once(stdout, "line", { signal: AbortSignal.timeout(10_000) });
-      stdin.write("\n");
+      stdin.write(screenSecret + "\n");
       const [line] = await Promise.race([ready, closed.then(() => { throw new Error(stderr); })]);
       const port = /^BITACORA_READY (\d+)$/.exec(line)?.[1];
       assert.ok(port, line);
       const origin = `http://127.0.0.1:${port}`;
       assert.equal(await (await fetch(origin)).text(), "<title>Bitácora</title>");
-      const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`, { origin });
+      const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`, screenProtocols, { origin });
       const messages = on(socket, "message", { signal: AbortSignal.timeout(10_000) });
       async function next(type: string, accept = (_message: { state?: { engine: { available: boolean } } }) => true) {
         for (;;) {
@@ -178,6 +184,7 @@ test("desktop serves while Codex prepares, then saves buffered changes on stdin 
       const send = (text: string) => socket.send(JSON.stringify({ type: "send", text }));
       try {
         const initial = await next("snapshot");
+        assert.ok(!JSON.stringify(initial).includes(screenSecret));
         assert.equal(initial.state.engine.available, false);
         assert.equal(initial.state.engine.starting, true);
         send("Pedido antes de que esté lista");
@@ -195,7 +202,10 @@ test("desktop serves while Codex prepares, then saves buffered changes on stdin 
         const exitWithinGrace = once(child, "close", { signal: AbortSignal.timeout(2_500) });
         stdin.end();
         assert.deepEqual(await Promise.all([engineClosed, exitWithinGrace]), ["engine closed", [0, null]], stderr);
-        const after = JSON.parse(await readFile(works, "utf8"));
+        const saved = await readFile(works, "utf8");
+        assert.ok(!saved.includes(screenSecret));
+        assert.ok(!stderr.includes(screenSecret));
+        const after = JSON.parse(saved);
         assert.equal(after.version, 1);
         assert.equal(after.works.length, 1);
         assert.equal(after.works[0].busy, false);
