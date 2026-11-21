@@ -1,10 +1,14 @@
 import { paths, preparePaths } from "./paths";
 import { CodexEngine } from "./codex/engine";
 import { serve } from "./server";
+import { isScreenSecret } from "./screen-session";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const installed = process.argv.includes("--desktop");
+const screenSecret = process.env.BITACORA_SCREEN_SECRET;
+// Codex and its tools must never inherit the shell-to-server credential.
+delete process.env.BITACORA_SCREEN_SECRET;
 if (installed) {
   // The shell releases startup only after owning this process tree.
   const started = await new Promise<boolean>((resolve) => {
@@ -12,6 +16,7 @@ if (installed) {
     process.stdin.once("end", () => resolve(false));
   });
   if (!started) process.exit(0);
+  if (!isScreenSecret(screenSecret)) throw new Error("Missing or invalid desktop screen session");
 }
 const runtime = fileURLToPath(new URL("../", import.meta.url));
 const locations = await preparePaths(paths());
@@ -31,6 +36,7 @@ const server = await serve(
   installed ? undefined : process.env.BITACORA_WEB_ORIGIN,
   locations.workspace,
   desktop,
+  installed ? screenSecret : undefined,
 );
 let closing = false;
 function close(code = 0) {

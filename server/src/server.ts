@@ -10,6 +10,7 @@ import { App } from "./app";
 import { desktopAssets } from "./desktop-assets";
 import { DICTATION_PATH } from "./dictation";
 import { handleDictation } from "./dictation-http";
+import { DEV_SESSION_PATH, isScreenSecret, SCREEN_PROTOCOL } from "./screen-session";
 
 export async function serve(
   engine: Engine,
@@ -18,10 +19,14 @@ export async function serve(
   webOrigin = "http://127.0.0.1:5173",
   workspace?: string,
   desktop?: { webRoot: string; kitSource: string },
+  screenSecret = randomBytes(32).toString("hex"),
 ) {
+  if (!isScreenSecret(screenSecret)) throw new Error("Invalid screen session");
+  const expectedSecret = Buffer.from(screenSecret, "hex");
+  const authenticates = (supplied: string | undefined) =>
+    isScreenSecret(supplied) && timingSafeEqual(Buffer.from(supplied, "hex"), expectedSecret);
   const sendAsset = desktop && await desktopAssets(desktop.webRoot);
   const files = workspace ? new WorkspaceFiles(workspace) : undefined;
-  const token = randomBytes(32).toString("hex");
   const http = createServer((req, res) => {
     void (async () => {
       const url = new URL(req.url || "/", "http://127.0.0.1");
@@ -32,15 +37,21 @@ export async function serve(
       if (sendAsset && url.pathname !== "/files" && url.pathname !== DICTATION_PATH) {
         res.writeHead(404); res.end(); return;
       }
-      const dictation = url.pathname === DICTATION_PATH;
-      const supplied = dictation
-        ? req.headers.authorization?.match(/^Bearer (\S+)$/i)?.[1] || ""
-        : url.searchParams.get("token") || "";
-      const validToken = Buffer.byteLength(supplied) === Buffer.byteLength(token) && timingSafeEqual(Buffer.from(supplied), Buffer.from(token));
-      if (!validToken) {
+      // Vite proxies this development-only bootstrap through its existing /ws route.
+      if (!desktop && url.pathname === DEV_SESSION_PATH && req.method === "POST" &&
+          origins.has(req.headers.origin || "")) {
+        res.writeHead(200, {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "no-store",
+          "X-Content-Type-Options": "nosniff",
+        });
+        res.end(screenSecret);
+        return;
+      }
+      if (!authenticates(req.headers.authorization?.match(/^Bearer (\S+)$/i)?.[1])) {
         res.writeHead(403); res.end(); return;
       }
-      if (dictation && req.method === "POST") {
+      if (url.pathname === DICTATION_PATH && req.method === "POST") {
         await handleDictation(req, res, engine);
         return;
       }
@@ -72,7 +83,7 @@ export async function serve(
     (!desktop && host === `localhost:${boundPort()}`);
   const sockets = new WebSocketServer({ noServer: true, maxPayload: Math.ceil(MAX_REQUEST / 3) * 4 + 100000 });
   const send = (ws: WebSocket, message: ServerMessage) => {
-    if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message.type === "snapshot" ? { ...message, state: { ...message.state, fileToken: token } } : message));
+    if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message));
   };
   const app = new App(engine, data, (message) => {
     for (const ws of sockets.clients) send(ws, message);
@@ -86,11 +97,15 @@ export async function serve(
     origins.add(alias.origin);
   }
   http.on("upgrade", (req, socket, head) => {
-    // A public site must not be able to operate a local agent through the browser.
+    const protocols = req.headers["sec-websocket-protocol"]?.split(",").map((part) => part.trim());
+    // ws selects the first protocol. The credential stays out of the response.
     if (
       !origins.has(req.headers.origin || "") ||
       !localHost(req.headers.host) ||
-      req.url !== "/ws"
+      req.url !== "/ws" ||
+      protocols?.length !== 2 ||
+      protocols[0] !== SCREEN_PROTOCOL ||
+      !authenticates(protocols[1])
     ) {
       socket.on("error", () => {});
       socket.destroy();

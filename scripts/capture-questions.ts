@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 // Screenshots of the question card (issue #52) on the built screen, in Edge.
 // A scripted engine asks the questions: no Codex, no account, no inference.
 // Run `npm run build` first.
@@ -78,17 +79,23 @@ await mkdir(out, { recursive: true });
 await mkdir(".local", { recursive: true });
 const data = await mkdtemp(resolve(".local/capture-questions-"));
 const engine = new AskingEngine();
+const screenSecret = randomBytes(32).toString("hex");
 const server = await serve(engine, data, 0, undefined, undefined, {
   webRoot: resolve("web/dist"),
   kitSource: resolve("kit/turismo"),
-});
+}, screenSecret);
 await server.app.startEngine();
 const browser = await chromium.launch({ channel: "msedge" });
 const errors: string[] = [];
 async function open(width: number, height: number) {
   const page = await browser.newPage({ viewport: { width, height } });
   page.on("pageerror", (error) => errors.push(String(error)));
-  await page.goto(`http://127.0.0.1:${server.port}`);
+  const origin = `http://127.0.0.1:${server.port}`;
+  await page.addInitScript(({ origin, secret }) => {
+    if (window === window.top && location.origin === origin)
+      Object.defineProperty(window, "__BITACORA_SCREEN_SECRET__", { value: secret });
+  }, { origin, secret: screenSecret });
+  await page.goto(origin);
   await page.getByLabel("Tu pedido", { exact: true }).waitFor();
   await page.evaluate(() => document.fonts.ready);
   return page;

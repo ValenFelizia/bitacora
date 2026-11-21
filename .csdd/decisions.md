@@ -507,3 +507,12 @@ accepted direction from implementation alone.
   Cuando el app-server publique un método oficial para clips, reemplazar
   `server/src/codex/transcribe.ts` y su llamada en el motor por ese método y
   quitar el pedido de credenciales propio del dictado.
+
+## DEC-017 — La pantalla de escritorio se autentica con una clave en memoria
+
+- Decision: por cada arranque del servidor, Tauri genera una clave de 32 bytes
+  y se la pasa a Node y al documento principal de su visor. WebSocket y las
+  peticiones HTTP de archivos y dictado exigen esa clave además de Host y Origin.
+- Rationale: un programa local puede fabricar esas dos cabeceras. La clave
+  queda fuera del disco y del entorno de Codex. Vite usa un paso de inicio
+  exclusivo de desarrollo que no se habilita en el instalador.

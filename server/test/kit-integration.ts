@@ -14,6 +14,7 @@ import { allowedUrlsPath, readAllowedUrls } from '../src/allowed-urls';
 import { FakeEngine } from './fake-engine';
 import type { Snapshot } from '../src/contracts';
 import { photoFixture } from './photo-fixture';
+import { screenHeaders, screenProtocols, screenSecret } from './screen-fixture';
 
 // Intentionally retain fixture data under issue6: the operator owns its cleanup.
 export async function verifyKitIntegration(evidence?: string) {
@@ -41,7 +42,7 @@ export async function verifyKitIntegration(evidence?: string) {
     while(!check()) {if(errors.length) throw new Error(errors.join('\n')); if(Date.now()>deadline) throw new Error(`Integration timeout waiting for ${label} after ${timeoutMs}ms`);await new Promise(r=>setTimeout(r,20));}
   }
   try {
-    server=await serve(engine,data,0,origin,workspace);
+    server=await serve(engine,data,0,origin,workspace,undefined,screenSecret);
     assert.ok((await readdir(data)).some(n=>n.startsWith('kit-initialized-')));
     const transport=new StdioClientTransport({command:process.execPath,args:['--import',pathToFileURL(createRequire(import.meta.url).resolve('tsx/esm')).href,resolve('server/test/kit-mcp.ts'),workspace,allowedUrlsPath(data),operatorOrigin],stderr:'pipe'});
     client=new Client({name:'kit-integration',version:'1.0'});await connectKitClient(client,transport);
@@ -73,7 +74,7 @@ export async function verifyKitIntegration(evidence?: string) {
       engine.emit({type:'finished',conversationId,status:'completed'});
     };
     const baseUrl=`http://127.0.0.1:${server.port}`;
-    ws=new WebSocket(baseUrl.replace('http:','ws:')+'/ws',{origin});
+    ws=new WebSocket(baseUrl.replace('http:','ws:')+'/ws',screenProtocols,{origin});
     ws.on('error',err=>{errors.push(err.message);});
     ws.on('message',raw=>{const msg=JSON.parse(String(raw));if(msg.type==='snapshot') snapshot=msg.state; if(msg.type==='problem') errors.push(msg.detail||msg.text);});
     await until(()=>!!snapshot,'initial snapshot',15000);
@@ -84,7 +85,7 @@ export async function verifyKitIntegration(evidence?: string) {
     assert.deepEqual(await readAllowedUrls(allowedUrlsPath(data)),[url]);
     assert.ok(snapshot!.works[0].messages[0].attachments?.length);
     for(const ref of results) {
-      const response=await fetch(`${baseUrl}/files?id=${ref.id}&token=${snapshot!.fileToken}`);
+      const response=await fetch(`${baseUrl}/files?id=${ref.id}`, { headers:screenHeaders });
       assert.equal(response.status,200);
       assert.ok((await response.arrayBuffer()).byteLength>0);
     }
@@ -112,7 +113,7 @@ export async function verifyKitIntegration(evidence?: string) {
       await page.getByRole('button',{name:'Galería',exact:true}).click();
       await page.getByRole('heading',{name:'Todo lo que creamos'}).waitFor();
       await page.screenshot({path:join(evidence,'gallery.png'),fullPage:true});
-      await writeFile(join(evidence,'integration.json'),JSON.stringify({workspace,allowedUrls:await readAllowedUrls(allowedUrlsPath(data)),calls,snapshot:{...snapshot,fileToken:undefined},modelRequests:0},null,2),'utf8');
+      await writeFile(join(evidence,'integration.json'),JSON.stringify({workspace,allowedUrls:await readAllowedUrls(allowedUrlsPath(data)),calls,snapshot,modelRequests:0},null,2),'utf8');
     }
     return {results:results.map(f=>f.name),workspace};
   } finally {

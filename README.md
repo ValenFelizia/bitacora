@@ -44,6 +44,10 @@ npm run dev
 
 Abrí http://127.0.0.1:5173 o http://localhost:5173, tocá **Conectar ChatGPT** y completá el acceso
 oficial. Si el navegador bloquea la ventana, usá **Continuar en el navegador**.
+En desarrollo, el servidor crea una clave nueva al arrancar y la pantalla la
+pide a través de Vite. Seguí usando las mismas direcciones, sin copiar claves.
+Este paso de desarrollo es accesible a programas locales que puedan imitar a
+Vite y queda deshabilitado en la app de escritorio.
 Bitácora prepara MXC automáticamente cuando está disponible, sin pedir permisos.
 Si hace falta un permiso de administrador, muestra **Antes de empezar** y explica
 el cambio antes de habilitar **Preparar la protección**. Si falla, bloquea los
@@ -273,10 +277,24 @@ El recorrido compara tamaño y fechas antes de calcular hashes y tiene topes:
 por revisión y 100 MB por resultado. Los límites alcanzados quedan en el detalle.
 El estado previo se guarda aparte de los trabajos, en `pending-files/` dentro de
 la carpeta de datos, y se elimina al terminar la revisión. No identifica quién hizo un cambio concurrente en esa carpeta.
-Los adjuntos viajan por la conexión local autenticada; las lecturas requieren
-un token impredecible por arranque que sólo entrega esa conexión. Al abrir un PDF
-se usa una dirección temporal sin ese token. Sólo se
-sirven archivos registrados, comprobando su ruta real dentro de la agencia.
+Los adjuntos viajan por la conexión local autenticada. Para leer un archivo,
+la pantalla manda la clave de sesión en una cabecera HTTP. Las imágenes y los PDF
+se abren desde una copia temporal en el visor, con una dirección que no lleva la
+clave. Sólo se sirven archivos registrados y con ruta real dentro de la agencia.
+
+En la app de escritorio, Tauri genera una clave aleatoria de 32 bytes por cada
+arranque del servidor. Se la pasa a Node por el entorno y la inyecta en memoria
+sólo en la pantalla principal de WebView2, para el origen exacto del servidor.
+Node la retira del entorno antes de iniciar Codex. WebSocket, archivos y dictado
+exigen esa clave además de los controles existentes de Host y Origin. La clave
+queda fuera de las direcciones, cookies, archivos de datos y registros.
+
+Esto impide operar la app sólo con cabeceras Host y Origin fabricadas. Es una
+capa adicional al aislamiento MXC. Un proceso con acceso a la memoria, capaz de
+interceptar el tráfico HTTP local o de ejecutar código en la pantalla, podría
+obtener la clave. La prueba de aislamiento del issue #16 corresponde a esa
+versión de Codex y a esa configuración de Windows.
+[Resultado de la prueba de MXC](https://github.com/ValenFelizia/bitacora/issues/16#issuecomment-6866223257).
 
 `npx tsx scripts/verify-files-browser.ts` levanta una instancia falsa y Edge,
 prueba adjuntos, portapapeles, descarga, galería y archivos borrados; guarda

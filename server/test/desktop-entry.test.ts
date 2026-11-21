@@ -9,6 +9,7 @@ import { test } from "node:test";
 import { build } from "esbuild";
 import { parse } from "smol-toml";
 import { WebSocket } from "ws";
+import { screenProtocols, screenSecret } from "./screen-fixture";
 import { codexBinary } from "../../scripts/codex-runtime.mjs";
 import { registerKit } from "../src/codex/kit";
 
@@ -47,7 +48,7 @@ test("desktop entry waits for stdin, announces its port, and closes on EOF", {
   const web = join(runtime, "web");
   const data = join(root, "datos");
   const workspace = join(root, "agencia");
-  const env = { ...process.env, BITACORA_DATA_DIR: data, BITACORA_WORKSPACE: workspace };
+  const env = { ...process.env, BITACORA_DATA_DIR: data, BITACORA_WORKSPACE: workspace, BITACORA_SCREEN_SECRET: screenSecret };
   try {
     await mkdir(dirname(version), { recursive: true });
     await mkdir(web, { recursive: true });
@@ -81,7 +82,7 @@ test("desktop entry waits for stdin, announces its port, and closes on EOF", {
       assert.ok(port, line);
       const url = `http://127.0.0.1:${port}/`;
       assert.equal(await (await fetch(url)).text(), "<title>Bitácora</title>");
-      const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`, { origin: new URL(url).origin });
+      const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`, screenProtocols, { origin: new URL(url).origin });
       try {
         for await (const [raw] of on(socket, "message", { signal: AbortSignal.timeout(45_000) })) {
           const message = JSON.parse(String(raw));
@@ -129,6 +130,8 @@ test("desktop serves while Codex prepares, then saves buffered changes on stdin 
               import { FakeEngine } from "./fake-engine";
               export class CodexEngine extends FakeEngine {
                 async start() {
+                  if (process.env.BITACORA_SCREEN_SECRET !== undefined)
+                    throw new Error("Screen session leaked into the engine environment");
                   await new Promise(resolve => process.once("message", resolve));
                 }
                 async send(id, text) {
@@ -148,7 +151,7 @@ test("desktop serves while Codex prepares, then saves buffered changes on stdin 
     });
 
     const child = spawn(process.execPath, [entry, "--desktop"], {
-      env: { ...process.env, BITACORA_DATA_DIR: data, BITACORA_WORKSPACE: workspace },
+      env: { ...process.env, BITACORA_DATA_DIR: data, BITACORA_WORKSPACE: workspace, BITACORA_SCREEN_SECRET: screenSecret },
       stdio: ["pipe", "pipe", "pipe", "ipc"], windowsHide: true,
     });
     const closed = once(child, "close");
@@ -165,7 +168,7 @@ test("desktop serves while Codex prepares, then saves buffered changes on stdin 
       assert.ok(port, line);
       const origin = `http://127.0.0.1:${port}`;
       assert.equal(await (await fetch(origin)).text(), "<title>Bitácora</title>");
-      const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`, { origin });
+      const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`, screenProtocols, { origin });
       const messages = on(socket, "message", { signal: AbortSignal.timeout(10_000) });
       async function next(type: string, accept = (_message: { state?: { engine: { available: boolean } } }) => true) {
         for (;;) {
@@ -178,6 +181,7 @@ test("desktop serves while Codex prepares, then saves buffered changes on stdin 
       const send = (text: string) => socket.send(JSON.stringify({ type: "send", text }));
       try {
         const initial = await next("snapshot");
+        assert.ok(!JSON.stringify(initial).includes(screenSecret));
         assert.equal(initial.state.engine.available, false);
         assert.equal(initial.state.engine.starting, true);
         send("Pedido antes de que esté lista");
@@ -195,7 +199,10 @@ test("desktop serves while Codex prepares, then saves buffered changes on stdin 
         const exitWithinGrace = once(child, "close", { signal: AbortSignal.timeout(2_500) });
         stdin.end();
         assert.deepEqual(await Promise.all([engineClosed, exitWithinGrace]), ["engine closed", [0, null]], stderr);
-        const after = JSON.parse(await readFile(works, "utf8"));
+        const saved = await readFile(works, "utf8");
+        assert.ok(!saved.includes(screenSecret));
+        assert.ok(!stderr.includes(screenSecret));
+        const after = JSON.parse(saved);
         assert.equal(after.version, 1);
         assert.equal(after.works.length, 1);
         assert.equal(after.works[0].busy, false);

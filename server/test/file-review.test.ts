@@ -2,11 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, writeFile, readFile, rm, symlink, readdir, truncate, open, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { WebSocket } from 'ws';
 import { WorkspaceFiles, MAX_RESULT, SCAN_LIMITS } from '../src/workspace-files';
 import { App } from '../src/app';
 import { FakeEngine } from './fake-engine';
 import { serve } from '../src/server';
+import { screenHeaders, screenSecret } from './screen-fixture';
 import { lockForWriting } from './locks';
 import type { FileRef, ServerMessage } from '../src/contracts';
 async function fixture() {
@@ -146,18 +146,11 @@ test('registered HTTP files enforce paths, headers, HEAD and streaming size cap'
   await writeFile(join(f.files.root, 'huge.pdf'), ''); await truncate(join(f.files.root, 'huge.pdf'), MAX_RESULT + 1);
   const refs: FileRef[] = ['safe.pdf', 'safe.png', 'huge.pdf', '../outside/secret.pdf', join(f.dir, 'outside', 'secret.pdf'), 'escape/secret.pdf'].map((path, i) => ({ id: String(i), path, name: path.endsWith('.png') ? 'imagen.png' : 'cotización.pdf', mime: path.endsWith('.png') ? 'image/png' : 'application/pdf', createdAt: new Date().toISOString() }));
   await writeFile(join(data, 'works.json'), JSON.stringify({ version: 1, works: [{ id: 'work', conversationId: 'conversation-1', title: 'Archivos', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), messages: [{ id: 'm', role: 'user', text: 'registered', attachments: refs }], details: '', busy: false, progress: '' }] }));
-  const server = await serve(new FakeEngine(), data, 0, undefined, f.files.root);
-  const ws = new WebSocket(`ws://127.0.0.1:${server.port}/ws`, { origin: 'http://127.0.0.1:5173' });
-  ws.on('error', () => {});
+  const server = await serve(new FakeEngine(), data, 0, undefined, f.files.root, undefined, screenSecret);
   try {
-    const token = await new Promise<string>((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('Timed out waiting for fileToken')), 15000);
-      ws.once('message', data => { clearTimeout(timer); resolve(JSON.parse(String(data)).state.fileToken); });
-      ws.once('error', err => { clearTimeout(timer); reject(err); });
-    });
-    const url = (id: number) => `http://127.0.0.1:${server.port}/files?id=${id}&token=${token}`;
+    const url = (id: number) => `http://127.0.0.1:${server.port}/files?id=${id}`;
     for (const method of ['GET', 'HEAD']) for (const id of [0, 1]) {
-      const res = await fetch(url(id), { method });
+      const res = await fetch(url(id), { method, headers: screenHeaders });
       assert.equal(res.status, 200); assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
       assert.equal(res.headers.get('content-type'), refs[id].mime);
       assert.equal(res.headers.get('cache-control'), 'no-store');
@@ -168,15 +161,13 @@ test('registered HTTP files enforce paths, headers, HEAD and streaming size cap'
       assert.equal(res.headers.get('content-length'), id === 0 ? '8' : '5');
       assert.equal((await res.arrayBuffer()).byteLength, method === 'HEAD' ? 0 : id === 0 ? 8 : 5);
     }
-    const download = await fetch(url(0) + '&download=1');
+    const download = await fetch(url(0) + '&download=1', { headers: screenHeaders });
     assert.match(download.headers.get('content-disposition')!, /attachment.*cotizaci%C3%B3n.pdf/); await download.body?.cancel();
     for (const method of ['GET', 'HEAD']) {
-      assert.equal((await fetch(url(2), { method })).status, 413);
-      for (const id of [3, 4, 5]) assert.equal((await fetch(url(id), { method })).status, 404, `registered path ${id}`);
+      assert.equal((await fetch(url(2), { method, headers: screenHeaders })).status, 413);
+      for (const id of [3, 4, 5]) assert.equal((await fetch(url(id), { method, headers: screenHeaders })).status, 404, `registered path ${id}`);
     }
   } finally {
-    const closed = ws.readyState === WebSocket.CLOSED ? Promise.resolve() : new Promise<void>(r => { ws.once('close', () => r()); ws.terminate(); });
-    await closed;
     await server.close();
     await f.cleanup();
   }
