@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import ReactMarkdown from "react-markdown";
 import {
   AlertCircle,
+  ArrowLeft,
   ArrowRight,
   ArrowUp,
   Check,
@@ -39,6 +40,7 @@ import { MAX_TITLE } from "../../server/src/titles";
 import "./style.css";
 import { DeliverablesPanel, FileCard, FilePreviewModal } from "./files";
 import { ModelPicker } from "./model-picker";
+import { markDeliverablesOpened, readOpenedIds } from "./opened";
 import { useDictation } from "./dictation";
 import { clampPanel, DESKTOP_MIN, panelBounds, panelKey } from "./panel";
 import { QuestionCard } from "./question";
@@ -167,6 +169,9 @@ function App() {
   const [deliverablesOpen, setDeliverablesOpen] = useState(false);
   const [focusedMessageId, setFocusedMessageId] = useState<string>();
   const [preview, setPreview] = useState<{ file: FileRef; list: FileRef[] }>();
+  const [openedIds, setOpenedIds] = useState<Set<string>>(() => readOpenedIds());
+  const markOpened = (files: FileRef[]) =>
+    setOpenedIds((current) => markDeliverablesOpened(current, files));
   const [attachments, setAttachments] = useState<Upload[]>([]);
   const [readingFiles, setReadingFiles] = useState(false);
   const sentDraft = useRef<SentDraft | undefined>(undefined);
@@ -219,7 +224,7 @@ function App() {
     focusInput: () => composerInput.current?.focus(),
     onText(transcript) {
       const input = composerInput.current;
-      if (!input) return "No pude agregar el dictado al pedido. Volvé a dictar.";
+      if (!input) return "No pude sumar el dictado. Probá de nuevo.";
       const { selectionStart, selectionEnd, value } = input;
       const before = value.slice(0, selectionStart);
       const after = value.slice(selectionEnd);
@@ -228,11 +233,11 @@ function App() {
       // Do not split a surrogate pair at the text box's UTF-16 limit.
       const clipped = transcript.slice(0, room - leadingSpace.length).replace(/[\uD800-\uDBFF]$/, "");
       input.focus();
-      if (!clipped) return "No quedó lugar para agregar el dictado. Acortá el pedido y volvé a dictar.";
+      if (!clipped) return "No entra más texto en este pedido. Acortalo un poco para seguir dictando.";
       const trailingSpace = leadingSpace.length + clipped.length < room && after && !/^[\s,.;:!?)]/.test(after) ? " " : "";
       input.setRangeText(leadingSpace + clipped + trailingSpace, selectionStart, selectionEnd, "end");
       setText(input.value);
-      if (clipped !== transcript) return "Agregué la parte del dictado que entraba. El pedido llegó al límite de texto.";
+      if (clipped !== transcript) return "Sumé lo que entraba; el pedido llegó al largo máximo.";
     },
   });
   const busy = state.works.some((w) => w.busy);
@@ -500,11 +505,11 @@ function App() {
       return;
     const combined =
       [opening, typed].filter(Boolean).join("\n\n") ||
-      "Revisá los archivos adjuntos.";
+      "Revisá lo que adjunté.";
     // The server rejects longer requests; keep the draft so nothing is lost.
     if (combined.length > MAX_REQUEST_TEXT) {
       setProblem({
-        text: "El texto es demasiado largo para mandarlo junto con este pedido. Acortalo un poco y volvé a intentar.",
+        text: "El pedido es muy largo. Acortalo un poco y probá de nuevo.",
       });
       return;
     }
@@ -529,15 +534,15 @@ function App() {
         attachments.reduce((n, f) => n + (f.data.length * 3) / 4, 0) +
         files.reduce((n, f) => n + f.size, 0);
       if (total > 40 * 1024 * 1024)
-        throw new Error("Los adjuntos pueden pesar hasta 40 MB en total.");
+        throw new Error("Entre todos no pueden pesar más de 40 MB.");
       for (const f of files) {
         if (!/\.(png|jpe?g|webp|pdf|txt|md|csv|json)$/i.test(f.name))
           throw new Error(
-            "Elegí una imagen, un PDF o texto (txt, md, csv o json).",
+            "Podés adjuntar fotos, PDF o archivos de texto.",
           );
         if (!f.size || f.size > 20 * 1024 * 1024)
           throw new Error(
-            "Cada archivo debe tener contenido y pesar hasta 20 MB.",
+            "Cada archivo tiene que pesar hasta 20 MB y no estar vacío.",
           );
       }
       const added = await Promise.all(
@@ -551,7 +556,7 @@ function App() {
                   data: String(reader.result).split(",")[1],
                 });
               reader.onerror = () =>
-                reject(new Error("No pude leer el archivo. Elegilo de nuevo."));
+                reject(new Error("No pude abrir ese archivo. Elegilo de nuevo."));
               reader.readAsDataURL(f);
             }),
         ),
@@ -607,10 +612,10 @@ function App() {
 
   const showEngineStoppedBanner = online && !state.engine.available;
   const engineStatusText = state.engine.starting
-    ? "Estoy preparando Bitácora y la protección de tu carpeta."
+    ? "Preparando Bitácora…"
     : state.engine.exhausted
-      ? "Bitácora se detuvo y no pudo volver a iniciarse."
-      : "Bitácora se detuvo. Estoy intentando volver a iniciarla.";
+      ? "Bitácora se frenó y no pudo volver a abrirse."
+      : "Bitácora se frenó. La estoy volviendo a abrir…";
   const showProblemBanner =
     !showEngineStoppedBanner && (!!problem || !!work?.problem);
   const hasErrorBanner =
@@ -873,8 +878,10 @@ function App() {
                       <span className="w-full truncate text-[15px]">{w.title}</span>
                       <span className="flex items-center gap-1.5 text-[13px] font-normal tabular-nums text-muted">
                         {w.busy && (
-                          <span
-                            className="w-1.5 h-1.5 rounded-full bg-accent shrink-0"
+                          <PenLine
+                            size={13}
+                            strokeWidth={1.75}
+                            className="text-accent-ink shrink-0"
                             aria-hidden="true"
                           />
                         )}
@@ -918,7 +925,7 @@ function App() {
               </div>
             ) : (
               <div className="flex flex-col gap-2">
-                <p>Para trabajar, conectá tu cuenta de ChatGPT.</p>
+                <p>Conectá tu cuenta de ChatGPT para empezar.</p>
                 <button
                   type="button"
                   className={`${buttonBordered} self-start`}
@@ -938,10 +945,10 @@ function App() {
                   target="_blank"
                   rel="noreferrer"
                 >
-                  Continuar en el navegador
+                  Seguir en el navegador
                 </a>
                 <span className="block mt-1">
-                  Cuando termines, volvé a esta ventana.
+                  Cuando termines, volvé acá.
                 </span>
               </p>
             )}
@@ -1081,12 +1088,12 @@ function App() {
                       setDeliverablesOpen(true);
                     }}
                     className={`min-[960px]:hidden inline-flex items-center justify-center gap-1.5 px-2.5 min-w-[40px] h-[40px] rounded-[6px] border border-line bg-surface text-ink text-[13px] font-bold hover:bg-soft cursor-pointer ${focusRing}`}
-                    title="Entregables"
-                    aria-label="Abrir entregables"
+                    title="Para mandar"
+                    aria-label="Abrir para mandar"
                   >
                     <Package size={18} strokeWidth={1.75} aria-hidden="true" />
                     {workResultCount > 0 && (
-                      <span className="tabular-nums text-accent-ink">
+                      <span className="tabular-nums text-ink">
                         {workResultCount}
                       </span>
                     )}
@@ -1129,7 +1136,7 @@ function App() {
                         onClick={() => {
                           if (
                             window.confirm(
-                              "Voy a dejar la carpeta como está ahora y descartar el Deshacer pendiente. Después podés seguir trabajando.",
+                              "Voy a dejar tu carpeta como está ahora. Después podés seguir trabajando.",
                             )
                           )
                             send({ type: "discardUndo", id: state.undo!.id });
@@ -1158,8 +1165,8 @@ function App() {
                 className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-line"
               >
                 <p className="text-muted">
-                  Voy a deshacer los cambios de este pedido, aunque estés en otro
-                  trabajo. Lo que agregaste o cambiaste a mano después no se toca.
+                  Vuelvo atrás los cambios de ese pedido. Lo que tocaste a mano
+                  después queda intacto.
                 </p>
                 <div className="flex items-center gap-2 shrink-0">
                   <button
@@ -1201,18 +1208,19 @@ function App() {
               {gallery && (
                 <section aria-label="Resultados por trabajo" className="flex flex-col gap-6">
                   <h2 className="font-display text-[25px] font-normal text-ink">
-                    Todo lo que creamos
+                    Todo lo que armamos
                   </h2>
                   {!hasGalleryResults && (
                     <div className="rounded-[6px] border border-line bg-surface p-6 flex flex-col items-start gap-3">
                       <p className="text-[15px] text-muted">
-                        Cuando preparemos imágenes o PDFs, los vas a encontrar acá.
+                        Cuando armemos placas o presupuestos, los vas a encontrar acá.
                       </p>
                       <button
                         type="button"
                         className={buttonBordered}
                         onClick={() => setGallery(false)}
                       >
+                        <ArrowLeft size={16} strokeWidth={1.75} aria-hidden="true" />
                         Volver al trabajo
                       </button>
                     </div>
@@ -1239,6 +1247,7 @@ function App() {
                               }}
                             >
                               Ir al trabajo
+                              <ArrowRight size={16} strokeWidth={1.75} aria-hidden="true" />
                             </button>
                           </div>
                           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -1248,6 +1257,8 @@ function App() {
                                 file={f}
                                 token={state.fileToken}
                                 fileRevision={state.fileRevision}
+                                openedIds={openedIds}
+                                onMarkOpened={markOpened}
                                 result
                                 onPreview={(file) =>
                                   setPreview({
@@ -1274,13 +1285,14 @@ function App() {
                     <span>Sin conexión</span>
                   </h2>
                   <p className="text-[15px] text-muted">
-                    Se perdió la conexión con Bitácora. Estoy intentando reconectar.
+                    Se cortó la conexión. Estoy intentando volver…
                   </p>
                   <button
                     type="button"
                     className={buttonBordered}
                     onClick={() => reconnectRef.current()}
                   >
+                    <RotateCcw size={16} strokeWidth={1.75} aria-hidden="true" />
                     Reintentar
                   </button>
                 </section>
@@ -1294,7 +1306,7 @@ function App() {
                     <span>Conectá tu cuenta</span>
                   </h2>
                   <p className="text-[15px] leading-relaxed text-muted">
-                    Para trabajar, conectá tu cuenta de ChatGPT.
+                    Conectá tu cuenta de ChatGPT para empezar.
                   </p>
                   <button
                     type="button"
@@ -1312,9 +1324,9 @@ function App() {
                         target="_blank"
                         rel="noreferrer"
                       >
-                        Continuar en el navegador
+                        Seguir en el navegador
                       </a>{" "}
-                      Cuando termines, volvé a esta ventana.
+                      Cuando termines, volvé acá.
                     </p>
                   )}
                 </section>
@@ -1328,8 +1340,7 @@ function App() {
                       ¿En qué trabajamos hoy?
                     </h2>
                     <p className="text-[15px] text-muted">
-                      Contame qué necesitás para tu agencia o pegá un link para
-                      empezar.
+                      Contame qué necesitás o pegá un link para empezar.
                     </p>
                   </div>
                   {state.works.length === 0 && state.hasBrand === false && (
@@ -1468,8 +1479,7 @@ function App() {
                         }`}
                       >
                         <Package size={18} strokeWidth={1.75} className="text-accent" aria-hidden="true" />
-                        Ver {m.results.length}{" "}
-                        {m.results.length === 1 ? "entregable" : "entregables"}
+                        Ver {m.results.length} para mandar
                       </button>
                     )}
                   </React.Fragment>
@@ -1530,7 +1540,7 @@ function App() {
                         aria-hidden="true"
                       />
                       <span>
-                        Se perdió la conexión con Bitácora. Estoy intentando reconectar.
+                        Se cortó la conexión. Estoy intentando volver…
                       </span>
                     </div>
                     <button
@@ -1598,7 +1608,7 @@ function App() {
                           className="text-muted shrink-0"
                           aria-hidden="true"
                         />
-                        <span>Preparando la protección de tu carpeta…</span>
+                        <span>Preparando la protección…</span>
                       </div>
                     ) : (
                       <section
@@ -1623,10 +1633,8 @@ function App() {
                         </div>
                         {state.engine.safety.needsPermission && (
                           <p className="text-[14px] text-muted">
-                            Para trabajar en tu carpeta sin cambiar tus otros
-                            archivos, Bitácora necesita preparar la protección de tu
-                            compu. Windows va a mostrar un cartel para permitir
-                            cambios. Tocá «Sí» si querés continuar.
+                            Para cuidar tus otros archivos, Windows te va a pedir
+                            permiso una sola vez. Tocá «Sí» para seguir.
                           </p>
                         )}
                         <p role="status" className="text-[14px] text-ink">
@@ -1779,7 +1787,7 @@ function App() {
                   ))}
                   {readingFiles && (
                     <span role="status" className="text-[13px] text-muted">
-                      Leyendo archivos…
+                      Cargando…
                     </span>
                   )}
                 </div>
@@ -1804,8 +1812,8 @@ function App() {
                 maxLength={MAX_REQUEST_TEXT}
                 placeholder={
                   notConnected
-                    ? "Conectá tu cuenta para escribir un pedido…"
-                    : "Escribí qué necesitás…"
+                    ? "Conectá tu cuenta para escribir…"
+                    : "Escribí tu pedido o pegá un link…"
                 }
                 onChange={(e) => setText(e.target.value)}
                 onKeyDown={(e) => {
@@ -1962,6 +1970,8 @@ function App() {
             focusedMessageId={focusedMessageId}
             token={state.fileToken}
             fileRevision={state.fileRevision}
+            openedIds={openedIds}
+            onMarkOpened={markOpened}
             hasGalleryResults={hasGalleryResults}
             onOpenGallery={() => {
               setGallery(true);
@@ -1981,6 +1991,7 @@ function App() {
           list={preview.list}
           token={state.fileToken}
           fileRevision={state.fileRevision}
+          onMarkOpened={markOpened}
           onSelect={(file) => setPreview((prev) => (prev ? { ...prev, file } : prev))}
           onClose={() => setPreview(undefined)}
         />

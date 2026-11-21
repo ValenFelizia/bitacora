@@ -44,6 +44,11 @@ export type GroupedDeliverables = {
   older: FileRef[];
 };
 
+export type GroupedDeliverableBatches = {
+  featured?: DeliverableGroup;
+  olderGroups: DeliverableGroup[];
+};
+
 const isPlate = (file: FileRef) =>
   file.mime.startsWith("image/") && /^pieza-\d+\./i.test(file.name);
 
@@ -59,34 +64,11 @@ function sortPlates(files: FileRef[]): FileRef[] {
   });
 }
 
-/**
- * Groups the work's results so the chosen batch (latest by default, or the
- * requested message's batch) becomes the hero in the right panel, and files from
- * other messages stay in the `older` list without overlapping the `allFiles`
- * menu.
- */
-export function groupDeliverables(
-  work: Work | undefined,
-  messageId?: string,
-): GroupedDeliverables {
-  if (!work) return { older: [] };
-  const batches = work.messages
-    .filter((m) => m.results && m.results.length > 0)
-    .map((m) => ({ id: m.id, files: m.results! }));
-
-  if (!batches.length) return { older: [] };
-
-  const requestedIndex = messageId
-    ? batches.findIndex((b) => b.id === messageId)
-    : -1;
-  const chosenIndex = requestedIndex >= 0 ? requestedIndex : batches.length - 1;
-  const target = batches[chosenIndex];
-  const otherFiles = batches
-    .filter((_, idx) => idx !== chosenIndex)
-    .flatMap((b) => b.files)
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-
-  const files = target.files;
+function buildDeliverableGroup(
+  batch: { id: string; files: FileRef[] },
+  workTitle: string,
+): DeliverableGroup {
+  const files = batch.files;
   const plates = sortPlates(files.filter(isPlate));
   const images = files.filter((f) => f.mime.startsWith("image/") && !isOverview(f));
   const latestTime = files.reduce(
@@ -99,32 +81,26 @@ export function groupDeliverables(
     const rest = files.filter((f) => !isPlate(f) && !isOverview(f));
     const countLabel = plates.length === 1 ? "1 placa" : `${plates.length} placas`;
     return {
-      featured: {
-        id: target.id,
-        kind: "plates",
-        title: work.title,
-        meta: `${countLabel}${timeText ? ` · ${timeText}` : ""}`,
-        plates,
-        primary: plates[0],
-        allFiles: [...plates, ...files.filter(isOverview), ...rest],
-      },
-      older: otherFiles,
+      id: batch.id,
+      kind: "plates",
+      title: workTitle,
+      meta: `${countLabel}${timeText ? ` · ${timeText}` : ""}`,
+      plates,
+      primary: plates[0],
+      allFiles: [...plates, ...files.filter(isOverview), ...rest],
     };
   }
 
   if (images.length >= 2) {
     const rest = files.filter((f) => !images.includes(f) && !isOverview(f));
     return {
-      featured: {
-        id: target.id,
-        kind: "images",
-        title: work.title,
-        meta: `${images.length} imágenes${timeText ? ` · ${timeText}` : ""}`,
-        plates: images,
-        primary: images[0],
-        allFiles: [...images, ...files.filter(isOverview), ...rest],
-      },
-      older: otherFiles,
+      id: batch.id,
+      kind: "images",
+      title: workTitle,
+      meta: `${images.length} imágenes${timeText ? ` · ${timeText}` : ""}`,
+      plates: images,
+      primary: images[0],
+      allFiles: [...images, ...files.filter(isOverview), ...rest],
     };
   }
 
@@ -138,17 +114,64 @@ export function groupDeliverables(
   const singleImage = sortedTarget.length === 1 && primary.mime.startsWith("image/");
 
   return {
-    featured: {
-      id: target.id,
-      kind: singleImage ? "images" : "file",
-      title: primary.name,
-      meta: timeText || "",
-      plates: primary.mime.startsWith("image/") ? [primary] : [],
-      primary,
-      allFiles: sortedTarget,
-    },
-    older: otherFiles,
+    id: batch.id,
+    kind: singleImage ? "images" : "file",
+    title: primary.name,
+    meta: timeText || "",
+    plates: primary.mime.startsWith("image/") ? [primary] : [],
+    primary,
+    allFiles: sortedTarget,
   };
+}
+
+/**
+ * Groups the work's results by proposal/batch so the chosen batch (latest by
+ * default, or the requested message's batch) is featured at the top and older
+ * batches stay grouped below in reverse chronological order.
+ */
+export function groupDeliverableBatches(
+  work: Work | undefined,
+  messageId?: string,
+): GroupedDeliverableBatches {
+  if (!work) return { olderGroups: [] };
+  const batches = work.messages
+    .filter((m) => m.results && m.results.length > 0)
+    .map((m) => ({ id: m.id, files: m.results! }));
+
+  if (!batches.length) return { olderGroups: [] };
+
+  const requestedIndex = messageId
+    ? batches.findIndex((b) => b.id === messageId)
+    : -1;
+  const chosenIndex = requestedIndex >= 0 ? requestedIndex : batches.length - 1;
+  const target = batches[chosenIndex];
+  const olderGroups = batches
+    .filter((_, idx) => idx !== chosenIndex)
+    .reverse()
+    .map((batch) => buildDeliverableGroup(batch, work.title));
+
+  return {
+    featured: buildDeliverableGroup(target, work.title),
+    olderGroups,
+  };
+}
+
+/**
+ * Groups the work's results so the chosen batch (latest by default, or the
+ * requested message's batch) becomes the hero in the right panel, and files from
+ * other messages stay in the `older` list without overlapping the `allFiles`
+ * menu.
+ */
+export function groupDeliverables(
+  work: Work | undefined,
+  messageId?: string,
+): GroupedDeliverables {
+  const { featured, olderGroups } = groupDeliverableBatches(work, messageId);
+  if (!featured) return { older: [] };
+  const older = olderGroups
+    .flatMap((g) => g.allFiles)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  return { featured, older };
 }
 
 export function undoSummary(

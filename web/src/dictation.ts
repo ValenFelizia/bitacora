@@ -19,22 +19,22 @@ function releaseMicrophone(session: Session) {
   session.stream?.getTracks().forEach((track) => track.stop());
 }
 
-const CONNECTION_LOST = "Se cortó la conexión con Bitácora. Volvé a dictar cuando se reconecte.";
-const WINDOWS_MICROPHONE = "Activá el micrófono para las aplicaciones de escritorio en la configuración de privacidad de Windows y volvé a probar.";
+const CONNECTION_LOST = "Se cortó la conexión. Volvé a dictar cuando vuelva.";
+const WINDOWS_MICROPHONE = "Activá el micrófono en la configuración de privacidad de Windows y probá de nuevo.";
 
 function microphoneError(error: unknown, desktop: boolean) {
   switch (error instanceof DOMException ? error.name : "") {
     case "NotAllowedError":
     case "SecurityError":
-      return desktop ? WINDOWS_MICROPHONE : "Dale permiso al navegador para usar el micrófono y volvé a probar.";
+      return desktop ? WINDOWS_MICROPHONE : "Permití el micrófono y probá de nuevo.";
     case "NotFoundError":
-      return "No encontré un micrófono. Conectá uno y volvé a probar.";
+      return "No encontré micrófono. Conectá uno y probá de nuevo.";
     case "NotReadableError":
       return desktop
-        ? "No pude usar el micrófono. Revisá la privacidad de Windows o si otra app lo está usando."
+        ? "No pude usar el micrófono. Fijate si otra app lo está usando o revisá la privacidad de Windows."
         : "No pude usar el micrófono. Fijate si otra app lo está usando.";
     default:
-      return "No pude grabar. Revisá el micrófono y volvé a probar.";
+      return "No pude grabar. Revisá el micrófono y probá de nuevo.";
   }
 }
 
@@ -88,7 +88,7 @@ export function useDictation({ token, workId, online, desktop, onText, focusInpu
   async function start() {
     if (session.current || !token) return;
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
-      fail("No pude usar el micrófono en esta pantalla.");
+      fail("Acá no pude abrir el micrófono.");
       return;
     }
     const current: Session = { abort: new AbortController() };
@@ -122,7 +122,7 @@ export function useDictation({ token, workId, online, desktop, onText, focusInpu
         releaseMicrophone(current);
         setStatus({ kind: "transcribing" });
         if (!size) {
-          fail("No se grabó audio. Probá de nuevo.");
+          fail("No se escuchó nada. Probá de nuevo.");
           return;
         }
         try {

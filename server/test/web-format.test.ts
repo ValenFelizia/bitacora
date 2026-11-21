@@ -6,9 +6,15 @@ import type { FileRef, Work } from "../src/contracts";
 import {
   formatTime,
   formatWorkDate,
+  groupDeliverableBatches,
   groupDeliverables,
   undoSummary,
 } from "../../web/src/format";
+import {
+  isDeliverableUnopened,
+  markDeliverablesOpened,
+  readOpenedIds,
+} from "../../web/src/opened";
 
 const makeFile = (name: string, mime = "image/png", createdAt = "2026-11-16T14:05:00.000Z"): FileRef => ({
   id: name,
@@ -262,11 +268,88 @@ test("undoSummary formats plate counts, images, file counts, empty results, and 
   );
 });
 
-test("web UI source does not contain the word motor", async () => {
+test("groupDeliverableBatches groups older proposals by batch in reverse chronological order", () => {
+  const work = makeWork({
+    messages: [
+      { id: "m1", role: "user", text: "Primera" },
+      {
+        id: "m2",
+        role: "assistant",
+        text: "Primera propuesta.",
+        results: [
+          makeFile("pieza-1.png", "image/png", "2026-11-16T12:00:00.000Z"),
+          makeFile("pieza-2.png", "image/png", "2026-11-16T12:00:00.000Z"),
+        ],
+      },
+      { id: "m3", role: "user", text: "Segunda" },
+      {
+        id: "m4",
+        role: "assistant",
+        text: "Presupuesto.",
+        results: [makeFile("presupuesto.pdf", "application/pdf", "2026-11-16T13:00:00.000Z")],
+      },
+      { id: "m5", role: "user", text: "Tercera" },
+      {
+        id: "m6",
+        role: "assistant",
+        text: "Tercera propuesta.",
+        results: [
+          makeFile("pieza-1.png", "image/png", "2026-11-16T14:00:00.000Z"),
+          makeFile("pieza-2.png", "image/png", "2026-11-16T14:00:00.000Z"),
+          makeFile("pieza-3.png", "image/png", "2026-11-16T14:00:00.000Z"),
+        ],
+      },
+    ],
+  });
+
+  const grouped = groupDeliverableBatches(work);
+  assert.equal(grouped.featured?.id, "m6");
+  assert.equal(grouped.featured?.plates.length, 3);
+  assert.deepEqual(
+    grouped.olderGroups.map((g) => g.id),
+    ["m4", "m2"],
+  );
+  assert.equal(grouped.olderGroups[0].primary.name, "presupuesto.pdf");
+  assert.equal(grouped.olderGroups[1].plates.length, 2);
+});
+
+test("opened deliverable tracking persists via storage and ignores storage errors", () => {
+  const store = new Map<string, string>();
+  const storage = {
+    getItem: (k: string) => store.get(k) ?? null,
+    setItem: (k: string, v: string) => { store.set(k, v); },
+  };
+  const brokenStorage = {
+    getItem: () => { throw new Error("blocked"); },
+    setItem: () => { throw new Error("quota"); },
+  };
+
+  const fileA = makeFile("pieza-1.png");
+  const fileB = { ...makeFile("pieza-2.png"), reverted: true };
+
+  let opened = readOpenedIds(storage);
+  assert.equal(isDeliverableUnopened(fileA, opened), true);
+  assert.equal(isDeliverableUnopened(fileB, opened), false);
+
+  opened = markDeliverablesOpened(opened, [fileA], storage);
+  assert.equal(isDeliverableUnopened(fileA, opened), false);
+  assert.equal(isDeliverableUnopened(fileA, readOpenedIds(storage)), false);
+
+  const same = markDeliverablesOpened(opened, [fileA], storage);
+  assert.equal(same, opened);
+
+  assert.equal(readOpenedIds(brokenStorage).size, 0);
+  const stillWorks = markDeliverablesOpened(new Set(), [fileA], brokenStorage);
+  assert.equal(stillWorks.has(fileA.id), true);
+});
+
+test("web UI source avoids forbidden technical words", async () => {
   const entries = await readdir("web/src");
   for (const entry of entries) {
     if (!/\.(ts|tsx|css)$/.test(entry)) continue;
     const text = await readFile(join("web/src", entry), "utf8");
     assert.doesNotMatch(text, /\bmotor\b/i, `web/src/${entry} should not mention "motor"`);
+    assert.doesNotMatch(text, /archivo\s+JSON/i, `web/src/${entry} should not mention "archivo JSON"`);
+    assert.doesNotMatch(text, /\bservidor\b/i, `web/src/${entry} should not mention "servidor"`);
   }
 });

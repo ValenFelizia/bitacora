@@ -9,7 +9,7 @@ Este archivo manda sobre cualquier decisión visual de la interfaz (`web/`). Si 
 Bitácora es el cuaderno de a bordo de la agencia: un registro de lo que se hizo, con fecha y hora. La personalidad sale de esa idea, no de adornos:
 
 - **Papel y tinta.** Fondo cálido como papel, texto azul marino como tinta.
-- **Naranja de boya.** Un solo color de acento: el punto de «Bitácora.» (`6 px`, `--accent`) como marcador único de estado, el paso en curso y la acción principal. Nada más.
+- **Naranja de boya.** Un solo color de acento (`#d4612a`, `--accent`). El punto naranja tiene un único significado en toda la app: **el agente o algo nuevo de él**. Aparece solo en tres lugares: al lado del nombre («Bitácora.»), delante de cada mensaje del agente y sobre los entregables que todavía no se abrieron (se borra al abrir, previsualizar o descargar). No se usa en ningún otro lado.
 - **Registro con hora.** El progreso del agente se cuenta como entradas del cuaderno, cerradas al terminar con una línea de asiento (`18:16` a la izquierda, «Listo.» a la derecha), no como píldoras ni barras.
 
 ## Principios (Valentín, #25)
@@ -61,31 +61,33 @@ Bitácora es el cuaderno de a bordo de la agencia: un registro de lo que se hizo
 
 - **Familia:** Lucide (`lucide-react`), trazo 1,75, 18 px (16 px en `info` de detalle y flechas de fila). Una sola familia.
 - **Área táctil:** botones de ícono de al menos 36 px en escritorio y 40 px por debajo de 960 px.
-- **Acción principal:** ícono más texto («Descargar 4 placas», «Nuevo trabajo», «Conectar cuenta»).
+- **Acción principal:** ícono más texto («Descargar las 4», «Nuevo trabajo», «Conectar cuenta»).
 - **Acciones repetidas o secundarias:** ícono solo, con `title` y `aria-label` (ver, copiar, detalle, «⋯»).
 
 ## Patrones
 
-- **El punto del logo:** el círculo naranja de `6 px` (`--accent`) de «Bitácora.» es el marcador de estado en la barra izquierda (junto al trabajo en curso, en lugar de texto suelto) y delante de cada respuesta de Bitácora.
+- **Regla del punto naranja:** el círculo naranja (`6 px`, `--accent`) significa únicamente *el agente o algo nuevo de él*. Solo aparece:
+  1. Al lado de la marca («Bitácora.»).
+  2. Delante de cada respuesta de Bitácora en la conversación.
+  3. En la esquina superior derecha de los entregables (o junto a la fila si es un PDF o lista) que todavía no se abrieron en este visor; se limpia al abrir, previsualizar o descargar.
+  No se usa en botones, títulos ni en la barra de trabajos (el trabajo en curso en la barra izquierda usa `pen-line`).
 - **Progreso del agente:**
   - **Cierre como asiento:** cuando termina una respuesta, el asiento final se dibuja como una línea horizontal completa de `1 px` en `--line`, con la hora a la izquierda (`tabular-nums`) y «Listo.» a la derecha.
   - **Paso en curso:** al final de la conversación, `pen-line` y el texto del paso en `--accent-ink`, sin hora. El lápiz se mueve como si escribiera y los tres puntos aparecen de a uno (Valentín, 20/11/2026). Mientras hay una pregunta abierta no se muestra: la tarjeta ya dice que Bitácora espera.
   - **Detalle:** cada respuesta puede abrir su detalle técnico con el botón de ícono `info` (`16 px`).
   - Sin porcentajes ni pasos técnicos visibles por defecto.
-- **Trabajos:** en la barra izquierda, bajo el título de sección «Trabajos» (`13 px`, `--muted`). Cada trabajo es una fila separada por líneas de `1 px` en `--line`: el nombre en `--ink` ocupa la línea y debajo va la fecha corta en `--muted` (junto al punto naranja si está en curso). Los que no están abiertos llevan `chevron-right` (`16 px`, `--muted`) a la derecha, para que se vean tocables sin pasar el mouse. El activo va en `--surface`, en negrita y con un filete naranja a la izquierda, sin flecha.
+- **Trabajos:** en la barra izquierda, bajo el título de sección «Trabajos» (`13 px`, `--muted`). Cada trabajo es una fila separada por líneas de `1 px` en `--line`: el nombre en `--ink` ocupa la línea y debajo va la fecha corta en `--muted` (junto al ícono `pen-line` si está en curso). Los que no están abiertos llevan `chevron-right` (`16 px`, `--muted`) a la derecha, para que se vean tocables sin pasar el mouse. El activo va en `--surface`, en negrita y con un filete naranja a la izquierda, sin flecha.
 - **Mensajes de Bitácora:** debajo de cada respuesta terminada, el botón de ícono `copy` («Copiar mensaje») copia el texto tal cual. Al copiar, el ícono pasa a `check` y al lado aparece «Copiado» en `13 px` `--muted` durante 2 segundos, en una región `status`.
 - **Cuadro de texto:** arriba el texto; abajo, en una fila, adjuntar, el modelo y enviar. Enter envía y Shift+Enter hace un párrafo nuevo. Enter no envía mientras se compone un carácter (acentos, métodos de entrada); cuando el botón de enviar está apagado (por ejemplo, con un pedido en curso), Enter hace el salto de línea de siempre.
   - **Dictado:** al lado de adjuntar, el ícono `mic` («Dictar»). Al grabar cambia a `square` («Terminar dictado») con fondo `--soft`. Arriba del texto aparece «Escuchando…» o «Transcribiendo…» en `--accent-ink`, sin movimiento. Los errores van en `--danger`. Al terminar, el foco vuelve al texto con el cursor después del dictado. La usuaria decide cuándo enviar.
 - **Modelo:** junto a adjuntar, el nombre del modelo en negrita de `13 px` con `chevron-down` (`16 px`). Abre hacia arriba un menú en `--surface` con borde de `1 px` en `--line`: «Con qué modelo trabajo» en `--muted`, una fila por modelo con `check` en el elegido, el nombre en negrita (y «· Recomendado» en `--muted` en el predeterminado) y una línea en `13 px` `--muted` sobre para qué conviene. Abajo, separado por una línea, el razonamiento con que trabaja y que el cambio vale para todos los trabajos desde el próximo pedido. Flechas para moverse, Enter para elegir, Escape para cerrar. Si todavía no está la lista de la cuenta, el pie lo dice y ofrece «Volver a intentar» (botón con borde en `--ink` y `rotate-ccw`); abrir el menú ya la pide de nuevo. Si la lista llegó pero no trae ningún modelo permitido, el pie dice «Tu cuenta no tiene modelos disponibles para Bitácora.» sin ofrecer el reintento. Si el modelo elegido no está en la cuenta, una línea con `alert-circle` en `--accent-ink` debajo del cuadro de texto dice cuál se usa.
-- **Entregable:**
+- **Entregable («Para mandar»):**
   - **Ancho del panel:** en escritorio, la línea divisoria se arrastra entre 280 y 640 px, y nunca deja la conversación con menos de 420 px. Una pastilla de `3 × 40 px` en `--line` en el medio de la línea la hace visible; con el mouse encima pasa a `--muted` y, al arrastrar o con el foco, la línea entera va en `--accent`. Con el teclado es un separador: flechas de a 16 px (64 px con Shift), Inicio y Fin. El ancho se recuerda entre sesiones. Por debajo de 960 px el panel sigue siendo el cajón de siempre.
-  - Grilla de placas con `gap` de 8 px: 2 columnas hasta 4 placas, 3 columnas con 5 o más (muestra hasta 6 miniaturas y un tile `+N` en la sexta para abrir desde la placa 7).
+  - Agrupados por propuesta/lote bajo el título **«Para mandar»**: el lote más nuevo (o enfocado) va arriba con la pieza principal grande, seguida por la línea de meta («4 placas · 14:05») y los íconos a la derecha (ver, copiar y «⋯»), el botón principal de descarga y debajo una grilla de 3 columnas con el resto de las placas (muestra hasta 6 miniaturas y un tile `+N` en la sexta para abrir desde la placa 7). Los lotes anteriores van debajo, agrupados por propuesta con su meta y descarga del lote.
   - **Miniaturas nítidas:** cada miniatura se vuelve a dibujar al tamaño que ocupa en pantalla por la densidad de la pantalla, con el filtro de alta calidad del navegador, solo cuando está cerca de verse y de a dos por vez. Achicar una placa de 1080 × 1920 de una sola vez dentro de una celda chica borra las líneas finas y la letra chica.
-  - Debajo, la línea de meta («4 placas · 14:05»); no se repite el nombre del trabajo si coincide con el encabezado.
-  - **Descargar:** texto con ícono `arrow-down-to-line`, subrayado en `--accent`, indicando la cantidad cuando el lote tiene varias placas o imágenes («Descargar 4 placas») y solo «Descargar» para un único archivo. No es un botón relleno.
+  - **Descargar:** botón relleno en `--ink` con texto `--surface` e ícono `arrow-down-to-line` para el lote destacado: «Descargar las N» cuando tiene varias placas o imágenes, y «Descargar» para un único archivo. En lotes anteriores, enlace con subrayado en `--accent` («Descargar las N»).
   - Si el lote trae un PDF junto a las placas, va dentro de la misma tarjeta debajo de una línea fina en `--line`, como fila con el ícono `file-text` y su nombre.
-  - Lo demás va en íconos a la derecha: ver, copiar y «⋯».
-  - Entregables anteriores: una fila con su ícono de bajar.
+  - Cada entregable sin abrir lleva el punto naranja hasta que la usuaria lo abre, previsualiza o descarga.
 - **Deshacer:** barra superior en flujo normal de una sola línea corta («Se cambiaron 4 placas» o el texto del pedido si no hay entregables) con el pedido completo en `title` y el botón «Deshacer».
 - **Preguntas del agente:**
   - Tarjeta al final de la conversación, en `--surface` con borde de `1 px` en `--line` y, mientras espera, el filete naranja a la izquierda del trabajo activo. Arriba, el ícono `message-circle-question` en `--accent` y «Te hago una pregunta» en `13 px` `--muted`.
@@ -113,7 +115,7 @@ Bitácora es el cuaderno de a bordo de la agencia: un registro de lo que se hizo
   última pregunta, «Saltear» guarda la agencia y el nombre ya escritos; en las
   anteriores no guarda nada.
 - **Botones:**
-  - Relleno en `--ink` (al 40 % de opacidad cuando está deshabilitado): solo para enviar.
+  - Relleno en `--ink` (al 40 % de opacidad cuando está deshabilitado): para enviar y para la descarga principal del lote en «Para mandar» («Descargar las N»).
   - Con borde de 1 px en `--ink`: acciones únicas, como «Conectar cuenta» o «Reintentar».
   - Lo demás es texto con ícono, o ícono solo.
 
