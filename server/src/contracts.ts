@@ -33,7 +33,6 @@ export type Snapshot = {
   works: Work[];
   engine: { available: boolean; starting?: boolean; exhausted?: boolean; safety: ExecutionSafety };
   notice?: string;
-  fileToken?: string;
   undo?: import("./backups").UndoTarget;
   fileRevision?: number;
   /** The model the next request uses, for every work (DEC-014). */
