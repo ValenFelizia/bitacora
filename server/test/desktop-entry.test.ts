@@ -206,7 +206,7 @@ test("desktop serves while Codex prepares, then saves buffered changes on stdin 
         assert.ok(!saved.includes(screenSecret));
         assert.ok(!stderr.includes(screenSecret));
         const after = JSON.parse(saved);
-        assert.equal(after.version, 2);
+        assert.equal(after.version, 1);
         assert.equal(after.works.length, 1);
         assert.equal(after.works[0].busy, false);
         assert.match(after.works[0].progress, /se detuvo al cerrar/);

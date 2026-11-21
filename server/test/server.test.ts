@@ -127,7 +127,8 @@ test("markOpened WebSocket command requires the screen secret and broadcasts ope
   await mkdir(".local", { recursive: true });
   const dir = await mkdtemp(resolve(".local/mark-opened-ws-"));
   await writeFile(join(dir, "works.json"), JSON.stringify({
-    version: 2,
+    version: 1,
+    openedTracking: true,
     works: [{
       id: "w-1",
       conversationId: "conv-1",

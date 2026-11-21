@@ -629,12 +629,13 @@ test("markOpened records openedAt on results, persists across restart, ignores u
     const first = new App(new FakeEngine(), dir, () => {});
     await first.start();
     try {
-      // Version 1 migration marks existing results opened and bumps works.json to version 2.
+      // The migration marks existing results opened and records that tracking started.
       const migratedFile = first.snapshot().works[0].messages[1].results![0];
       assert.equal(migratedFile.openedAt, "2026-11-16T12:05:00.000Z");
       assert.equal(first.snapshot().works[0].messages[0].attachments![0].openedAt, undefined);
       const savedAfterMigration = JSON.parse(await readFile(join(dir, "works.json"), "utf8"));
-      assert.equal(savedAfterMigration.version, 2);
+      assert.equal(savedAfterMigration.version, 1);
+      assert.equal(savedAfterMigration.openedTracking, true);
 
       // Unknown ids and attachment ids are ignored without marking attachments or throwing.
       await first.command({ type: "markOpened", fileIds: ["does-not-exist", "att-1"] }, () => {});

@@ -202,16 +202,18 @@ export class App {
       const saved = JSON.parse(
         await readFile(join(this.data, "works.json"), "utf8"),
       );
-      if (!saved || (saved.version !== 1 && saved.version !== 2) || !Array.isArray(saved.works) || !saved.works.every(isSavedWork))
+      if (!saved || saved.version !== 1 || !Array.isArray(saved.works) || !saved.works.every(isSavedWork))
         throw new SyntaxError("Invalid saved work list");
       this.works = saved.works;
       this.backupReceipt = typeof saved.backupReceipt === "string" ? saved.backupReceipt : undefined;
-      if (saved.version === 1) {
-        const now = new Date().toISOString();
+      // Results saved before Bitácora tracked what was opened count as opened,
+      // so an update does not mark every old piece as new. The marker keeps
+      // version 1, so an older app can still read the list.
+      if (saved.openedTracking !== true) {
         for (const work of this.works) {
           for (const message of work.messages) {
             for (const file of message.results || []) {
-              if (!file.openedAt) file.openedAt = file.createdAt || now;
+              if (!file.openedAt) file.openedAt = file.createdAt;
             }
           }
         }
@@ -257,7 +259,9 @@ export class App {
       if (this.backups?.restoring) this.notice = "Quedó un Deshacer pendiente. Podés reintentarlo o dejar la carpeta como está.";
     }
     for (const work of this.works) if (work.pendingFiles) { await this.collectResults(work); this.dirty = true; }
-    if (this.dirty) { this.changed(); await this.writes; }
+    // A failed save keeps the work dirty and is retried later; it must not
+    // stop Bitácora from opening.
+    if (this.dirty) { this.changed(); await this.writes.catch(() => {}); }
     await this.loadSettings();
     if (this.workspace) {
       // The profile is the agency's file, not a preference: it is read at each
@@ -426,7 +430,7 @@ export class App {
   private changed() {
     const revision = ++this.writeRevision;
     this.dirty = false;
-    const content = JSON.stringify({ version: 2, works: this.works, backupReceipt: this.backupReceipt }, null, 2);
+    const content = JSON.stringify({ version: 1, openedTracking: true, works: this.works, backupReceipt: this.backupReceipt }, null, 2);
     this.writes = this.writes
       .catch(() => {})
       .then(async () => {
