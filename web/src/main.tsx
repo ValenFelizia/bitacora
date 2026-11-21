@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import type {
   ClientCommand,
+  CodexImportMessage,
   FileRef,
   ServerMessage,
   Snapshot,
@@ -53,6 +54,7 @@ import {
 } from "./format";
 import { protectionText, protectionWarning } from "./protection-text";
 import { Welcome, type WelcomeAnswer } from "./welcome";
+import { CodexImport, CodexImportOffer, CodexImportTrigger } from "./codex-import";
 import { WorkspaceControl } from "./workspace-control";
 import { FolderPickerProblem, pickWorkspace } from "./workspace-picker";
 import { suggestedRoutes } from "../../server/src/welcome";
@@ -210,6 +212,8 @@ function App() {
   const [problem, setProblem] = useState<{ text: string; detail?: string; workId?: string }>();
   // The welcome answer was sent and no reply arrived yet. Any message from the
   // server releases it, with or without an error.
+  const [codexImportMessage, setCodexImportMessage] = useState<CodexImportMessage>();
+  const [codexImportOpen, setCodexImportOpen] = useState(0);
   const [welcomeSending, setWelcomeSending] = useState(false);
   const [folderAction, setFolderAction] = useState<"picking" | "changing">();
   const [folderProblem, setFolderProblem] = useState<string>();
@@ -293,6 +297,8 @@ function App() {
         // Any answer proves the server is there: the welcome button can be
         // pressed again even when the same error comes back.
         setWelcomeSending(false);
+        if (message.type === "codexChats" || message.type === "codexImported" || message.type === "codexImportProblem")
+          setCodexImportMessage(message);
         if (message.type === "snapshot") {
           if (displayedWorkspace.current && displayedWorkspace.current !== message.state.workspace) {
             draftGeneration.current++;
@@ -313,6 +319,7 @@ function App() {
             setFocusedMessageId(undefined);
             setProblem(undefined);
             setFolderProblem(undefined);
+            setCodexImportMessage(undefined);
           }
           displayedWorkspace.current = message.state.workspace;
           setState(message.state);
@@ -456,7 +463,7 @@ function App() {
   useEffect(() => {
     if (!navOpen && !deliverablesOpen) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
+      if (e.key !== "Escape" || document.querySelector("dialog:modal")) return;
       if (navOpen) {
         setNavOpen(false);
         navToggleRef.current?.focus();
@@ -839,34 +846,49 @@ function App() {
     sendWelcome({ type: "skipWelcome" });
   }
 
+  function openCodexImport() {
+    if (!online) return;
+    setNavOpen(false);
+    setCodexImportOpen((n) => n + 1);
+    if (state.codexImportOffer) sendQuietly({ type: "dismissCodexImportOffer" });
+  }
+
+  const codexImportOffer = state.codexImportOffer && (
+    <CodexImportOffer
+      online={online}
+      onOpen={openCodexImport}
+      onDismiss={() => sendQuietly({ type: "dismissCodexImportOffer" })}
+    />
+  );
+
   // The first-run questions come before the account: they need no engine and
   // no cupo, so the app is useful from the first screen (DEC-015). They stay
   // mounted without a connection, with the answers still there.
-  if (state.welcome === "pending")
-    return (
-      <Welcome
-        key={state.workspace}
-        workspaceControl={workspaceControl}
-        notice={state.notice}
-        problem={problem?.text}
-        sending={welcomeSending}
-        choosingWorkspace={!!folderAction}
-        offline={!online}
-        onSave={saveWelcome}
-        onSkip={skipWelcome}
-        onRetry={() => reconnectRef.current()}
-      />
-    );
-
   return (
-    <div
-      className={`grid h-dvh grid-cols-1 bg-paper text-ink overflow-hidden ${
-        gallery
-          ? "min-[960px]:grid-cols-[220px_minmax(0,1fr)]"
-          : "min-[960px]:grid-cols-[220px_minmax(0,1fr)_var(--panel-width)]"
-      } ${resizingPanel ? "select-none cursor-col-resize" : ""}`}
-      style={{ "--panel-width": `${shownPanel}px` } as React.CSSProperties}
-    >
+    <>
+      {state.welcome === "pending" ? (
+        <Welcome
+          key={state.workspace}
+          workspaceControl={workspaceControl}
+          codexImportOffer={codexImportOffer}
+          notice={state.notice}
+          problem={problem?.text}
+          sending={welcomeSending}
+          choosingWorkspace={!!folderAction}
+          offline={!online}
+          onSave={saveWelcome}
+          onSkip={skipWelcome}
+          onRetry={() => reconnectRef.current()}
+        />
+      ) : (
+        <div
+          className={`grid h-dvh grid-cols-1 bg-paper text-ink overflow-hidden ${
+            gallery
+              ? "min-[960px]:grid-cols-[220px_minmax(0,1fr)]"
+              : "min-[960px]:grid-cols-[220px_minmax(0,1fr)_var(--panel-width)]"
+          } ${resizingPanel ? "select-none cursor-col-resize" : ""}`}
+          style={{ "--panel-width": `${shownPanel}px` } as React.CSSProperties}
+        >
       {(navOpen || deliverablesOpen) && (
         <div
           className="fixed inset-0 z-30 bg-ink/40 min-[960px]:hidden"
@@ -944,6 +966,7 @@ function App() {
         </button>
 
         {workspaceControl && <div className="mb-3">{workspaceControl}</div>}
+        <CodexImportTrigger disabled={!online} onClick={openCodexImport} />
 
         <nav
           className="flex-1 min-h-0 overflow-y-auto flex flex-col"
@@ -1204,7 +1227,7 @@ function App() {
           )}
         </header>
 
-        {((state.undo && !busy) || state.notice) && (
+        {((state.undo && !busy) || state.notice || codexImportOffer) && (
           <section
             aria-label="Deshacer el último pedido"
             className="shrink-0 px-5 min-[960px]:px-7 py-2 border-b border-line bg-surface text-[13px] flex flex-col gap-2"
@@ -1296,6 +1319,7 @@ function App() {
                 {state.notice}
               </p>
             )}
+            {codexImportOffer}
           </section>
         )}
 
@@ -2098,7 +2122,17 @@ function App() {
           onClose={() => setPreview(undefined)}
         />
       )}
-    </div>
+        </div>
+      )}
+      <CodexImport
+        online={online}
+        workspace={state.workspace}
+        openRequest={codexImportOpen}
+        hideTrigger
+        message={codexImportMessage}
+        send={sendQuietly}
+      />
+    </>
   );
 }
 

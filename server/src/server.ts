@@ -7,6 +7,8 @@ import type { Engine } from "./engine";
 import { problemText, EngineFailure } from "./engine";
 import type { ClientCommand, ServerMessage } from "./contracts";
 import { App } from "./app";
+import type { CodexHistory } from "./codex/history";
+import { HistoryProblem } from "./codex/history-snapshot";
 import { desktopAssets } from "./desktop-assets";
 import { DICTATION_PATH } from "./dictation";
 import { handleDictation } from "./dictation-http";
@@ -32,6 +34,7 @@ export async function serve(
     /** Wait between background checks for an engine that did not stop. */
     recoveryDelayMs?: number;
   },
+  codexHistory?: CodexHistory,
 ) {
   if (!isScreenSecret(screenSecret)) throw new Error("Invalid screen session");
   const expectedSecret = Buffer.from(screenSecret, "hex");
@@ -112,7 +115,7 @@ export async function serve(
       preferenceData: folders.selection.data,
       key: choice.key,
       notice,
-    });
+    }, codexHistory);
     return { app, engine, files, choice };
   }
 
@@ -238,6 +241,7 @@ export async function serve(
         catch (error) {
           throw new WorkspaceProblem("No pude guardar el cambio de carpeta. Probá de nuevo.", { cause: error });
         }
+        if (!closing) void active.app.checkCodexImportOffer();
         return;
       }
 
@@ -264,7 +268,10 @@ export async function serve(
       pendingDefaultFallback = false;
       active = next;
       broadcast({ type: "snapshot", state: next.app.snapshot() });
-      if (!closing) void next.app.startEngine(true);
+      if (!closing) {
+        void next.app.startEngine(true);
+        void next.app.checkCodexImportOffer();
+      }
     })();
     try {
       await switching;
@@ -300,6 +307,8 @@ export async function serve(
     );
   });
   sockets.on("connection", (ws) => {
+    let historyListing: AbortController | undefined;
+    ws.on("close", () => historyListing?.abort());
     ws.on("error", () => ws.terminate());
     send(ws, { type: "snapshot", state: active.app.snapshot() });
     ws.on("message", (data) => {
@@ -308,7 +317,13 @@ export async function serve(
           const command = JSON.parse(String(data)) as ClientCommand & { workspace?: string };
           if (
             !command ||
-            !["chooseWorkspace", "discardUndo", "undo", "connect", "retry", "prepareProtection", "send", "rename", "interrupt", "answer", "skipQuestion", "chooseModel", "refreshModels", "panelWidth", "welcome", "skipWelcome", "markOpened"].includes(command.type)
+            ![
+              "chooseWorkspace", "discardUndo", "undo", "connect", "retry",
+              "prepareProtection", "send", "rename", "interrupt", "answer",
+              "skipQuestion", "chooseModel", "refreshModels", "panelWidth",
+              "welcome", "skipWelcome", "markOpened",
+              "listCodexChats", "cancelCodexChatList", "importCodexChats", "dismissCodexImportOffer",
+            ].includes(command.type)
           )
             throw new Error("Invalid message");
           const stale = folders && command.workspace !== active.choice?.root;
@@ -328,9 +343,20 @@ export async function serve(
             }
             return;
           }
-          if (closing || switching || stale) {
-            send(ws, { type: "problem", text: "La carpeta de trabajo está cambiando. Probá de nuevo en un momento." });
+          if (command.type === "cancelCodexChatList") {
+            historyListing?.abort();
             return;
+          }
+          if (closing || switching || stale) {
+            if (command.type === "listCodexChats" || command.type === "importCodexChats")
+              send(ws, { type: "codexImportProblem", text: "La carpeta de trabajo está cambiando. Probá de nuevo en un momento." });
+            else
+              send(ws, { type: "problem", text: "La carpeta de trabajo está cambiando. Probá de nuevo en un momento." });
+            return;
+          }
+          if (command.type === "listCodexChats") {
+            historyListing?.abort();
+            historyListing = new AbortController();
           }
           commands++;
           try {
@@ -338,12 +364,16 @@ export async function serve(
               await recoverShutdown();
               return;
             }
-            await active.app.command(command, (message) => send(ws, message)); }
-          finally { commands--; }
+            await active.app.command(
+              command,
+              (message) => send(ws, message),
+              command.type === "listCodexChats" ? historyListing?.signal : undefined,
+            );
+          } finally { commands--; }
         } catch (error) {
           send(ws, {
             type: "problem",
-            text: error instanceof FileProblem || error instanceof WorkspaceProblem ? error.message : problemText(
+            text: error instanceof FileProblem || error instanceof WorkspaceProblem || error instanceof HistoryProblem ? error.message : problemText(
               error instanceof EngineFailure ? error.kind : "other",
             ),
             detail: String(error),

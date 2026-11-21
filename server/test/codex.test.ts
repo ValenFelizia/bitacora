@@ -604,8 +604,16 @@ test("every thread and turn is started with the read-restricting profile", async
   try {
     assert.equal(f.engine.executionSafety().readBlock, true);
     await f.engine.createWork();
+    const importedPath = join("sessions", "2026", "11", "21", "rollout-fixture.jsonl");
+    await f.engine.resumeWork("thread-1", undefined, undefined, importedPath);
     await f.engine.send("thread-1", "race");
     const records = await f.records();
+    const resume = records.find(m => m.method === "thread/resume");
+    assert.equal(resume.params.permissions, "agencia");
+    assert.equal(resume.params.sandbox, undefined);
+    assert.equal(resume.params.approvalPolicy, "never");
+    assert.equal(resume.params.path, join(f.dir, "home", importedPath));
+    assert.deepEqual(resume.params.runtimeWorkspaceRoots, [join(f.dir, "workspace")]);
     const thread = records.find((m) => m.method === "thread/start");
     assert.equal(thread.params.permissions, "agencia");
     assert.equal(thread.params.sandbox, undefined);
@@ -913,6 +921,26 @@ test("resuming a work that does not report a profile is not a refusal", async ()
     delete process.env.BITACORA_FAKE_THREAD_PROFILE;
     await f.close();
   }
+});
+
+test("an imported chat needs a confirmed agency profile before the first new message", async () => {
+  mxc();
+  process.env.BITACORA_FAKE_THREAD_PROFILE = "none";
+  const f = await fixture();
+  try {
+    await assert.rejects(f.engine.resumeWork("thread-1", undefined, undefined, "rollout-fixture.jsonl"), /permissions=none/);
+    assert.equal(f.engine.executionSafety().allowed, false);
+    assert.equal((await f.records()).some(record => record.method === "turn/start"), false);
+  } finally { delete process.env.BITACORA_FAKE_THREAD_PROFILE; await f.close(); }
+});
+
+test("the write-only fallback refuses to resume an imported chat", async () => {
+  const f = await fixture();
+  try {
+    await assert.rejects(f.engine.resumeWork("thread-1", undefined, undefined, "rollout-fixture.jsonl"), /proteger también la lectura/);
+    assert.equal((await f.records()).some(record => record.method === "thread/resume"), false);
+    await f.engine.resumeWork("thread-1");
+  } finally { await f.close(); }
 });
 
 test("elevated readiness needs a workspace check and setup uses that folder", async () => {

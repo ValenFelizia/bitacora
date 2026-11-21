@@ -118,12 +118,20 @@ test("desktop serves while Codex prepares, then saves buffered changes on stdin 
     await mkdir(web, { recursive: true });
     await mkdir(join(root, "runtime", "kit", "turismo"), { recursive: true });
     await writeFile(join(web, "index.html"), "<title>Bitácora</title>");
+    const runtime = join(root, "runtime");
+    await mkdir(join(runtime, "scripts"), { recursive: true });
+    await mkdir(join(runtime, "server", "src", "codex"), { recursive: true });
+    await copyFile("scripts/codex-runtime.mjs", join(runtime, "scripts", "codex-runtime.mjs"));
+    await copyFile("server/src/codex/VERSION", join(runtime, "server", "src", "codex", "VERSION"));
     await build({
       entryPoints: ["server/src/index.ts"],
       outfile: entry, platform: "node", format: "esm", bundle: true, packages: "external",
       plugins: [{
         name: "fake-desktop-engine",
         setup(build) {
+          build.onResolve({ filter: /\/scripts\/codex-runtime\.mjs$/ }, () => ({
+            path: "../scripts/codex-runtime.mjs", external: true,
+          }));
           build.onResolve({ filter: /^\.\/codex\/engine$/ }, () => ({
             path: "engine", namespace: "fake-desktop",
           }));

@@ -50,6 +50,7 @@ export function Welcome({
   onSkip,
   onRetry,
   workspaceControl,
+  codexImportOffer,
   notice,
   choosingWorkspace,
 }: {
@@ -63,6 +64,7 @@ export function Welcome({
   onSkip: () => void;
   onRetry: () => void;
   workspaceControl?: React.ReactNode;
+  codexImportOffer?: React.ReactNode;
   notice?: string;
   choosingWorkspace?: boolean;
 }) {
@@ -155,7 +157,8 @@ export function Welcome({
         </header>
 
         {notice && <p role="status" className="mb-4 text-[13px] text-muted">{notice}</p>}
-        {workspaceControl && <div className="mb-6">{workspaceControl}</div>}
+        {workspaceControl && <div className={codexImportOffer ? "mb-3" : "mb-6"}>{workspaceControl}</div>}
+        {codexImportOffer && <div className="mb-6">{codexImportOffer}</div>}
 
         <form onSubmit={submit} noValidate className="flex flex-col gap-6">
           <div className="flex flex-col gap-2">

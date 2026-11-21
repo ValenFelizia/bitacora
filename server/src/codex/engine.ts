@@ -28,6 +28,7 @@ import type { ToolRequestUserInputResponse } from "./generated/v2/ToolRequestUse
 import type { GetAccountResponse } from "./generated/v2/GetAccountResponse";
 import type { GetAuthStatusResponse } from "./generated/GetAuthStatusResponse";
 import { transcribeWithCodex } from "./transcribe";
+import { HistoryProblem } from "./history-snapshot";
 import type { DictationClip } from "../dictation";
 import type { LoginAccountResponse } from "./generated/v2/LoginAccountResponse";
 import type { ThreadStartResponse } from "./generated/v2/ThreadStartResponse";
@@ -1736,13 +1737,22 @@ export class CodexEngine implements Engine {
     this.checkProfile(activePermissionProfile, true);
     return { conversationId: thread.id, title: thread.name || undefined };
   }
-  async resumeWork(conversationId: string, model?: ModelSelection, notes?: string) {
+  async resumeWork(conversationId: string, model?: ModelSelection, notes?: string, importedRollout?: string) {
+    if (importedRollout && this.backend === "elevated")
+      throw new HistoryProblem("Para seguir este chat de Codex, Bitácora necesita poder proteger también la lectura de archivos fuera de tu carpeta.");
     await this.syncSkills(conversationId);
-    const { activePermissionProfile } = await this.rpc("thread/resume", {
+    const { thread, activePermissionProfile } = await this.rpc("thread/resume", {
       threadId: conversationId,
       ...this.settings(model, notes),
+      ...(importedRollout && {
+        path: join(this.options.home, importedRollout),
+        runtimeWorkspaceRoots: [this.options.workspace],
+        excludeTurns: true,
+      }),
     });
-    this.checkProfile(activePermissionProfile, false);
+    this.checkProfile(activePermissionProfile, Boolean(importedRollout));
+    if (importedRollout && thread.id !== conversationId)
+      throw new Error("The resumed Codex chat differs from the imported chat");
   }
   /**
    * Asks the engine for a short name without starting a visible turn:

@@ -47,9 +47,20 @@ export type Snapshot = {
   welcome?: "pending" | "done" | "skipped";
   /** Uses marked in the welcome, which pick the suggested routes. */
   uses?: string[];
+  /** True once after choosing a folder when Codex has unimported chats in that folder. */
+  codexImportOffer?: boolean;
 };
+export type CodexChat = { id: string; title: string; date: string; folder: string; sameFolder: boolean; imported: boolean };
+export type CodexImportMessage =
+  | { type: "codexChats"; chats: CodexChat[] }
+  | { type: "codexImported"; imported: string[]; failed: string[] }
+  | { type: "codexImportProblem"; text: string };
 export type ClientCommand =
   | { type: "chooseWorkspace"; path: string }
+  | { type: "listCodexChats" }
+  | { type: "cancelCodexChatList" }
+  | { type: "importCodexChats"; ids: string[] }
+  | { type: "dismissCodexImportOffer" }
   | { type: "undo"; id: string }
   | { type: "discardUndo"; id: string }
   | { type: "connect" }
@@ -73,6 +84,7 @@ export type ClientCommand =
   /** Deliverable results opened, previewed, downloaded, or copied by the user. */
   | { type: "markOpened"; fileIds: string[] };
 export type ServerMessage =
+  | CodexImportMessage
   | { type: "snapshot"; state: Snapshot }
   | {
       type: "message";

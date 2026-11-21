@@ -1,9 +1,12 @@
 import { paths, preparePaths } from "./paths";
 import { CodexEngine } from "./codex/engine";
+import { CodexHistory } from "./codex/history";
+import { sweepHistorySnapshots } from "./codex/history-snapshot";
 import { serve } from "./server";
 import { WorkspaceSelection, type WorkspaceChoice } from "./workspace-selection";
 import { isScreenSecret } from "./screen-session";
 import { dirname, join } from "node:path";
+import { homedir } from "node:os";
 import { protectedWorkspaceFolders } from "./protected-folders";
 import { fileURLToPath } from "node:url";
 
@@ -35,6 +38,7 @@ async function readDesktopSecret(): Promise<string> {
 }
 const runtime = fileURLToPath(new URL("../", import.meta.url));
 const locations = await preparePaths(paths());
+void sweepHistorySnapshots();
 const desktop = installed ? {
   webRoot: join(runtime, "web"),
   kitSource: join(runtime, "kit", "turismo"),
@@ -70,6 +74,7 @@ const server = await serve(
   desktop,
   screenSecret,
   { selection, initial: choice, notice, engineFor },
+  new CodexHistory(join(homedir(), ".codex"), locations.codexHome, binary),
 );
 let closing = false;
 function close(code = 0) {
