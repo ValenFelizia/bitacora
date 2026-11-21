@@ -1656,13 +1656,20 @@ export class CodexEngine implements Engine {
     this.checkProfile(activePermissionProfile, true);
     return { conversationId: thread.id, title: thread.name || undefined };
   }
-  async resumeWork(conversationId: string, model?: ModelSelection, notes?: string) {
+  async resumeWork(conversationId: string, model?: ModelSelection, notes?: string, importedRollout?: string) {
     await this.syncSkills(conversationId);
-    const { activePermissionProfile } = await this.rpc("thread/resume", {
+    const { thread, activePermissionProfile } = await this.rpc("thread/resume", {
       threadId: conversationId,
       ...this.settings(model, notes),
+      ...(importedRollout && {
+        path: join(this.options.home, importedRollout),
+        runtimeWorkspaceRoots: [this.options.workspace],
+        excludeTurns: true,
+      }),
     });
     this.checkProfile(activePermissionProfile, false);
+    if (importedRollout && thread.id !== conversationId)
+      throw new Error("The resumed Codex chat differs from the imported chat");
   }
   /**
    * Asks the engine for a short name without starting a visible turn:

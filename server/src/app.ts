@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import type { CodexHistory } from "./codex/history";
 import { Backups, BACKUP_LIMITS, RestoreProblem, pathKey } from './backups';
 import { mkdir, readFile, writeFile, rename, copyFile, rm } from "node:fs/promises";
 import { WorkspaceFiles, MAX_RESULT, type FileScan } from "./workspace-files";
@@ -19,7 +20,7 @@ import { WelcomeProblem, profileNotes, welcomeAnswers, type WelcomeAnswers, type
 /** Choices kept for the whole app in `settings.json`, not per work (DEC-014). */
 type Settings = { model?: string; panelWidth?: number; welcome?: "done" | "skipped" };
 
-type SavedWork = Work & { conversationId: string; titlePending?: boolean; renamedByUser?: boolean; pendingFiles?: { messageId: string; before?: Record<string, string> } };
+type SavedWork = Work & { conversationId: string; importedRollout?: string; titlePending?: boolean; renamedByUser?: boolean; pendingFiles?: { messageId: string; before?: Record<string, string> } };
 const isText = (value: unknown) => typeof value === "string";
 /** A model list older than this is asked again when the menu opens. */
 const CATALOGUE_MAX_AGE_MS = 10 * 60_000;
@@ -59,6 +60,8 @@ const isSavedWork = (value: unknown) => {
     (work.problem === undefined || isText(work.problem)) &&
     (work.question === undefined || isQuestion(work.question)) &&
     (work.busy === undefined || typeof work.busy === "boolean") &&
+    (work.importedRollout === undefined || (typeof work.importedRollout === "string" &&
+      /^sessions[\\/]\d{4}[\\/]\d{2}[\\/]\d{2}[\\/](?:import-[a-zA-Z0-9]+[\\/])?rollout-[^\\/:]+\.jsonl$/.test(work.importedRollout))) &&
     (work.titlePending === undefined || typeof work.titlePending === "boolean") &&
     (work.renamedByUser === undefined || typeof work.renamedByUser === "boolean") &&
     Array.isArray(work.messages) && work.messages.every(isMessage) &&
@@ -130,6 +133,9 @@ export class App {
   private catalogueStale = false;
   private catalogueRequest = 0;
   private listing = false;
+  private historyAbort = new AbortController();
+  private historyList?: ReturnType<CodexHistory["list"]>;
+  private historyImport?: Promise<void>;
   constructor(
     private engine: Engine,
     private data: string,
@@ -137,6 +143,7 @@ export class App {
     private files = { rename, copyFile },
     private workspace?: WorkspaceFiles,
     private kitSource?: string,
+    private codexHistory?: CodexHistory,
   ) {}
   async start() {
     await this.initialize();
@@ -415,7 +422,7 @@ export class App {
       panelWidth: this.settings.panelWidth,
       welcome: this.workspace ? (this.settings.welcome ?? "pending") : undefined,
       uses: this.workspace ? [...this.uses] : undefined,
-      works: this.works.map(({ conversationId: _, pendingFiles: __, titlePending: ___, renamedByUser: ____, ...work }) => work),
+      works: this.works.map(({ conversationId: _, pendingFiles: __, titlePending: ___, renamedByUser: ____, importedRollout: _____, ...work }) => work),
     };
   }
   private async renameWithRetry(source: string, target: string) {
@@ -720,10 +727,61 @@ export class App {
         this.publish({ type: "snapshot", state: this.snapshot() });
     } else this.changed();
   }
+  private async importCodexChats(ids: string[], reply: (message: ServerMessage) => void) {
+    if (!Array.isArray(ids) || !ids.length || !ids.every(id => typeof id === "string"))
+      throw new Error("Invalid Codex chat selection");
+    const known = new Set(this.works.map(work => work.conversationId));
+    const requested = [...new Set(ids)];
+    const pending = requested.filter(id => !known.has(id));
+    let failed = pending;
+    let added = false;
+    try {
+      if (pending.length && this.codexHistory && this.workspace) {
+        failed = await this.codexHistory.import(pending, this.historyAbort.signal, (chat) => {
+          this.works.unshift({
+            id: randomUUID(), conversationId: chat.id, importedRollout: chat.rollout,
+            title: chat.title, createdAt: chat.createdAt, updatedAt: chat.date,
+            messages: chat.messages, details: "", busy: false, progress: "",
+          });
+          known.add(chat.id);
+          added = true;
+        });
+      }
+    } finally {
+      if (added || this.dirty) this.changed();
+      await this.writes;
+    }
+    reply({ type: "codexImported", imported: requested.filter(id => known.has(id)), failed });
+  }
   async command(
     command: ClientCommand,
     reply: (message: ServerMessage) => void,
   ) {
+    if (command.type === "listCodexChats") {
+      try {
+        const chats = this.codexHistory && this.workspace
+          ? await (this.historyList ??= this.codexHistory.list(this.workspace.root, this.historyAbort.signal)
+            .finally(() => { this.historyList = undefined; }))
+          : [];
+        const known = new Set(this.works.map(work => work.conversationId));
+        reply({ type: "codexChats", chats: chats.map(chat => ({ ...chat, imported: known.has(chat.id) })) });
+      } catch {
+        reply({ type: "codexImportProblem", text: "No pude ver tus chats de Codex. Probá de nuevo." });
+      }
+      return;
+    }
+    if (command.type === "importCodexChats") {
+      if (this.historyImport) {
+        reply({ type: "codexImportProblem", text: "Ya estoy trayendo chats. Esperá un momento." });
+        return;
+      }
+      try {
+        await (this.historyImport = this.importCodexChats(command.ids, reply));
+      } catch {
+        reply({ type: "codexImportProblem", text: "No pude terminar de traer tus chats. Volvé a abrir la lista para revisar cuáles quedaron guardados." });
+      } finally { this.historyImport = undefined; }
+      return;
+    }
     if (command.type === "undo" || command.type === "discardUndo") {
       if (this.submitting || this.works.some(w => w.busy) || !this.backups) {
         reply({ type: "problem", text: this.backups ? "Esperá a que termine el pedido actual para deshacer." : "No hay una copia disponible para deshacer." }); return;
@@ -989,7 +1047,7 @@ export class App {
         work = this.works.find((w) => w.id === command.workId);
         if (!work) throw new Error("Unknown work");
         if (!this.resumed.has(work.id)) {
-          await this.engine.resumeWork(work.conversationId, model, await this.developerNotes());
+          await this.engine.resumeWork(work.conversationId, model, await this.developerNotes(), work.importedRollout);
           this.resumed.add(work.id);
         }
       } else {
@@ -1105,6 +1163,8 @@ export class App {
     }
   }
   async close() {
+    this.historyAbort.abort();
+    await Promise.allSettled([this.historyList, this.historyImport]);
     clearTimeout(this.flushTimer);
     // The desktop shell gives us a short grace period. Queue the current
     // transcript before waiting for titles, scans or Codex shutdown.

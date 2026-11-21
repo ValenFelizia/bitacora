@@ -19,6 +19,9 @@ import {
 } from "../src/agency-environment";
 import { App } from "../src/app";
 import { CodexEngine, PERMISSIONS_PROFILE, appServerArgs } from "../src/codex/engine";
+import { CodexHistory, type ImportedChat } from "../src/codex/history";
+import type { ThreadStartResponse } from "../src/codex/generated/v2/ThreadStartResponse";
+import type { ThreadResumeResponse } from "../src/codex/generated/v2/ThreadResumeResponse";
 import { codexEnvironmentArgs } from "../src/codex/environment";
 import { registerKit } from "../src/codex/kit";
 import { initializeKit } from "../src/tools/kit";
@@ -241,6 +244,80 @@ async function mockResponses(replies: Array<(body: any) => object[]>) {
     close: () => new Promise<void>((resolveClose) => server.close(() => resolveClose())),
   };
 }
+
+test("the real Codex engine continues an imported paginated chat with its earlier messages", async () => {
+  await mkdir(".local", { recursive: true });
+  const root = await mkdtemp(resolve(".local/codex-resume-import-"));
+  const source = join(root, "original-codex");
+  const sourceFolder = join(root, "original-workspace");
+  const workspace = join(root, "current-workspace");
+  const home = join(root, "codex");
+  const firstPrompt = "Recordá este código de reserva de prueba: ZONDA-418.";
+  const oldAnswer = "Guardé el código ZONDA-418.";
+  const followUp = "¿Cuál era el código que te había dado?";
+  const answer = (value: string) => () => [{
+    type: "response.output_item.done",
+    item: { type: "message", role: "assistant", id: "message", content: [{ type: "output_text", text: value }] },
+  }];
+  const mock = await mockResponses([answer(oldAnswer), answer("Era ZONDA-418.")]);
+  const args = [...appServerArgs("elevated"), ...mock.args];
+  const initialize = async (server: ReturnType<typeof startRealAppServer>) => {
+    await server.rpc("initialize", {
+      clientInfo: { name: "bitacora_import_test", version: "0.1.0" },
+      capabilities: { experimentalApi: true, requestAttestation: false },
+    });
+    server.child.stdin.write('{"method":"initialized"}\n');
+  };
+  const input = (text: string) => [{ type: "text", text, text_elements: [] }];
+  try {
+    await Promise.all([source, sourceFolder, workspace].map(path => mkdir(path)));
+    const original = startRealAppServer(args, sourceFolder, source);
+    let id: string;
+    try {
+      await initialize(original);
+      const { thread } = await original.rpc<ThreadStartResponse>("thread/start", {
+        cwd: sourceFolder, approvalPolicy: "never", sandbox: "workspace-write", historyMode: "paginated",
+      });
+      id = thread.id;
+      await original.rpc("turn/start", { threadId: id, input: input(firstPrompt) });
+      await until(() => original.incoming.some(message => message.method === "turn/completed"));
+      assert.equal(mock.bodies.length, 1);
+    } finally { await original.close(); }
+
+    const history = new CodexHistory(source, home);
+    const signal = AbortSignal.timeout(15_000);
+    const [listed] = await history.list(workspace, signal);
+    assert.equal(listed.id, id);
+    assert.equal(listed.sameFolder, false);
+    const imported: ImportedChat[] = [];
+    assert.deepEqual(await history.import([id], signal, chat => imported.push(chat)), []);
+    const [chat] = imported;
+    assert.deepEqual(chat.messages.map(message => message.text), [firstPrompt, oldAnswer]);
+
+    const resumed = startRealAppServer(args, workspace, home);
+    try {
+      await initialize(resumed);
+      const { thread, approvalPolicy } = await resumed.rpc<ThreadResumeResponse>("thread/resume", {
+        threadId: id, path: join(home, chat.rollout), cwd: workspace, runtimeWorkspaceRoots: [workspace],
+        sandbox: "workspace-write", approvalPolicy: "never", excludeTurns: true,
+      });
+      assert.equal(thread.id, id);
+      assert.equal(resolve(thread.cwd), workspace);
+      assert.equal(approvalPolicy, "never");
+      await resumed.rpc("turn/start", { threadId: id, input: input(followUp), cwd: workspace });
+      await until(() => resumed.incoming.some(message => message.method === "turn/completed"));
+      assert.equal(mock.bodies.length, 2);
+      const messages = JSON.stringify(mock.bodies[1].input);
+      assert.ok(messages.includes(firstPrompt));
+      assert.ok(messages.includes(oldAnswer));
+      assert.ok(messages.includes(followUp));
+      assert.ok(resumed.incoming.some(message => message.method === "item/completed" && message.params.item.text === "Era ZONDA-418."));
+    } finally { await resumed.close(); }
+  } finally {
+    await mock.close();
+    await rm(root, { recursive: true, force: true, maxRetries: 5 });
+  }
+});
 
 /**
  * Rewrites the fake skills list atomically. The app-server may read the file

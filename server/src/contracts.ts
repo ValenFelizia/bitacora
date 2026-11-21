@@ -47,7 +47,14 @@ export type Snapshot = {
   /** Uses marked in the welcome, which pick the suggested routes. */
   uses?: string[];
 };
+export type CodexChat = { id: string; title: string; date: string; folder: string; sameFolder: boolean; imported: boolean };
+export type CodexImportMessage =
+  | { type: "codexChats"; chats: CodexChat[] }
+  | { type: "codexImported"; imported: string[]; failed: string[] }
+  | { type: "codexImportProblem"; text: string };
 export type ClientCommand =
+  | { type: "listCodexChats" }
+  | { type: "importCodexChats"; ids: string[] }
   | { type: "undo"; id: string }
   | { type: "discardUndo"; id: string }
   | { type: "connect" }
@@ -71,6 +78,7 @@ export type ClientCommand =
   /** Deliverable results opened, previewed, downloaded, or copied by the user. */
   | { type: "markOpened"; fileIds: string[] };
 export type ServerMessage =
+  | CodexImportMessage
   | { type: "snapshot"; state: Snapshot }
   | {
       type: "message";

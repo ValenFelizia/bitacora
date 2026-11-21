@@ -604,8 +604,16 @@ test("every thread and turn is started with the read-restricting profile", async
   try {
     assert.equal(f.engine.executionSafety().readBlock, true);
     await f.engine.createWork();
+    const importedPath = join("sessions", "2026", "11", "21", "rollout-fixture.jsonl");
+    await f.engine.resumeWork("thread-1", undefined, undefined, importedPath);
     await f.engine.send("thread-1", "race");
     const records = await f.records();
+    const resume = records.find(m => m.method === "thread/resume");
+    assert.equal(resume.params.permissions, "agencia");
+    assert.equal(resume.params.sandbox, undefined);
+    assert.equal(resume.params.approvalPolicy, "never");
+    assert.equal(resume.params.path, join(f.dir, "home", importedPath));
+    assert.deepEqual(resume.params.runtimeWorkspaceRoots, [join(f.dir, "workspace")]);
     const thread = records.find((m) => m.method === "thread/start");
     assert.equal(thread.params.permissions, "agencia");
     assert.equal(thread.params.sandbox, undefined);

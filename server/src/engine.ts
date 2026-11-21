@@ -88,7 +88,7 @@ export interface Engine {
   /** The models the account offers, without hidden ones. Asking costs no quota. */
   models(): Promise<EngineModel[]>;
   createWork(model?: ModelSelection, notes?: string): Promise<{ conversationId: string; title?: string }>;
-  resumeWork(conversationId: string, model?: ModelSelection, notes?: string): Promise<void>;
+  resumeWork(conversationId: string, model?: ModelSelection, notes?: string, importedRollout?: string): Promise<void>;
   /**
    * Cheap name for a work whose last request already finished. Resolves with
    * undefined when the sample ran but produced no usable text; rejects when it

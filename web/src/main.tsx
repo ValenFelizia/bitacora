@@ -29,6 +29,7 @@ import {
 } from "lucide-react";
 import type {
   ClientCommand,
+  CodexImportMessage,
   FileRef,
   ServerMessage,
   Snapshot,
@@ -53,6 +54,7 @@ import {
 } from "./format";
 import { protectionText, protectionWarning } from "./protection-text";
 import { Welcome, type WelcomeAnswer } from "./welcome";
+import { CodexImport } from "./codex-import";
 import { suggestedRoutes } from "../../server/src/welcome";
 import {
   appendReadFiles,
@@ -208,6 +210,7 @@ function App() {
   const [problem, setProblem] = useState<{ text: string; detail?: string; workId?: string }>();
   // The welcome answer was sent and no reply arrived yet. Any message from the
   // server releases it, with or without an error.
+  const [codexImportMessage, setCodexImportMessage] = useState<CodexImportMessage>();
   const [welcomeSending, setWelcomeSending] = useState(false);
   const [login, setLogin] = useState<string>();
   const loginWindow = useRef<Window | null>(null);
@@ -280,6 +283,8 @@ function App() {
         // Any answer proves the server is there: the welcome button can be
         // pressed again even when the same error comes back.
         setWelcomeSending(false);
+        if (message.type === "codexChats" || message.type === "codexImported" || message.type === "codexImportProblem")
+          setCodexImportMessage(message);
         if (message.type === "snapshot") {
           setState(message.state);
           if (message.state.account.connected) setLogin(undefined);
@@ -864,6 +869,8 @@ function App() {
           <LayoutGrid size={18} strokeWidth={1.75} aria-hidden="true" />
           Galería
         </button>
+
+        <CodexImport online={online} message={codexImportMessage} send={sendQuietly} />
 
         <nav
           className="flex-1 min-h-0 overflow-y-auto flex flex-col"

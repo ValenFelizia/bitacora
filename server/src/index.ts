@@ -1,8 +1,10 @@
 import { paths, preparePaths } from "./paths";
 import { CodexEngine } from "./codex/engine";
+import { CodexHistory } from "./codex/history";
 import { serve } from "./server";
 import { isScreenSecret } from "./screen-session";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 const installed = process.argv.includes("--desktop");
@@ -37,11 +39,12 @@ const desktop = installed ? {
   webRoot: join(runtime, "web"),
   kitSource: join(runtime, "kit", "turismo"),
 } : undefined;
+const binary = installed ? join(runtime, "codex", "bin", "codex.exe") : process.env.BITACORA_CODEX_BIN;
 const server = await serve(
   new CodexEngine({
     home: locations.codexHome,
     workspace: locations.workspace,
-    binary: installed ? join(runtime, "codex", "bin", "codex.exe") : process.env.BITACORA_CODEX_BIN,
+    binary,
     mcpEntry: installed ? join(runtime, "server", "mcp.mjs") : undefined,
   }),
   locations.data,
@@ -50,6 +53,7 @@ const server = await serve(
   locations.workspace,
   desktop,
   screenSecret,
+  new CodexHistory(join(homedir(), ".codex"), locations.codexHome, binary),
 );
 let closing = false;
 function close(code = 0) {

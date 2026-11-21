@@ -7,6 +7,7 @@ import type { Engine } from "./engine";
 import { problemText, EngineFailure } from "./engine";
 import type { ClientCommand, ServerMessage } from "./contracts";
 import { App } from "./app";
+import type { CodexHistory } from "./codex/history";
 import { desktopAssets } from "./desktop-assets";
 import { DICTATION_PATH } from "./dictation";
 import { handleDictation } from "./dictation-http";
@@ -20,6 +21,7 @@ export async function serve(
   workspace?: string,
   desktop?: { webRoot: string; kitSource: string },
   screenSecret = randomBytes(32).toString("hex"),
+  codexHistory?: CodexHistory,
 ) {
   if (!isScreenSecret(screenSecret)) throw new Error("Invalid screen session");
   const expectedSecret = Buffer.from(screenSecret, "hex");
@@ -91,7 +93,7 @@ export async function serve(
   };
   const app = new App(engine, data, (message) => {
     for (const ws of sockets.clients) send(ws, message);
-  }, undefined, files, desktop?.kitSource);
+  }, undefined, files, desktop?.kitSource, codexHistory);
   const origins = new Set(desktop ? [] : [webOrigin]);
   const configured = new URL(webOrigin);
   if (!desktop && ["127.0.0.1", "localhost"].includes(configured.hostname)) {
@@ -127,7 +129,7 @@ export async function serve(
           const command = JSON.parse(String(data)) as ClientCommand;
           if (
             !command ||
-            !["discardUndo", "undo", "connect", "retry", "prepareProtection", "send", "rename", "interrupt", "answer", "skipQuestion", "chooseModel", "refreshModels", "panelWidth", "welcome", "skipWelcome", "markOpened"].includes(command.type)
+            !["discardUndo", "undo", "connect", "retry", "prepareProtection", "send", "rename", "interrupt", "answer", "skipQuestion", "chooseModel", "refreshModels", "panelWidth", "welcome", "skipWelcome", "markOpened", "listCodexChats", "importCodexChats"].includes(command.type)
           )
             throw new Error("Invalid message");
           await app.command(command, (message) => send(ws, message));
