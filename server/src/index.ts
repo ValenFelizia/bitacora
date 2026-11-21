@@ -1,6 +1,7 @@
 import { paths, preparePaths } from "./paths";
 import { CodexEngine } from "./codex/engine";
 import { serve } from "./server";
+import { WorkspaceSelection, type WorkspaceChoice } from "./workspace-selection";
 import { isScreenSecret } from "./screen-session";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -37,19 +38,24 @@ const desktop = installed ? {
   webRoot: join(runtime, "web"),
   kitSource: join(runtime, "kit", "turismo"),
 } : undefined;
+const selection = new WorkspaceSelection(locations.workspace, locations.data);
+const { choice, notice } = await selection.load();
+const engineFor = (folder: WorkspaceChoice) => new CodexEngine({
+  home: locations.codexHome,
+  workspace: folder.root,
+  workspaceData: folder.data,
+  binary: installed ? join(runtime, "codex", "bin", "codex.exe") : process.env.BITACORA_CODEX_BIN,
+  mcpEntry: installed ? join(runtime, "server", "mcp.mjs") : undefined,
+});
 const server = await serve(
-  new CodexEngine({
-    home: locations.codexHome,
-    workspace: locations.workspace,
-    binary: installed ? join(runtime, "codex", "bin", "codex.exe") : process.env.BITACORA_CODEX_BIN,
-    mcpEntry: installed ? join(runtime, "server", "mcp.mjs") : undefined,
-  }),
+  engineFor(choice),
   locations.data,
   installed ? 0 : Number(process.env.BITACORA_PORT || 4317),
   installed ? undefined : process.env.BITACORA_WEB_ORIGIN,
-  locations.workspace,
+  choice.root,
   desktop,
   screenSecret,
+  { selection, initial: choice, notice, engineFor },
 );
 let closing = false;
 function close(code = 0) {
@@ -69,7 +75,7 @@ if (installed) {
   } else {
     console.log(`BITACORA_READY ${server.port}`);
     try {
-      await server.app.startEngine();
+      await server.startEngine();
       // The shell tells a first-start failure from a lost connection by this line.
       if (!closing) console.log("BITACORA_STARTED");
     } catch (error) {

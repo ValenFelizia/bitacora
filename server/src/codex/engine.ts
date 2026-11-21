@@ -298,6 +298,7 @@ export class CodexEngine implements Engine {
   private lastTurn = new Map<string, string>();
   private loginId?: string;
   private stopping = false;
+  private shutdownIncomplete = false;
   private startAttempt?: Promise<void>;
   private skillsSync?: { promise: Promise<void> };
   private skillsDirty = false;
@@ -306,6 +307,7 @@ export class CodexEngine implements Engine {
   constructor(
     private options: {
       mcpEntry?: string;
+      workspaceData?: string;
       home: string;
       workspace: string;
       binary?: string;
@@ -376,7 +378,7 @@ export class CodexEngine implements Engine {
     await mkdir(this.options.home, { recursive: true });
     await mkdir(this.options.workspace, { recursive: true });
     if (!this.options.args) {
-      await registerKit(this.options.home, this.options.workspace, this.options.mcpEntry);
+      await registerKit(this.options.home, this.options.workspace, this.options.mcpEntry, this.options.workspaceData);
     }
     if (this.stopping) return true;
     const binary = this.options.binary || codexBinary();
@@ -746,7 +748,9 @@ export class CodexEngine implements Engine {
     // Listen before killing, so an exit that happens during the kill is seen.
     const exited = this.waitExit(child, this.options.killTimeoutMs ?? 5000);
     const complete = await this.killChildTree(child);
-    return { complete, exited: await exited };
+    const stopped = await exited;
+    if (!complete || !stopped) this.shutdownIncomplete = true;
+    return { complete, exited: stopped };
   }
   /** The stop already running for the current child, if any. */
   private currentStop() {
@@ -1851,7 +1855,7 @@ export class CodexEngine implements Engine {
       throw error;
     }
   }
-  async close() {
+  async close(requireStop = false) {
     this.stopping = true;
     this.closeQuestions("stopped");
     clearTimeout(this.setupTimer);
@@ -1877,5 +1881,6 @@ export class CodexEngine implements Engine {
     // be left running after close() returns.
     const last = this.lastChild;
     if (last && last !== child && this.childRunning(last)) await this.stopTree(last);
+    if (requireStop && this.shutdownIncomplete) throw new Error("Could not confirm that the previous engine stopped");
   }
 }

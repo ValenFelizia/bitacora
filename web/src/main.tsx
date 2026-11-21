@@ -53,6 +53,8 @@ import {
 } from "./format";
 import { protectionText, protectionWarning } from "./protection-text";
 import { Welcome, type WelcomeAnswer } from "./welcome";
+import { WorkspaceControl } from "./workspace-control";
+import { pickWorkspace } from "./workspace-picker";
 import { suggestedRoutes } from "../../server/src/welcome";
 import {
   appendReadFiles,
@@ -209,6 +211,9 @@ function App() {
   // The welcome answer was sent and no reply arrived yet. Any message from the
   // server releases it, with or without an error.
   const [welcomeSending, setWelcomeSending] = useState(false);
+  const [folderAction, setFolderAction] = useState<"picking" | "changing">();
+  const [folderProblem, setFolderProblem] = useState<string>();
+  const displayedWorkspace = useRef<string | undefined>(undefined);
   const [login, setLogin] = useState<string>();
   const loginWindow = useRef<Window | null>(null);
   const socket = useRef<WebSocket | null>(null);
@@ -281,8 +286,33 @@ function App() {
         // pressed again even when the same error comes back.
         setWelcomeSending(false);
         if (message.type === "snapshot") {
+          if (displayedWorkspace.current && displayedWorkspace.current !== message.state.workspace) {
+            draftGeneration.current++;
+            sentDraft.current = undefined;
+            dictation.cancel();
+            setReadingFiles(false);
+            setText("");
+            setAttachments([]);
+            setSelected(undefined);
+            setRenaming(false);
+            setSavingName(undefined);
+            setPending(false);
+            answeringRef.current = undefined;
+            setAnswering(undefined);
+            setGallery(false);
+            setPreview(undefined);
+            setDeliverablesOpen(false);
+            setFocusedMessageId(undefined);
+            setProblem(undefined);
+            setFolderProblem(undefined);
+          }
+          displayedWorkspace.current = message.state.workspace;
           setState(message.state);
           if (message.state.account.connected) setLogin(undefined);
+        }
+        if (message.type === "workspaceChoice") {
+          setFolderAction(undefined);
+          setFolderProblem(message.problem);
         }
         if (message.type === "message") {
           setState((previous) => ({
@@ -346,6 +376,7 @@ function App() {
       ws.onclose = () => {
         setOnline(false);
         setSessionSecret(undefined);
+        setFolderAction((action) => action === "changing" ? undefined : action);
         setPending(false);
         setWelcomeSending(false);
         // An answer in flight may never arrive: the card can send it again.
@@ -477,12 +508,12 @@ function App() {
   function send(command: ClientCommand) {
     if (socket.current?.readyState !== WebSocket.OPEN) return;
     setProblem(undefined);
-    socket.current.send(JSON.stringify(command));
+    socket.current.send(JSON.stringify({ ...command, workspace: state.workspace }));
   }
 
   /** For preferences: a problem on screen stays, it is not about them. */
   function sendQuietly(command: ClientCommand) {
-    if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify(command));
+    if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify({ ...command, workspace: state.workspace }));
   }
 
   function resizePanel(width: number) {
@@ -748,6 +779,35 @@ function App() {
     if (restoreFocus) deliverablesToggleRef.current?.focus();
   }
 
+  async function chooseWorkspace() {
+    if (!state.workspace || folderAction || socket.current?.readyState !== WebSocket.OPEN) return;
+    setFolderProblem(undefined);
+    setFolderAction("picking");
+    try {
+      const path = await pickWorkspace(state.workspace);
+      if (!path) {
+        setFolderAction(undefined);
+        return;
+      }
+      if (socket.current?.readyState !== WebSocket.OPEN) throw new Error("Offline");
+      setFolderAction("changing");
+      sendQuietly({ type: "chooseWorkspace", path });
+    } catch {
+      setFolderAction(undefined);
+      setFolderProblem("No pude elegir la carpeta. Probá de nuevo.");
+    }
+  }
+
+  const workspaceControl = state.workspace && (
+    <WorkspaceControl
+      path={state.workspace}
+      disabled={!online || !!folderAction || welcomeSending}
+      changing={folderAction === "changing"}
+      problem={folderProblem}
+      onChoose={chooseWorkspace}
+    />
+  );
+
   function sendWelcome(command: ClientCommand) {
     // Offline the screen already says so and its buttons are off: nothing to do.
     if (socket.current?.readyState !== WebSocket.OPEN) return;
@@ -771,8 +831,12 @@ function App() {
   if (state.welcome === "pending")
     return (
       <Welcome
+        key={state.workspace}
+        workspaceControl={workspaceControl}
+        notice={state.notice}
         problem={problem?.text}
         sending={welcomeSending}
+        choosingWorkspace={!!folderAction}
         offline={!online}
         onSave={saveWelcome}
         onSkip={skipWelcome}
@@ -864,6 +928,8 @@ function App() {
           <LayoutGrid size={18} strokeWidth={1.75} aria-hidden="true" />
           Galería
         </button>
+
+        {workspaceControl && <div className="mb-3">{workspaceControl}</div>}
 
         <nav
           className="flex-1 min-h-0 overflow-y-auto flex flex-col"

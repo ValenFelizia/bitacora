@@ -21,6 +21,16 @@ function lockPath(path: string, directory: boolean, share = directory ? 1 : 3): 
   }
   return () => { close(handle); };
 }
+/** Check directory write rights without creating a file. */
+export function checkDirectoryWritable(path: string) {
+  const addFilesAndDirectories = 0x2 | 0x4;
+  const shareAll = 0x1 | 0x2 | 0x4;
+  const handle = create(path, addFilesAndDirectories, shareAll, null, 3, 0x02200000, null);
+  if (!handle || koffi.address(handle) === 0xffffffffffffffffn)
+    throw new Error("Directory is not writable");
+  close(handle);
+}
+
 export function lockDirectory(path: string) {
   const strong = lockPath(path,true);
   const sentinel = join(path, `.kit-guard-${randomUUID()}`);

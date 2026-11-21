@@ -49,6 +49,9 @@ export function Welcome({
   onSave,
   onSkip,
   onRetry,
+  workspaceControl,
+  notice,
+  choosingWorkspace,
 }: {
   /** What the server said when it could not save, in plain words. */
   problem?: string;
@@ -59,6 +62,9 @@ export function Welcome({
   onSave: (answers: WelcomeAnswer) => void;
   onSkip: () => void;
   onRetry: () => void;
+  workspaceControl?: React.ReactNode;
+  notice?: string;
+  choosingWorkspace?: boolean;
 }) {
   const base = useId();
   const titleId = `${base}-title`;
@@ -80,7 +86,7 @@ export function Welcome({
   }, [step]);
 
   const current = STEPS[step];
-  const waiting = sending || offline;
+  const waiting = sending || offline || choosingWorkspace;
 
   /** Every step change starts without the previous step's validation note. */
   function go(next: 0 | 1 | 2) {
@@ -147,6 +153,9 @@ export function Welcome({
             Paso {step + 1} de {STEPS.length}
           </span>
         </header>
+
+        {notice && <p role="status" className="mb-4 text-[13px] text-muted">{notice}</p>}
+        {workspaceControl && <div className="mb-6">{workspaceControl}</div>}
 
         <form onSubmit={submit} noValidate className="flex flex-col gap-6">
           <div className="flex flex-col gap-2">
