@@ -84,7 +84,7 @@ test('corrupt allowed list fails closed until the app quarantines it and records
     await requireAllowedUrl(path,'https://www.hotel.com/oferta');
   } finally {await f.close();}
 });
-test('real data/agency aliases are rejected before startup; marker outside agency survives complete deletion', async () => {
+test('real data/agency aliases are rejected before startup; the kit returns after the agency is deleted', async () => {
   const f=await fixture();
   try {
     await symlink(f.root,join(f.dir,'alias'),'junction');
@@ -96,10 +96,9 @@ test('real data/agency aliases are rejected before startup; marker outside agenc
     assert.ok((await readdir(f.data)).some(n=>n.startsWith('kit-initialized-')));
     for(const file of await readdir(f.root)) await rm(join(f.root,file),{recursive:true,force:true});
     await initializeKit(safe.workspace,safe.data);
-    // The rest of the kit stays deleted, because the marker says it was already
-    // copied; only the kit skills come back, since they are refreshed on every
-    // start (DEC-011, issue #50).
-    assert.deepEqual(await readdir(f.root),['.agents']);
+    // With the whole agency gone the kit's AGENTS.md is missing too, so the kit
+    // comes back even though the marker says it was copied (#65).
+    assert.ok(existsSync(join(f.root,'AGENTS.md')));
     assert.ok(existsSync(join(f.root,'.agents','skills','entrevista','SKILL.md')));
   } finally {await f.close();}
 });
