@@ -4,7 +4,7 @@ import type { PendingQuestion } from "../../server/src/contracts";
 import { MAX_ANSWER, optionLabel } from "../../server/src/questions";
 
 const focusRing =
-  "focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2";
+  "focus-visible:outline-2 focus-visible:outline-ink focus-visible:outline-offset-2";
 const buttonBordered = `inline-flex items-center justify-center gap-2 px-3 py-2 rounded-[6px] border border-ink bg-surface text-ink font-bold text-[14px] hover:bg-soft cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors duration-150 ${focusRing}`;
 const buttonQuiet = `inline-flex items-center justify-center gap-2 px-3 py-2 rounded-[6px] border border-line bg-surface text-ink text-[14px] hover:bg-soft cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors duration-150 ${focusRing}`;
 const row =
@@ -203,7 +203,7 @@ export function QuestionCard({
                               setWritten((current) => ({ ...current, [q.id]: value }));
                               setMissing(undefined);
                             }}
-                            className={`w-full rounded-[6px] border border-line bg-paper px-3 py-2 text-[15px] text-ink placeholder:text-muted ${focusRing}`}
+                            className={`w-full rounded-[6px] border border-line bg-paper px-3 py-2 text-[15px] text-ink placeholder:text-muted focus:outline-none focus:border-ink`}
                           />
                         </div>
                       )}
