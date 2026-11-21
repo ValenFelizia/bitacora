@@ -28,6 +28,7 @@ export type Work = {
   question?: PendingQuestion;
 };
 export type Snapshot = {
+  workspace?: string;
   hasBrand?: boolean;
   account: Account;
   works: Work[];
@@ -48,6 +49,7 @@ export type Snapshot = {
   uses?: string[];
 };
 export type ClientCommand =
+  | { type: "chooseWorkspace"; path: string }
   | { type: "undo"; id: string }
   | { type: "discardUndo"; id: string }
   | { type: "connect" }
@@ -80,6 +82,7 @@ export type ServerMessage =
       delta: boolean;
     }
   | { type: "selected"; workId: string }
+  | { type: "workspaceChoice"; problem?: string }
   | { type: "login"; url: string }
   /** `workId` names the work the problem is about, so the screen can take the user there. */
   | { type: "problem"; text: string; detail?: string; workId?: string };

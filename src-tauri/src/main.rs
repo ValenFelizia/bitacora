@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod folder_picker;
 mod server;
 
 use std::{
@@ -40,6 +41,7 @@ fn external_link(url: &Url) {
 // viewer can navigate a child frame without honoring the page's frame-src.
 fn restrict_webview(
     webview: tauri::webview::PlatformWebview,
+    window: tauri::WebviewWindow,
     endpoint: Arc<Mutex<Option<Url>>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let frame_endpoint = Arc::clone(&endpoint);
@@ -67,6 +69,7 @@ fn restrict_webview(
     unsafe {
         let env = webview.environment();
         let core = webview.controller().CoreWebView2()?;
+        folder_picker::install(&core, window, Arc::clone(&endpoint))?;
         core.add_FrameNavigationStarting(&handler, &mut 0)?;
         core.add_PermissionRequested(
             &PermissionRequestedEventHandler::create(Box::new(move |_, args| {
@@ -280,6 +283,7 @@ fn run() -> tauri::Result<()> {
                 let _ = reopen.send(());
             }
         }))
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let endpoint = Arc::new(Mutex::new(None::<Url>));
             let navigation_endpoint = Arc::clone(&endpoint);
@@ -325,7 +329,9 @@ fn run() -> tauri::Result<()> {
             app.manage(Arc::clone(&server));
             let worker_window = window.clone();
             window.with_webview(move |webview| {
-                if let Err(error) = restrict_webview(webview, Arc::clone(&endpoint)) {
+                if let Err(error) =
+                    restrict_webview(webview, worker_window.clone(), Arc::clone(&endpoint))
+                {
                     server.log(&format!("No se pudo proteger el visor: {error}"));
                     let _ = worker_window.navigate(Url::parse(VIEWER_ERROR).unwrap());
                     return;

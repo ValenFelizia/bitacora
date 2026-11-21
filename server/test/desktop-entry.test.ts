@@ -181,7 +181,7 @@ test("desktop serves while Codex prepares, then saves buffered changes on stdin 
           if (message.type === type && accept(message)) return message;
         }
       }
-      const send = (text: string) => socket.send(JSON.stringify({ type: "send", text }));
+      const send = (text: string) => socket.send(JSON.stringify({ type: "send", text, workspace }));
       try {
         const initial = await next("snapshot");
         assert.ok(!JSON.stringify(initial).includes(screenSecret));

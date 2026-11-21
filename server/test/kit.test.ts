@@ -38,7 +38,7 @@ test('path boundaries, Windows names, links and kit preservation', async () => {
     await f.files.write('AGENTS.md', 'Instrucciones propias');
     await initializeKit(f.root,f.data); await initializeKit(f.root,f.data);
     assert.equal(await f.files.read('AGENTS.md'), 'Instrucciones propias');
-    assert.match(await f.files.read('ejemplo/pieza.html'), /data-cites/);
+    await assert.rejects(f.files.read('ejemplo/pieza.html'), { code: 'ENOENT' });
   } finally { await f.close(); }
 });
 test('the kit comes back when the agency folder is deleted', async () => {
@@ -55,24 +55,27 @@ test('the kit comes back when the agency folder is deleted', async () => {
     await initializeKit(f.root, f.data);
     assert.match(await f.files.read('AGENTS.md'), /\S/);
     assert.match(await f.files.read('ejemplo/pieza.html'), /data-cites/);
-    // Without the kit's AGENTS.md the copy fills in what is missing and keeps
-    // what the agency changed.
+    // A kit folder that lost AGENTS.md gets the kit back without
+    // overwriting the agency's own work (#65).
     await f.files.write('ejemplo/pieza.html', 'Pieza propia', false);
     await rm(join(f.root, 'AGENTS.md'));
     await initializeKit(f.root, f.data);
     assert.match(await f.files.read('AGENTS.md'), /\S/);
     assert.equal(await f.files.read('ejemplo/pieza.html'), 'Pieza propia');
-    // A restore cut short after AGENTS.md is written is not taken for a whole
-    // kit: a file where the kit has a folder stops the copy, and once it is
-    // gone the next start finishes the job.
+    // A copy cut short after AGENTS.md is written still resumes even though
+    // the original empty folder now contains some kit files.
     await rm(f.root, { recursive: true, force: true });
-    await mkdir(f.root);
-    await writeFile(join(f.root, 'ejemplo'), 'estorbo');
-    await assert.rejects(initializeKit(f.root, f.data));
-    assert.match(await f.files.read('AGENTS.md'), /\S/);
-    await rm(join(f.root, 'ejemplo'));
-    await initializeKit(f.root, f.data);
-    assert.match(await f.files.read('ejemplo/pieza.html'), /data-cites/);
+    const kit = join(f.data, 'test-kit');
+    await mkdir(kit);
+    await writeFile(join(kit, 'AGENTS.md'), 'Instrucciones del kit');
+    await symlink(f.data, join(kit, 'ejemplo'), 'junction');
+    await assert.rejects(initializeKit(f.root, f.data, kit));
+    assert.equal(await f.files.read('AGENTS.md'), 'Instrucciones del kit');
+    await rmdir(join(kit, 'ejemplo'));
+    await mkdir(join(kit, 'ejemplo'));
+    await writeFile(join(kit, 'ejemplo', 'pieza.html'), 'Ejemplo');
+    await initializeKit(f.root, f.data, kit);
+    assert.equal(await f.files.read('ejemplo/pieza.html'), 'Ejemplo');
   } finally { await f.close(); }
 });
 test('kit skills arrive in an agency initialized before the kit shipped them', async () => {
@@ -156,9 +159,8 @@ test('the app opens but refuses requests when the single kit copy fails, until i
   await writeFile(join(kit, 'AGENTS.md'), 'Instrucciones del kit\n');
   await mkdir(join(kit, 'ejemplo'));
   await writeFile(join(kit, 'ejemplo', 'pieza.html'), '<p>hola</p>');
-  // A junction where the single copy has to write: the copy cannot run, so the
-  // agency would have no rules if the request were allowed.
-  await symlink(outside, join(root, 'ejemplo'), 'junction');
+  // A broken source stops the full copy into the empty agency.
+  await symlink(outside, join(kit, 'invalid-source'), 'junction');
   const files = new WorkspaceFiles(root);
   const app = new App(new FakeEngine(), data, () => {}, undefined, files, kit);
   const replies: Array<{ type: string; text?: string }> = [];
@@ -173,7 +175,7 @@ test('the app opens but refuses requests when the single kit copy fails, until i
     assert.equal(app.snapshot().works.length, 0, 'no request runs without the kit');
 
     // The obstruction goes away: the next request copies the kit and runs.
-    await rmdir(join(root, 'ejemplo'));
+    await rmdir(join(kit, 'invalid-source'));
     await app.command({ type: 'send', text: 'Un pedido' }, (message) => replies.push(message as { type: string; text?: string }));
     assert.equal(replies[1]?.type, 'selected');
     assert.equal(app.snapshot().works.length, 1);
@@ -195,14 +197,14 @@ test('two requests at once after a failed kit copy never start together', async 
   await writeFile(join(kit, 'AGENTS.md'), 'Instrucciones del kit\n');
   await mkdir(join(kit, 'ejemplo'));
   await writeFile(join(kit, 'ejemplo', 'pieza.html'), '<p>hola</p>');
-  await symlink(outside, join(root, 'ejemplo'), 'junction');
+  await symlink(outside, join(kit, 'invalid-source'), 'junction');
   const files = new WorkspaceFiles(root);
   const app = new App(new FakeEngine(), data, () => {}, undefined, files, kit);
   const replies: Array<{ type: string; text?: string }> = [];
   try {
     await app.start();
     assert.match(app.snapshot().notice ?? '', /No pude preparar la carpeta de tu agencia/);
-    await rmdir(join(root, 'ejemplo'));
+    await rmdir(join(kit, 'invalid-source'));
     // Both requests find the copy broken and try again. They share one copy:
     // a second one racing the marker would leave a false failure notice.
     await Promise.all([
@@ -235,7 +237,7 @@ test('a successful copy clears the kit notice even when the request cannot start
   await writeFile(join(kit, 'AGENTS.md'), 'Instrucciones del kit\n');
   await mkdir(join(kit, 'ejemplo'));
   await writeFile(join(kit, 'ejemplo', 'pieza.html'), '<p>hola</p>');
-  await symlink(outside, join(root, 'ejemplo'), 'junction');
+  await symlink(outside, join(kit, 'invalid-source'), 'junction');
   const engine = new FakeEngine();
   const app = new App(engine, data, () => {}, undefined, new WorkspaceFiles(root), kit);
   const replies: Array<{ type: string; text?: string }> = [];
@@ -245,7 +247,7 @@ test('a successful copy clears the kit notice even when the request cannot start
     // The copy will work this time, but the account is gone: the request stops
     // before it starts. The old failure notice is no longer true.
     engine.connected = false;
-    await rmdir(join(root, 'ejemplo'));
+    await rmdir(join(kit, 'invalid-source'));
     await app.command({ type: 'send', text: 'Un pedido' }, (message) => replies.push(message as { type: string; text?: string }));
     assert.equal(replies[0]?.type, 'problem');
     assert.match(replies[0]?.text ?? '', /cuenta de ChatGPT está desconectada/);

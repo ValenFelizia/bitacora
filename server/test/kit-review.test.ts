@@ -109,6 +109,7 @@ test('hostname DNS pinning, Windows-1252 headers/meta, byte signatures and trans
 test('external junctions cannot read, write, or feed Edge; deleted kit files stay deleted', { timeout: 120000 }, async () => {
   const f = await fixture();
   try {
+    await initializeKit(f.root,f.data);
     await writeFile(join(f.data,'outside.html'),'<p>fuera</p>');
     await symlink(f.data,join(f.root,'outside'),'junction');
     await assert.rejects(f.files.read('outside/outside.html'),/enlaces/);

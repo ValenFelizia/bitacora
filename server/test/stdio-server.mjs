@@ -203,6 +203,10 @@ async function handle(line) {
         break;
       }
       case "command/exec":
+        if (m.params.sandboxPolicy && process.env.BITACORA_FAKE_WORKSPACE_PROTECTION && !existsSync(setupFile)) {
+          reply({ exitCode: 1, stdout: "", stderr: "This folder needs setup" });
+          break;
+        }
         // The app runs one harmless command under the profile to know whether
         // this machine can really use it.
         if (process.env.BITACORA_FAKE_PROFILE_EXEC === "refuse")
