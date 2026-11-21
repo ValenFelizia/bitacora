@@ -3,7 +3,7 @@ import { AlertCircle, ArrowLeft, ArrowRight, Check, RotateCcw, WifiOff } from "l
 import { MAX_NAME, MAX_OTHER, WELCOME_USES, type WelcomeUseId } from "../../server/src/welcome";
 
 const focusRing =
-  "focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2";
+  "focus-visible:outline-2 focus-visible:outline-ink focus-visible:outline-offset-2";
 const buttonBordered = `inline-flex items-center justify-center gap-2 px-3 py-2 rounded-[6px] border border-ink bg-surface text-ink font-bold text-[14px] hover:bg-soft cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors duration-150 ${focusRing}`;
 const buttonQuiet = `inline-flex items-center justify-center gap-2 px-3 py-2 rounded-[6px] border border-line bg-surface text-ink text-[14px] hover:bg-soft cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors duration-150 ${focusRing}`;
 const backLink = `inline-flex items-center gap-1.5 text-[13px] text-muted hover:text-ink cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors duration-150 ${focusRing}`;
@@ -180,7 +180,7 @@ export function Welcome({
                   setAgency(event.target.value);
                   setMissing(undefined);
                 }}
-                className={`w-full rounded-[6px] border bg-surface px-3 py-2.5 text-[17px] text-ink placeholder:text-muted ${missing === "agency" ? "border-danger" : "border-line"} ${focusRing}`}
+                className={`w-full rounded-[6px] border bg-surface px-3 py-2.5 text-[17px] text-ink placeholder:text-muted focus:outline-none ${missing === "agency" ? "border-danger" : "border-line focus:border-ink"}`}
                 placeholder="Tu agencia"
               />
             </div>
@@ -204,7 +204,7 @@ export function Welcome({
                   setPerson(event.target.value);
                   setMissing(undefined);
                 }}
-                className={`w-full rounded-[6px] border bg-surface px-3 py-2.5 text-[17px] text-ink placeholder:text-muted ${missing === "person" ? "border-danger" : "border-line"} ${focusRing}`}
+                className={`w-full rounded-[6px] border bg-surface px-3 py-2.5 text-[17px] text-ink placeholder:text-muted focus:outline-none ${missing === "person" ? "border-danger" : "border-line focus:border-ink"}`}
                 placeholder="Tu nombre"
               />
             </div>
@@ -256,7 +256,7 @@ export function Welcome({
                         value={other}
                         onChange={(event) => setOther(event.target.value)}
                         placeholder="Escribilo acá…"
-                        className={`w-full rounded-[6px] border border-line bg-paper px-3 py-2 text-[15px] text-ink placeholder:text-muted ${focusRing}`}
+                        className={`w-full rounded-[6px] border border-line bg-paper px-3 py-2 text-[15px] text-ink placeholder:text-muted focus:outline-none focus:border-ink`}
                       />
                     </div>
                   )}

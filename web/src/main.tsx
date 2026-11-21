@@ -77,7 +77,7 @@ const latestResult = (work: Work) =>
     .reduce((latest, f) => (f.createdAt > latest ? f.createdAt : latest), "");
 
 const focusRing =
-  "focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2";
+  "focus-visible:outline-2 focus-visible:outline-ink focus-visible:outline-offset-2";
 const buttonBordered = `inline-flex items-center justify-center gap-2 px-3 py-2 rounded-[6px] border border-ink bg-surface text-ink font-bold text-[14px] hover:bg-soft cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors duration-150 ${focusRing}`;
 const buttonQuiet = `inline-flex items-center justify-center gap-2 px-3 py-2 rounded-[6px] border border-line bg-surface text-ink text-[14px] hover:bg-soft cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors duration-150 ${focusRing}`;
 const iconButton = `w-[36px] h-[36px] max-[959px]:w-[40px] max-[959px]:h-[40px] shrink-0 inline-grid place-items-center rounded-[6px] text-muted hover:text-ink hover:bg-soft cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors duration-150 ${focusRing}`;
@@ -1011,7 +1011,7 @@ function App() {
                 onKeyDown={(e) => {
                   if (e.key === "Escape") setRenaming(false);
                 }}
-                className={`min-w-0 flex-1 rounded-[6px] border border-line bg-surface px-3 py-2 text-[15px] text-ink ${focusRing}`}
+                className={`min-w-0 flex-1 rounded-[6px] border border-line bg-surface px-3 py-2 text-[15px] text-ink focus:outline-none focus:border-ink`}
               />
               <button
                 className={buttonBordered}
@@ -1766,7 +1766,7 @@ function App() {
         {!gallery && (
           <div className="shrink-0 px-5 min-[960px]:px-7 pb-5">
             <form
-              className="relative mx-auto w-full max-w-[720px] bg-surface border border-line focus-within:border-ink has-[textarea:focus-visible]:outline-2 has-[textarea:focus-visible]:outline-accent has-[textarea:focus-visible]:outline-offset-2 rounded-[6px] px-3 py-2.5 flex flex-col gap-2"
+              className="relative mx-auto w-full max-w-[720px] bg-surface border border-line focus-within:border-ink rounded-[6px] px-3 py-2.5 flex flex-col gap-2"
               onSubmit={(e) => {
                 e.preventDefault();
                 submitRequest();

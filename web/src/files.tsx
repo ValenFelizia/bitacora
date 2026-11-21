@@ -351,13 +351,13 @@ function UnopenedDotInline() {
 }
 
 const focusRing =
-  "focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2";
+  "focus-visible:outline-2 focus-visible:outline-ink focus-visible:outline-offset-2";
 
 const iconBtn =
   `w-[36px] h-[36px] max-[959px]:w-[40px] max-[959px]:h-[40px] shrink-0 inline-grid place-items-center rounded-[6px] text-muted hover:text-ink hover:bg-soft cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors duration-150 ${focusRing}`;
 
 const downloadLink =
-  "inline-flex items-center gap-[6px] min-w-0 text-left font-bold text-[13px] text-ink underline decoration-accent decoration-2 underline-offset-[5px] cursor-pointer hover:opacity-80 disabled:opacity-40 disabled:cursor-default transition-opacity duration-150 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-3";
+  "inline-flex items-center gap-[6px] min-w-0 text-left font-bold text-[13px] text-ink underline decoration-accent decoration-2 underline-offset-[5px] cursor-pointer hover:opacity-80 disabled:opacity-40 disabled:cursor-default transition-opacity duration-150 focus-visible:outline-2 focus-visible:outline-ink focus-visible:outline-offset-3";
 
 const batchDownloadBtn =
   `w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-[6px] bg-ink text-surface font-bold text-[14px] hover:opacity-90 disabled:bg-ink/40 disabled:cursor-default cursor-pointer transition-opacity duration-150 ${focusRing}`;
@@ -452,7 +452,7 @@ export function FileCard({
         <div className="relative">
           <button
             type="button"
-            className="block w-full rounded-[3px] overflow-hidden border border-line bg-paper cursor-pointer focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+            className="block w-full rounded-[3px] overflow-hidden border border-line bg-paper cursor-pointer focus-visible:outline-2 focus-visible:outline-ink focus-visible:outline-offset-2"
             onClick={() => onPreview(file)}
             title={`Ver ${file.name}`}
             aria-label={unopened ? `Ver ${file.name}, nueva` : `Ver ${file.name}`}
@@ -593,7 +593,7 @@ function PlateThumbnail({
         onClick={onClick}
         title={label}
         aria-label={ariaLabel}
-        className={`relative group block overflow-hidden rounded-[3px] border border-line bg-paper cursor-pointer focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 ${
+        className={`relative group block overflow-hidden rounded-[3px] border border-line bg-paper cursor-pointer focus-visible:outline-2 focus-visible:outline-ink focus-visible:outline-offset-2 ${
           compact ? "w-full aspect-[9/16]" : "w-fit max-w-full max-h-[280px]"
         }`}
       >
@@ -665,7 +665,7 @@ function OlderDeliverableRow({
             disabled={!fetched.url}
             onClick={() => onPreview(file)}
             aria-label={unopened ? `${file.name}, nueva` : file.name}
-            className="truncate text-left text-ink hover:underline cursor-pointer focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+            className="truncate text-left text-ink hover:underline cursor-pointer focus-visible:outline-2 focus-visible:outline-ink focus-visible:outline-offset-2"
             title={file.name}
           >
             {file.name}
@@ -728,7 +728,7 @@ function BatchPdfRow({
             disabled={!fetched.url}
             onClick={() => onPreview(file)}
             aria-label={unopened ? `${file.name}, nueva` : file.name}
-            className="truncate text-left text-ink hover:underline cursor-pointer focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+            className="truncate text-left text-ink hover:underline cursor-pointer focus-visible:outline-2 focus-visible:outline-ink focus-visible:outline-offset-2"
             title={file.name}
           >
             {file.name}
@@ -1238,7 +1238,7 @@ export function DeliverablesPanel({
             <button
               type="button"
               onClick={onOpenGallery}
-              className="inline-flex items-center gap-2 px-3 py-1.5 border border-ink rounded-[6px] text-ink font-bold text-[13px] hover:bg-soft cursor-pointer transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
+              className="inline-flex items-center gap-2 px-3 py-1.5 border border-ink rounded-[6px] text-ink font-bold text-[13px] hover:bg-soft cursor-pointer transition-colors duration-150 focus-visible:outline-2 focus-visible:outline-ink focus-visible:outline-offset-2"
             >
               <LayoutGrid size={16} strokeWidth={1.75} aria-hidden="true" />
               Ver galería
