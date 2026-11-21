@@ -274,7 +274,7 @@ test("closing queues the buffered reply before waiting for an import to clean up
   } finally { endImport(); await Promise.all([closed, pending]); }
 });
 
-test("startup cleanup removes expired snapshots and leaves active or unrelated folders", async t => {
+test("startup cleanup removes expired or orphaned snapshots and leaves active or unrelated folders", async t => {
   await mkdir(".local", { recursive: true });
   const root = await mkdtemp(resolve(".local/codex-history-sweep-"));
   t.after(() => rm(root, { recursive: true, force: true }));
@@ -282,11 +282,12 @@ test("startup cleanup removes expired snapshots and leaves active or unrelated f
   const stale = "bitacora-codex-history-old";
   const active = "bitacora-codex-history-" + process.pid + "-active";
   const fresh = "bitacora-codex-history-fresh";
+  const crashed = "bitacora-codex-history-2147483646-crashed";
   const unrelated = "unrelated";
-  for (const name of [stale, active, fresh, unrelated]) {
+  for (const name of [stale, active, fresh, crashed, unrelated]) {
     const path = join(root, name);
     await mkdir(path);
-    if (name !== fresh) await utimes(path, new Date(0), new Date(0));
+    if (name !== fresh && name !== crashed) await utimes(path, new Date(0), new Date(0));
   }
   await sweepHistorySnapshots(root, now);
   assert.deepEqual((await readdir(root)).sort(), [active, fresh, unrelated].sort());

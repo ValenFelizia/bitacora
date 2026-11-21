@@ -173,10 +173,19 @@ export class CodexHistory {
     use: (rpc: Reader, snapshot: string, source: string, operation: AbortSignal) => Promise<T>): Promise<T> {
     const deadline = AbortSignal.timeout(this.limits.timeoutMs);
     const operation = AbortSignal.any([signal, deadline]);
-    try {
-      return await createHistorySnapshot(this.source, selected, operation, this.limits.maxBytes, empty,
+    const attempt = (withState: boolean) =>
+      createHistorySnapshot(this.source, selected, operation, this.limits.maxBytes, empty,
         (snapshot, source) => withReader(this.binary || codexBinary(), snapshot, operation,
-          rpc => use(rpc, snapshot, source, operation)));
+          rpc => use(rpc, snapshot, source, operation)), withState);
+    try {
+      try { return await attempt(true); }
+      catch (error) {
+        // A state database from a newer Codex can stop the bundled reader.
+        // The rollouts alone are enough, so try once more without it.
+        if (operation.aborted || error instanceof HistoryProblem) throw error;
+        logHistoryFailure("reader with state database", error);
+        return await attempt(false);
+      }
     } catch (error) {
       if (deadline.aborted && !signal.aborted)
         throw new HistoryProblem("Traer tus chats de Codex tardó demasiado. Probá de nuevo.");

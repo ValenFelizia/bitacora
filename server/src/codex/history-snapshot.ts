@@ -51,12 +51,14 @@ export async function sweepHistorySnapshots(temp = tmpdir(), now = Date.now()) {
       if (!entry.isDirectory() || !entry.name.startsWith(PREFIX)) continue;
       const path = join(root, entry.name);
       const info = await optionalStat(path);
-      if (!info?.isDirectory() || now - info.mtimeMs < STALE_AFTER_MS) continue;
+      if (!info?.isDirectory()) continue;
+      // A snapshot whose process is gone is removed right away; one with a
+      // live owner is kept; one with no owner in its name waits until stale.
       const pid = Number(/^bitacora-codex-history-(\d+)-/.exec(entry.name)?.[1]);
       if (pid > 0) {
         try { process.kill(pid, 0); continue; }
         catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") continue; }
-      }
+      } else if (now - info.mtimeMs < STALE_AFTER_MS) continue;
       const target = await realpath(path).catch(() => undefined);
       if (target && inside(root, target) === entry.name) await removeSnapshot(target);
     }
@@ -156,7 +158,7 @@ async function sanitizeSessionIndex(source: string, snapshot: string, ids: Reado
 
 export async function createHistorySnapshot<T>(
   sourcePath: string, selected: ReadonlySet<string> | undefined, signal: AbortSignal, maxBytes: number, empty: T,
-  use: (snapshot: string, realSource: string) => Promise<T>,
+  use: (snapshot: string, realSource: string) => Promise<T>, withState = true,
 ) {
   signal.throwIfAborted();
   if (!await optionalStat(sourcePath)) return empty;
@@ -187,13 +189,24 @@ export async function createHistorySnapshot<T>(
       }
     }
     if (!copies.size) return empty;
-    for (const entry of await readdir(source, { withFileTypes: true })) {
+    // The state database only adds titles and folders; the rollouts suffice.
+    // A database Codex holds locked, or one a newer Codex wrote, is dropped
+    // instead of failing the whole list.
+    let keepState = withState;
+    for (const entry of keepState ? await readdir(source, { withFileTypes: true }) : []) {
       if (!entry.isFile() || !STATE_FILE.test(entry.name)) continue;
       try { await copyHistoryFile(join(source, entry.name), join(snapshot, entry.name), signal, charge); }
       catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+        if (signal.aborted || error instanceof HistoryProblem) throw error;
+        logHistoryFailure("state database copy", error);
+        keepState = false;
+        break;
       }
     }
+    if (!keepState)
+      for (const name of (await readdir(snapshot)).filter(name => STATE_FILE.test(name)))
+        await rm(join(snapshot, name), { force: true });
     for (const name of (await readdir(snapshot)).filter(name => STATE_FILE.test(name))) {
       if (!STATE_DB.test(name)) {
         if (!await optionalStat(join(snapshot, name.replace(/-(?:wal|shm)$/i, ""))))
