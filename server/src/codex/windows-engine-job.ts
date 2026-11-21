@@ -1,13 +1,19 @@
 import koffi from "koffi";
 
-const kernel = koffi.load("kernel32.dll");
-const create = kernel.func("void * __stdcall CreateJobObjectW(void *, str16)");
-const configure = kernel.func("int __stdcall SetInformationJobObject(void *, int, void *, uint32)");
-const open = kernel.func("void * __stdcall OpenProcess(uint32, int, uint32)");
-const assign = kernel.func("int __stdcall AssignProcessToJobObject(void *, void *)");
-const query = kernel.func("int __stdcall QueryInformationJobObject(void *, int, void *, uint32, void *)");
-const terminate = kernel.func("int __stdcall TerminateJobObject(void *, uint32)");
-const close = kernel.func("int __stdcall CloseHandle(void *)");
+// Bound on first use, so importing the engine never loads kernel32 off Windows.
+let kernel32: ReturnType<typeof bind> | undefined;
+function bind() {
+  const kernel = koffi.load("kernel32.dll");
+  return {
+    create: kernel.func("void * __stdcall CreateJobObjectW(void *, str16)"),
+    configure: kernel.func("int __stdcall SetInformationJobObject(void *, int, void *, uint32)"),
+    open: kernel.func("void * __stdcall OpenProcess(uint32, int, uint32)"),
+    assign: kernel.func("int __stdcall AssignProcessToJobObject(void *, void *)"),
+    query: kernel.func("int __stdcall QueryInformationJobObject(void *, int, void *, uint32, void *)"),
+    terminate: kernel.func("int __stdcall TerminateJobObject(void *, uint32)"),
+    close: kernel.func("int __stdcall CloseHandle(void *)"),
+  };
+}
 
 export interface EngineJob {
   active(): boolean;
@@ -17,6 +23,7 @@ export interface EngineJob {
 
 /** Own the descendants even if the app-server exits before they do. */
 export function ownWindowsEngine(pid: number): EngineJob {
+  const { create, configure, open, assign, query, terminate, close } = kernel32 ??= bind();
   const job = create(null, null);
   if (!job) throw new Error("Could not create engine job");
   try {
