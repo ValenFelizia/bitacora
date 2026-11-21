@@ -28,6 +28,7 @@ export type Work = {
   question?: PendingQuestion;
 };
 export type Snapshot = {
+  workspace?: string;
   hasBrand?: boolean;
   account: Account;
   works: Work[];
@@ -46,6 +47,8 @@ export type Snapshot = {
   welcome?: "pending" | "done" | "skipped";
   /** Uses marked in the welcome, which pick the suggested routes. */
   uses?: string[];
+  /** True once after choosing a folder when Codex has unimported chats in that folder. */
+  codexImportOffer?: boolean;
 };
 export type CodexChat = { id: string; title: string; date: string; folder: string; sameFolder: boolean; imported: boolean };
 export type CodexImportMessage =
@@ -53,9 +56,11 @@ export type CodexImportMessage =
   | { type: "codexImported"; imported: string[]; failed: string[] }
   | { type: "codexImportProblem"; text: string };
 export type ClientCommand =
+  | { type: "chooseWorkspace"; path: string }
   | { type: "listCodexChats" }
   | { type: "cancelCodexChatList" }
   | { type: "importCodexChats"; ids: string[] }
+  | { type: "dismissCodexImportOffer" }
   | { type: "undo"; id: string }
   | { type: "discardUndo"; id: string }
   | { type: "connect" }
@@ -89,6 +94,7 @@ export type ServerMessage =
       delta: boolean;
     }
   | { type: "selected"; workId: string }
+  | { type: "workspaceChoice"; problem?: string }
   | { type: "login"; url: string }
   /** `workId` names the work the problem is about, so the screen can take the user there. */
   | { type: "problem"; text: string; detail?: string; workId?: string };

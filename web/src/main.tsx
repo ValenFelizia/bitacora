@@ -54,7 +54,9 @@ import {
 } from "./format";
 import { protectionText, protectionWarning } from "./protection-text";
 import { Welcome, type WelcomeAnswer } from "./welcome";
-import { CodexImport } from "./codex-import";
+import { CodexImport, CodexImportOffer, CodexImportTrigger } from "./codex-import";
+import { WorkspaceControl } from "./workspace-control";
+import { FolderPickerProblem, pickWorkspace } from "./workspace-picker";
 import { suggestedRoutes } from "../../server/src/welcome";
 import {
   appendReadFiles,
@@ -79,7 +81,7 @@ const latestResult = (work: Work) =>
     .reduce((latest, f) => (f.createdAt > latest ? f.createdAt : latest), "");
 
 const focusRing =
-  "focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2";
+  "focus-visible:outline-2 focus-visible:outline-ink focus-visible:outline-offset-2";
 const buttonBordered = `inline-flex items-center justify-center gap-2 px-3 py-2 rounded-[6px] border border-ink bg-surface text-ink font-bold text-[14px] hover:bg-soft cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors duration-150 ${focusRing}`;
 const buttonQuiet = `inline-flex items-center justify-center gap-2 px-3 py-2 rounded-[6px] border border-line bg-surface text-ink text-[14px] hover:bg-soft cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors duration-150 ${focusRing}`;
 const iconButton = `w-[36px] h-[36px] max-[959px]:w-[40px] max-[959px]:h-[40px] shrink-0 inline-grid place-items-center rounded-[6px] text-muted hover:text-ink hover:bg-soft cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors duration-150 ${focusRing}`;
@@ -211,7 +213,19 @@ function App() {
   // The welcome answer was sent and no reply arrived yet. Any message from the
   // server releases it, with or without an error.
   const [codexImportMessage, setCodexImportMessage] = useState<CodexImportMessage>();
+  const [codexImportOpen, setCodexImportOpen] = useState(0);
   const [welcomeSending, setWelcomeSending] = useState(false);
+  const [folderAction, setFolderAction] = useState<"picking" | "changing">();
+  const [folderProblem, setFolderProblem] = useState<string>();
+  useEffect(() => {
+    if (folderAction !== "changing") return;
+    const timer = window.setTimeout(() => {
+      setFolderAction(undefined);
+      setFolderProblem("El cambio está tardando. Revisá la carpeta que aparece antes de seguir.");
+    }, 90_000);
+    return () => window.clearTimeout(timer);
+  }, [folderAction]);
+  const displayedWorkspace = useRef<string | undefined>(undefined);
   const [login, setLogin] = useState<string>();
   const loginWindow = useRef<Window | null>(null);
   const socket = useRef<WebSocket | null>(null);
@@ -286,8 +300,34 @@ function App() {
         if (message.type === "codexChats" || message.type === "codexImported" || message.type === "codexImportProblem")
           setCodexImportMessage(message);
         if (message.type === "snapshot") {
+          if (displayedWorkspace.current && displayedWorkspace.current !== message.state.workspace) {
+            draftGeneration.current++;
+            sentDraft.current = undefined;
+            dictation.cancel();
+            setReadingFiles(false);
+            setText("");
+            setAttachments([]);
+            setSelected(undefined);
+            setRenaming(false);
+            setSavingName(undefined);
+            setPending(false);
+            answeringRef.current = undefined;
+            setAnswering(undefined);
+            setGallery(false);
+            setPreview(undefined);
+            setDeliverablesOpen(false);
+            setFocusedMessageId(undefined);
+            setProblem(undefined);
+            setFolderProblem(undefined);
+            setCodexImportMessage(undefined);
+          }
+          displayedWorkspace.current = message.state.workspace;
           setState(message.state);
           if (message.state.account.connected) setLogin(undefined);
+        }
+        if (message.type === "workspaceChoice") {
+          setFolderAction(undefined);
+          setFolderProblem(message.problem);
         }
         if (message.type === "message") {
           setState((previous) => ({
@@ -351,6 +391,7 @@ function App() {
       ws.onclose = () => {
         setOnline(false);
         setSessionSecret(undefined);
+        setFolderAction((action) => action === "changing" ? undefined : action);
         setPending(false);
         setWelcomeSending(false);
         // An answer in flight may never arrive: the card can send it again.
@@ -482,12 +523,12 @@ function App() {
   function send(command: ClientCommand) {
     if (socket.current?.readyState !== WebSocket.OPEN) return;
     setProblem(undefined);
-    socket.current.send(JSON.stringify(command));
+    socket.current.send(JSON.stringify({ ...command, workspace: state.workspace }));
   }
 
   /** For preferences: a problem on screen stays, it is not about them. */
   function sendQuietly(command: ClientCommand) {
-    if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify(command));
+    if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify({ ...command, workspace: state.workspace }));
   }
 
   function resizePanel(width: number) {
@@ -591,9 +632,9 @@ function App() {
       );
       if (generation === draftGeneration.current) setProblem(undefined);
     } catch (error) {
-      setProblem({ text: String((error as Error).message) });
+      if (generation === draftGeneration.current) setProblem({ text: String((error as Error).message) });
     } finally {
-      setReadingFiles(false);
+      if (generation === draftGeneration.current) setReadingFiles(false);
     }
   }
 
@@ -753,6 +794,41 @@ function App() {
     if (restoreFocus) deliverablesToggleRef.current?.focus();
   }
 
+  async function chooseWorkspace() {
+    if (!state.workspace || folderAction || socket.current?.readyState !== WebSocket.OPEN) return;
+    setFolderProblem(undefined);
+    setFolderAction("picking");
+    try {
+      const path = await pickWorkspace(state.workspace, changeWorkspace);
+      if (!path) {
+        setFolderAction(undefined);
+        return;
+      }
+      if (!changeWorkspace(path)) throw new Error("Offline");
+    } catch (error) {
+      setFolderAction(undefined);
+      setFolderProblem(error instanceof FolderPickerProblem ? error.message : "No pude elegir la carpeta. Probá de nuevo.");
+    }
+  }
+
+  function changeWorkspace(path: string) {
+    if (socket.current?.readyState !== WebSocket.OPEN) return false;
+    setFolderProblem(undefined);
+    setFolderAction("changing");
+    sendQuietly({ type: "chooseWorkspace", path });
+    return true;
+  }
+
+  const workspaceControl = state.workspace && (
+    <WorkspaceControl
+      path={state.workspace}
+      disabled={!online || !!folderAction || welcomeSending}
+      changing={folderAction === "changing"}
+      problem={folderProblem}
+      onChoose={chooseWorkspace}
+    />
+  );
+
   function sendWelcome(command: ClientCommand) {
     // Offline the screen already says so and its buttons are off: nothing to do.
     if (socket.current?.readyState !== WebSocket.OPEN) return;
@@ -770,30 +846,49 @@ function App() {
     sendWelcome({ type: "skipWelcome" });
   }
 
+  function openCodexImport() {
+    if (!online) return;
+    setNavOpen(false);
+    setCodexImportOpen((n) => n + 1);
+    if (state.codexImportOffer) sendQuietly({ type: "dismissCodexImportOffer" });
+  }
+
+  const codexImportOffer = state.codexImportOffer && (
+    <CodexImportOffer
+      online={online}
+      onOpen={openCodexImport}
+      onDismiss={() => sendQuietly({ type: "dismissCodexImportOffer" })}
+    />
+  );
+
   // The first-run questions come before the account: they need no engine and
   // no cupo, so the app is useful from the first screen (DEC-015). They stay
   // mounted without a connection, with the answers still there.
-  if (state.welcome === "pending")
-    return (
-      <Welcome
-        problem={problem?.text}
-        sending={welcomeSending}
-        offline={!online}
-        onSave={saveWelcome}
-        onSkip={skipWelcome}
-        onRetry={() => reconnectRef.current()}
-      />
-    );
-
   return (
-    <div
-      className={`grid h-dvh grid-cols-1 bg-paper text-ink overflow-hidden ${
-        gallery
-          ? "min-[960px]:grid-cols-[220px_minmax(0,1fr)]"
-          : "min-[960px]:grid-cols-[220px_minmax(0,1fr)_var(--panel-width)]"
-      } ${resizingPanel ? "select-none cursor-col-resize" : ""}`}
-      style={{ "--panel-width": `${shownPanel}px` } as React.CSSProperties}
-    >
+    <>
+      {state.welcome === "pending" ? (
+        <Welcome
+          key={state.workspace}
+          workspaceControl={workspaceControl}
+          codexImportOffer={codexImportOffer}
+          notice={state.notice}
+          problem={problem?.text}
+          sending={welcomeSending}
+          choosingWorkspace={!!folderAction}
+          offline={!online}
+          onSave={saveWelcome}
+          onSkip={skipWelcome}
+          onRetry={() => reconnectRef.current()}
+        />
+      ) : (
+        <div
+          className={`grid h-dvh grid-cols-1 bg-paper text-ink overflow-hidden ${
+            gallery
+              ? "min-[960px]:grid-cols-[220px_minmax(0,1fr)]"
+              : "min-[960px]:grid-cols-[220px_minmax(0,1fr)_var(--panel-width)]"
+          } ${resizingPanel ? "select-none cursor-col-resize" : ""}`}
+          style={{ "--panel-width": `${shownPanel}px` } as React.CSSProperties}
+        >
       {(navOpen || deliverablesOpen) && (
         <div
           className="fixed inset-0 z-30 bg-ink/40 min-[960px]:hidden"
@@ -870,7 +965,8 @@ function App() {
           Galería
         </button>
 
-        <CodexImport online={online} message={codexImportMessage} send={sendQuietly} />
+        {workspaceControl && <div className="mb-3">{workspaceControl}</div>}
+        <CodexImportTrigger disabled={!online} onClick={openCodexImport} />
 
         <nav
           className="flex-1 min-h-0 overflow-y-auto flex flex-col"
@@ -1018,7 +1114,7 @@ function App() {
                 onKeyDown={(e) => {
                   if (e.key === "Escape") setRenaming(false);
                 }}
-                className={`min-w-0 flex-1 rounded-[6px] border border-line bg-surface px-3 py-2 text-[15px] text-ink ${focusRing}`}
+                className={`min-w-0 flex-1 rounded-[6px] border border-line bg-surface px-3 py-2 text-[15px] text-ink focus:outline-none focus:border-ink`}
               />
               <button
                 className={buttonBordered}
@@ -1131,7 +1227,7 @@ function App() {
           )}
         </header>
 
-        {((state.undo && !busy) || state.notice) && (
+        {((state.undo && !busy) || state.notice || codexImportOffer) && (
           <section
             aria-label="Deshacer el último pedido"
             className="shrink-0 px-5 min-[960px]:px-7 py-2 border-b border-line bg-surface text-[13px] flex flex-col gap-2"
@@ -1223,6 +1319,7 @@ function App() {
                 {state.notice}
               </p>
             )}
+            {codexImportOffer}
           </section>
         )}
 
@@ -1773,7 +1870,7 @@ function App() {
         {!gallery && (
           <div className="shrink-0 px-5 min-[960px]:px-7 pb-5">
             <form
-              className="relative mx-auto w-full max-w-[720px] bg-surface border border-line focus-within:border-ink has-[textarea:focus-visible]:outline-2 has-[textarea:focus-visible]:outline-accent has-[textarea:focus-visible]:outline-offset-2 rounded-[6px] px-3 py-2.5 flex flex-col gap-2"
+              className="relative mx-auto w-full max-w-[720px] bg-surface border border-line focus-within:border-ink rounded-[6px] px-3 py-2.5 flex flex-col gap-2"
               onSubmit={(e) => {
                 e.preventDefault();
                 submitRequest();
@@ -2025,7 +2122,17 @@ function App() {
           onClose={() => setPreview(undefined)}
         />
       )}
-    </div>
+        </div>
+      )}
+      <CodexImport
+        online={online}
+        workspace={state.workspace}
+        openRequest={codexImportOpen}
+        hideTrigger
+        message={codexImportMessage}
+        send={sendQuietly}
+      />
+    </>
   );
 }
 

@@ -5,6 +5,9 @@ import { formatWorkDate } from "./format";
 
 type Props = {
   online: boolean;
+  workspace?: string;
+  openRequest?: number;
+  hideTrigger?: boolean;
   message?: CodexImportMessage;
   send: (command: ClientCommand) => void;
 };
@@ -12,13 +15,81 @@ type Props = {
 const focus = "focus-visible:outline-2 focus-visible:outline-ink focus-visible:outline-offset-2";
 const button = "rounded-[6px] border px-4 py-2 hover:bg-soft disabled:opacity-40 disabled:pointer-events-none " + focus;
 
-export function CodexImport({ online, message, send }: Props) {
+export function CodexImportTrigger({ disabled, onClick }: { disabled: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      className={"flex items-center gap-2 rounded-[6px] px-[10px] py-2 mb-3 text-[14px] text-left hover:bg-soft disabled:opacity-40 cursor-pointer disabled:cursor-default " + focus}
+      onClick={onClick}
+    >
+      <Download size={18} strokeWidth={1.75} aria-hidden="true" />
+      Traer chats de Codex
+    </button>
+  );
+}
+
+export function CodexImportOffer({ online, onOpen, onDismiss }: {
+  online: boolean;
+  onOpen: () => void;
+  onDismiss: () => void;
+}) {
+  return (
+    <div
+      role="status"
+      className="flex flex-wrap items-center justify-between gap-2.5 rounded-[6px] border border-line bg-surface px-4 py-2.5 text-[14px] text-ink"
+    >
+      <span>Tenés chats de Codex en esta carpeta.</span>
+      <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+        <button
+          type="button"
+          disabled={!online}
+          onClick={onOpen}
+          className={"inline-flex items-center justify-center gap-2 px-3 py-1.5 rounded-[6px] border border-ink bg-surface text-ink font-bold text-[14px] hover:bg-soft cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors duration-150 " + focus}
+        >
+          <Download size={16} strokeWidth={1.75} aria-hidden="true" />
+          Traer chats de Codex
+        </button>
+        <button
+          type="button"
+          disabled={!online}
+          onClick={onDismiss}
+          title="Cerrar"
+          aria-label="Cerrar"
+          className={"w-[36px] h-[36px] max-[959px]:w-[40px] max-[959px]:h-[40px] shrink-0 inline-grid place-items-center rounded-[6px] text-muted hover:text-ink hover:bg-soft cursor-pointer disabled:opacity-40 disabled:cursor-default transition-colors duration-150 " + focus}
+        >
+          <X size={16} strokeWidth={1.75} aria-hidden="true" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export function CodexImport({ online, workspace, openRequest = 0, hideTrigger = false, message, send }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const lastWorkspace = useRef(workspace);
   const [chats, setChats] = useState<CodexChat[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
   const [phase, setPhase] = useState<"loading" | "ready" | "importing">("ready");
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (lastWorkspace.current === workspace) return;
+    lastWorkspace.current = workspace;
+    if (dialog.current?.open) dialog.current.close();
+    setChats([]);
+    setSelected([]);
+    setPhase("ready");
+    setStatus("");
+    setError("");
+  }, [workspace]);
+
+  useEffect(() => {
+    if (!openRequest) return;
+    if (!dialog.current?.open) dialog.current?.showModal();
+    load();
+  }, [openRequest]);
 
   useEffect(() => {
     if (!dialog.current?.open || !message) return;
@@ -54,18 +125,15 @@ export function CodexImport({ online, message, send }: Props) {
 
   return (
     <>
-      <button
-        type="button"
-        disabled={!online}
-        className={"flex items-center gap-2 rounded-[6px] px-[10px] py-2 mb-3 text-[14px] text-left hover:bg-soft disabled:opacity-40 " + focus}
-        onClick={() => {
-          dialog.current?.showModal();
-          load();
-        }}
-      >
-        <Download size={18} strokeWidth={1.75} aria-hidden="true" />
-        Traer chats de Codex
-      </button>
+      {!hideTrigger && (
+        <CodexImportTrigger
+          disabled={!online}
+          onClick={() => {
+            dialog.current?.showModal();
+            load();
+          }}
+        />
+      )}
       <dialog
         ref={dialog}
         aria-labelledby="codex-import-heading"

@@ -6,6 +6,7 @@ import {
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 import { join, relative, basename } from "node:path";
+import { ownWindowsEngine, type EngineJob } from "./windows-engine-job";
 import { codexBinary, codexVersion } from "../../../scripts/codex-runtime.mjs";
 import { createInterface } from "node:readline";
 import { mkdir } from "node:fs/promises";
@@ -299,6 +300,9 @@ export class CodexEngine implements Engine {
   private lastTurn = new Map<string, string>();
   private loginId?: string;
   private stopping = false;
+  private job?: EngineJob;
+  private jobDrain?: Promise<boolean>;
+  private incompleteStop?: { child: ChildProcessWithoutNullStreams; complete: boolean };
   private startAttempt?: Promise<void>;
   private skillsSync?: { promise: Promise<void> };
   private skillsDirty = false;
@@ -307,6 +311,9 @@ export class CodexEngine implements Engine {
   constructor(
     private options: {
       mcpEntry?: string;
+      workspaceData?: string;
+      verifyWorkspaceProtection?: boolean;
+      ownEngine?: (pid: number) => EngineJob;
       home: string;
       workspace: string;
       binary?: string;
@@ -372,12 +379,13 @@ export class CodexEngine implements Engine {
     if (this.stopping) return true;
     // A process that could not be stopped may still be writing in the same
     // folder: starting another one would let two engines work at once.
+    if (this.job && !(await this.drainEngineJob())) throw new Error("The previous engine process tree is still running");
     if (this.lastChild && this.childRunning(this.lastChild))
       throw new Error("The previous engine process is still running");
     await mkdir(this.options.home, { recursive: true });
     await mkdir(this.options.workspace, { recursive: true });
     if (!this.options.args) {
-      await registerKit(this.options.home, this.options.workspace, this.options.mcpEntry);
+      await registerKit(this.options.home, this.options.workspace, this.options.mcpEntry, this.options.workspaceData);
     }
     if (this.stopping) return true;
     const binary = this.options.binary || codexBinary();
@@ -422,6 +430,16 @@ export class CodexEngine implements Engine {
     });
     const child = this.child;
     this.lastChild = child;
+    if (process.platform === "win32" && child.pid && !this.options.killProcessTree) {
+      try { this.job = (this.options.ownEngine ?? ownWindowsEngine)(child.pid); }
+      catch (error) {
+        this.child = undefined;
+        child.on("error", () => {});
+        child.stdin.on("error", () => {});
+        child.kill();
+        throw error;
+      }
+    }
     let failed = false;
     const failedChild = (error: Error) => {
       if (failed || this.child !== child) return;
@@ -609,6 +627,14 @@ export class CodexEngine implements Engine {
         // works with the write protection it always had and says what is
         // missing, instead of refusing all work.
         this.backend = "elevated";
+        if (this.options.verifyWorkspaceProtection && this.modeMatches()) {
+          const refusal = await this.checkElevatedWorkspace();
+          if (refusal) {
+            this.setupMode = "elevated";
+            this.setProtection({ allowed: false, status: "needed", needsPermission: true, detail: refusal });
+            return;
+          }
+        }
         this.setProtection({
           allowed: true,
           status: "ready",
@@ -636,6 +662,35 @@ export class CodexEngine implements Engine {
    * app-server that does not know the call is a refusal too: the app never
    * falls back to a profile that reads the whole computer.
    */
+  private async checkElevatedWorkspace(): Promise<string | undefined> {
+    const file = `.bitacora-protection-${randomUUID()}.tmp`;
+    try {
+      const result = await this.rpc("command/exec", {
+        command: [
+          join(process.env.SystemRoot || "C:\\Windows", "System32", "cmd.exe"),
+          "/d", "/c", `echo listo>${file} && del ${file}`,
+        ],
+        cwd: this.options.workspace,
+        sandboxPolicy: this.workspaceWritePolicy(),
+        timeoutMs: 15000,
+      });
+      if (result.exitCode === 0) return;
+      return `Folder protection check exited ${result.exitCode}: ${result.stderr.slice(0, 400)}`;
+    } catch (error) {
+      return `Folder protection check failed: ${String(error)}`;
+    }
+  }
+
+  private workspaceWritePolicy() {
+    return {
+      type: "workspaceWrite" as const,
+      writableRoots: [this.options.workspace],
+      networkAccess: false,
+      excludeTmpdirEnvVar: true,
+      excludeSlashTmp: true,
+    };
+  }
+
   private async checkPermissions(): Promise<string | undefined> {
     try {
       const { data } = await this.rpc("permissionProfile/list", { cwd: this.options.workspace });
@@ -743,11 +798,36 @@ export class CodexEngine implements Engine {
     );
     return stop;
   }
+  private drainEngineJob(): Promise<boolean> {
+    this.jobDrain ??= this.runDrainEngineJob().finally(() => { this.jobDrain = undefined; });
+    return this.jobDrain;
+  }
+
+  private async runDrainEngineJob(): Promise<boolean> {
+    const job = this.job;
+    if (!job) return true;
+    const deadline = Date.now() + (this.options.killTimeoutMs ?? 5000);
+    if (job.active()) job.terminate();
+    while (job.active()) {
+      if (Date.now() >= deadline) return false;
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    job.close();
+    this.job = undefined;
+    this.incompleteStop = undefined;
+    return true;
+  }
+
   private async runStopTree(child: ChildProcessWithoutNullStreams): Promise<TreeStop> {
     // Listen before killing, so an exit that happens during the kill is seen.
     const exited = this.waitExit(child, this.options.killTimeoutMs ?? 5000);
-    const complete = await this.killChildTree(child);
-    return { complete, exited: await exited };
+    // The tree kill also reaches a descendant that left the job; the job is
+    // what confirms that everything it owns is gone.
+    const killed = await this.killChildTree(child);
+    const complete = this.job ? await this.drainEngineJob() : killed;
+    const stopped = await exited;
+    this.incompleteStop = complete && stopped ? undefined : { child, complete };
+    return { complete, exited: stopped };
   }
   /** The stop already running for the current child, if any. */
   private currentStop() {
@@ -1817,13 +1897,7 @@ export class CodexEngine implements Engine {
         // one the app always had.
         ...(this.backend === "elevated"
           ? {
-              sandboxPolicy: {
-                type: "workspaceWrite" as const,
-                writableRoots: [this.options.workspace],
-                networkAccess: false,
-                excludeTmpdirEnvVar: true,
-                excludeSlashTmp: true,
-              },
+              sandboxPolicy: this.workspaceWritePolicy(),
             }
           : { permissions: PERMISSIONS_PROFILE }),
       }, state);
@@ -1861,7 +1935,7 @@ export class CodexEngine implements Engine {
       throw error;
     }
   }
-  async close() {
+  async close(requireStop = false) {
     this.stopping = true;
     this.closeQuestions("stopped");
     clearTimeout(this.setupTimer);
@@ -1887,5 +1961,10 @@ export class CodexEngine implements Engine {
     // be left running after close() returns.
     const last = this.lastChild;
     if (last && last !== child && this.childRunning(last)) await this.stopTree(last);
+    if (this.job && !(await this.drainEngineJob()) && requireStop)
+      throw new Error("Could not confirm that the previous engine stopped");
+    const incomplete = this.incompleteStop;
+    if (incomplete?.complete && !this.childRunning(incomplete.child)) this.incompleteStop = undefined;
+    if (requireStop && this.incompleteStop) throw new Error("Could not confirm that the previous engine stopped");
   }
 }

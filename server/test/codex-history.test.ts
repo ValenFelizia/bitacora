@@ -10,6 +10,7 @@ import { App } from "../src/app";
 import { WorkspaceFiles } from "../src/workspace-files";
 import type { ClientCommand, ServerMessage } from "../src/contracts";
 import { serve } from "../src/server";
+import { WorkspaceSelection, type WorkspaceChoice } from "../src/workspace-selection";
 import { FakeEngine } from "./fake-engine";
 import { screenProtocols, screenSecret } from "./screen-fixture";
 
@@ -97,7 +98,7 @@ test("Codex history lists both folders, imports two chosen chats once, and resum
   await writeFile(join(source, "session_index.jsonl"), JSON.stringify({ id: ids[0], thread_name: "Nombre del chat", updated_at: "2026-11-17T12:00:00Z", rollout_path: current }) + "\n");
   const before = await readTree(source);
   const makeServer = (engine: FakeEngine) => serve(engine, data, 0, origin, workspace, undefined, screenSecret,
-    new CodexHistory(source, join(data, "codex")));
+    undefined, new CodexHistory(source, join(data, "codex")));
 
   const server = await makeServer(new FakeEngine());
   let socket: WebSocket | undefined;
@@ -218,7 +219,7 @@ test("closing the selector cancels its listing without sending an old result", a
     }
   }
   const server = await serve(new FakeEngine(), join(root, "data"), 0, origin, join(root, "workspace"), undefined,
-    screenSecret, new SlowList(root, join(root, "data", "codex")));
+    screenSecret, undefined, new SlowList(root, join(root, "data", "codex")));
   const socket = new WebSocket("ws://127.0.0.1:" + server.port + "/ws", screenProtocols, { origin });
   try {
     await once(socket, "open");
@@ -257,7 +258,7 @@ test("closing queues the buffered reply before waiting for an import to clean up
   const data = join(root, "data");
   const engine = new FakeEngine();
   const app = new App(engine, data, () => {}, undefined, new WorkspaceFiles(join(root, "workspace")),
-    undefined, new SlowImport(root, join(data, "codex")));
+    undefined, undefined, new SlowImport(root, join(data, "codex")));
   await app.start();
   await app.command({ type: "send", text: "Pedido" }, () => {});
   const pending = app.command({ type: "importCodexChats", ids: [ids[0]] }, () => {});
@@ -291,4 +292,226 @@ test("startup cleanup removes expired or orphaned snapshots and leaves active or
   }
   await sweepHistorySnapshots(root, now);
   assert.deepEqual((await readdir(root)).sort(), [active, fresh, unrelated].sort());
+});
+
+test("chosen folder orders matching Codex chats first, offers once, ties works to that folder, and refuses busy switches", async t => {
+  await mkdir(".local", { recursive: true });
+  const root = await mkdtemp(resolve(".local/codex-history-workspace-"));
+  t.after(() => rm(root, { recursive: true, force: true, maxRetries: 4 }));
+  const source = join(root, "original");
+  const data = join(root, "data");
+  const home = join(root, "default");
+  const chosen = join(root, "Agencia elegida");
+  const emptyFolder = join(root, "Sin chats");
+  await Promise.all([data, home, chosen, emptyFolder].map(path => mkdir(path, { recursive: true })));
+  await fixtureRollout(source, ids[0], home, "18");
+  await fixtureRollout(source, ids[1], chosen, "16");
+  await fixtureRollout(source, ids[2], join(root, "Otra"), "17");
+
+  const selection = new WorkspaceSelection(home, data);
+  const engines = new Map<string, ContinuingEngine>();
+  const engineFor = (choice: WorkspaceChoice) => {
+    const engine = new ContinuingEngine();
+    engines.set(choice.root, engine);
+    return engine;
+  };
+  const initial = selection.defaultChoice;
+  const server = await serve(
+    engineFor(initial), data, 0, origin, initial.root, undefined, screenSecret,
+    { selection, initial, engineFor },
+    new CodexHistory(source, join(data, "codex")),
+  );
+  const socket = new WebSocket(`ws://127.0.0.1:${server.port}/ws`, screenProtocols, { origin });
+  const messages: ServerMessage[] = [];
+  const waiters: (() => void)[] = [];
+  socket.on("message", raw => {
+    messages.push(JSON.parse(String(raw)));
+    for (const wake of waiters.splice(0)) wake();
+  });
+  async function waitFor<T extends ServerMessage>(match: (message: ServerMessage) => message is T): Promise<T> {
+    const deadline = Date.now() + 15_000;
+    for (;;) {
+      const idx = messages.findIndex(match);
+      if (idx >= 0) return messages.splice(idx, 1)[0] as T;
+      if (Date.now() >= deadline) throw new Error("Timed out waiting for server message");
+      await new Promise<void>(resolve => {
+        waiters.push(resolve);
+        setTimeout(resolve, 50);
+      });
+    }
+  }
+  const send = (workspace: string, command: ClientCommand) =>
+    socket.send(JSON.stringify({ ...command, workspace }));
+
+  try {
+    await once(socket, "open");
+    const first = await waitFor((m): m is Extract<ServerMessage, { type: "snapshot" }> => m.type === "snapshot");
+    assert.equal(first.state.workspace, home);
+    assert.equal(first.state.codexImportOffer, undefined);
+
+    send(home, { type: "chooseWorkspace", path: chosen });
+    const switched = await waitFor((m): m is Extract<ServerMessage, { type: "workspaceChoice" }> => m.type === "workspaceChoice");
+    assert.equal(switched.problem, undefined);
+
+    const offered = await waitFor((m): m is Extract<ServerMessage, { type: "snapshot" }> =>
+      m.type === "snapshot" && m.state.workspace === chosen && m.state.codexImportOffer === true);
+    assert.equal(offered.state.codexImportOffer, true);
+
+    send(chosen, { type: "listCodexChats" });
+    const list = await waitFor((m): m is Extract<ServerMessage, { type: "codexChats" }> => m.type === "codexChats");
+    assert.deepEqual(list.chats.map(chat => [chat.id, chat.sameFolder]), [
+      [ids[1], true],
+      [ids[0], false],
+      [ids[2], false],
+    ]);
+
+    send(chosen, { type: "importCodexChats", ids: [ids[1]] });
+    const imported = await waitFor((m): m is Extract<ServerMessage, { type: "codexImported" }> => m.type === "codexImported");
+    assert.deepEqual(imported.imported, [ids[1]]);
+    const afterImport = server.app.snapshot();
+    assert.equal(afterImport.codexImportOffer, undefined);
+    assert.equal(afterImport.works.length, 1);
+    const work = afterImport.works[0];
+
+    await waitFor((m): m is Extract<ServerMessage, { type: "snapshot" }> =>
+      m.type === "snapshot" && m.state.workspace === chosen && m.state.engine.available);
+    send(chosen, { type: "send", workId: work.id, text: "Seguimos en la carpeta elegida" });
+    await waitFor((m): m is Extract<ServerMessage, { type: "snapshot" }> =>
+      m.type === "snapshot" && m.state.workspace === chosen && m.state.works[0]?.progress === "Leyendo los archivos…");
+    const chosenEngine = engines.get(chosen)!;
+    assert.deepEqual(chosenEngine.resumed, [ids[1]]);
+    assert.match(chosenEngine.rollouts[0] || "", new RegExp(ids[1]));
+    assert.equal(chosenEngine.sent.at(-1), "Seguimos en la carpeta elegida");
+    chosenEngine.emit({ type: "finished", conversationId: ids[1], status: "completed" });
+    await waitFor((m): m is Extract<ServerMessage, { type: "snapshot" }> =>
+      m.type === "snapshot" && m.state.workspace === chosen && !m.state.works.some(w => w.busy) && m.state.works[0]?.progress === "Listo.");
+
+    send(chosen, { type: "chooseWorkspace", path: emptyFolder });
+    const switchedEmpty = await waitFor((m): m is Extract<ServerMessage, { type: "workspaceChoice" }> => m.type === "workspaceChoice");
+    assert.equal(switchedEmpty.problem, undefined);
+    const inEmpty = await waitFor((m): m is Extract<ServerMessage, { type: "snapshot" }> =>
+      m.type === "snapshot" && m.state.workspace === emptyFolder && m.state.engine.available);
+    assert.deepEqual(inEmpty.state.works, []);
+    assert.equal(inEmpty.state.codexImportOffer, undefined);
+
+    // Switching back to the chosen folder keeps its imported work and does not offer a second time.
+    messages.length = 0;
+    send(emptyFolder, { type: "chooseWorkspace", path: chosen });
+    const switchedBack = await waitFor((m): m is Extract<ServerMessage, { type: "workspaceChoice" }> => m.type === "workspaceChoice");
+    assert.equal(switchedBack.problem, undefined);
+    const back = await waitFor((m): m is Extract<ServerMessage, { type: "snapshot" }> =>
+      m.type === "snapshot" && m.state.workspace === chosen && m.state.engine.available);
+    assert.deepEqual(back.state.works.map(w => w.id), [work.id]);
+    assert.equal(back.state.codexImportOffer, undefined);
+  } finally {
+    socket.terminate();
+    await server.close();
+  }
+});
+
+test("folder switch refuses an import in progress and shutdown recovery preserves transcript and re-enables history", async t => {
+  await mkdir(".local", { recursive: true });
+  const root = await mkdtemp(resolve(".local/codex-history-recovery-"));
+  t.after(() => rm(root, { recursive: true, force: true, maxRetries: 4 }));
+  const data = join(root, "data");
+  const home = join(root, "default");
+  const other = join(root, "other");
+  await Promise.all([data, home, other].map(path => mkdir(path, { recursive: true })));
+
+  let releaseImport!: () => void;
+  const importingGate = new Promise<void>(done => { releaseImport = done; });
+  let started!: () => void;
+  const importStarted = new Promise<void>(done => { started = done; });
+  let aborted!: () => void;
+  const importAborted = new Promise<void>(done => { aborted = done; });
+  class BlockingHistory extends CodexHistory {
+    override async list() {
+      return [];
+    }
+    override async import(_ids: string[], signal: AbortSignal): Promise<string[]> {
+      started();
+      await once(signal, "abort", { signal: AbortSignal.timeout(10_000) });
+      aborted();
+      await importingGate;
+      return [];
+    }
+  }
+  class StickyEngine extends FakeEngine {
+    attempts = 0;
+    override async close(requireStop = false) {
+      if (requireStop && this.attempts++ === 0) throw new Error("Still running");
+      await super.close();
+    }
+  }
+
+  const selection = new WorkspaceSelection(home, data);
+  const initialEngine = new StickyEngine();
+  const engineFor = (choice: WorkspaceChoice) => choice.root === home ? new StickyEngine() : new FakeEngine();
+  const server = await serve(
+    initialEngine, data, 0, origin, home, undefined, screenSecret,
+    { selection, initial: selection.defaultChoice, engineFor },
+    new BlockingHistory(root, join(data, "codex")),
+  );
+  const socket = new WebSocket(`ws://127.0.0.1:${server.port}/ws`, screenProtocols, { origin });
+  const messages: ServerMessage[] = [];
+  const waiters: (() => void)[] = [];
+  socket.on("message", raw => {
+    messages.push(JSON.parse(String(raw)));
+    for (const wake of waiters.splice(0)) wake();
+  });
+  async function waitFor<T extends ServerMessage>(match: (message: ServerMessage) => message is T): Promise<T> {
+    const deadline = Date.now() + 15_000;
+    for (;;) {
+      const idx = messages.findIndex(match);
+      if (idx >= 0) return messages.splice(idx, 1)[0] as T;
+      if (Date.now() >= deadline) throw new Error("Timed out waiting for server message");
+      await new Promise<void>(resolve => {
+        waiters.push(resolve);
+        setTimeout(resolve, 50);
+      });
+    }
+  }
+  const send = (workspace: string, command: ClientCommand) =>
+    socket.send(JSON.stringify({ ...command, workspace }));
+
+  try {
+    await once(socket, "open");
+    await waitFor((m): m is Extract<ServerMessage, { type: "snapshot" }> => m.type === "snapshot" && m.state.engine.available);
+
+    send(home, { type: "send", text: "Pedido antes del corte" });
+    await waitFor((m): m is Extract<ServerMessage, { type: "selected" }> => m.type === "selected");
+    initialEngine.emit({ type: "message", conversationId: "conversation-1", id: "reply", text: "Respuesta parcial", delta: true });
+    initialEngine.emit({ type: "finished", conversationId: "conversation-1", status: "completed" });
+    await waitFor((m): m is Extract<ServerMessage, { type: "snapshot" }> =>
+      m.type === "snapshot" && !m.state.works.some(w => w.busy));
+
+    // Start a slow import and confirm a folder switch is refused while it runs.
+    send(home, { type: "importCodexChats", ids: [ids[0]] });
+    await importStarted;
+    send(home, { type: "chooseWorkspace", path: other });
+    const refused = await waitFor((m): m is Extract<ServerMessage, { type: "workspaceChoice" }> => m.type === "workspaceChoice");
+    assert.match(refused.problem ?? "", /termine el pedido actual/);
+
+    // Now test App.close(true) shutdown ordering when engine.close(true) throws while an import is running.
+    initialEngine.emit({ type: "message", conversationId: "conversation-1", id: "reply2", text: "Respuesta en cierre", delta: true });
+    const appClosing = server.app.close(true);
+    await importAborted;
+    const savedPath = join(data, "works.json");
+    const deadline = Date.now() + 5_000;
+    while (Date.now() < deadline && !(await readFile(savedPath, "utf8").catch(() => "")).includes("Respuesta en cierre"))
+      await new Promise(resolve => setTimeout(resolve, 20));
+    assert.match(await readFile(savedPath, "utf8"), /Respuesta en cierre/);
+    releaseImport();
+    await assert.rejects(appClosing, /Still running/);
+
+    // After recovery via restartEngine, history commands work again on the same App.
+    await server.app.restartEngine(new FakeEngine());
+    send(home, { type: "listCodexChats" });
+    const listed = await waitFor((m): m is Extract<ServerMessage, { type: "codexChats" }> => m.type === "codexChats");
+    assert.deepEqual(listed.chats, []);
+  } finally {
+    releaseImport();
+    socket.terminate();
+    await server.close();
+  }
 });

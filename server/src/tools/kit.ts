@@ -1,53 +1,56 @@
-import { readdir, mkdir, realpath, rm } from 'node:fs/promises';
+import { readdir, mkdir, realpath, stat } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AgencyFiles } from './paths';
 
 /** The travel kit bundled with the app. */
 export const KIT_SOURCE = fileURLToPath(new URL('../../../kit/turismo/', import.meta.url));
 
-/**
- * Whether the agency already has exactly these bytes. A normal start finds the
- * same files and writes nothing, so a read-only or busy file cannot fail a
- * start that had nothing to change.
- */
-async function sameBytes(files: AgencyFiles, path: string, expected: Buffer): Promise<boolean> {
-  try { return (await files.readBuffer(path)).equals(expected); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
+function alreadyExists(error: unknown) {
+  return error instanceof Error && 'code' in error && error.code === 'EEXIST';
 }
 
-/**
- * Copies the kit's own skills into an agency on every start. Codex only finds
- * them as `repo` scope under `<agency>/.agents/skills/<name>/SKILL.md`, and an
- * agency initialized before the kit shipped skills has none. Only that folder
- * is written, only when the bytes differ, and everything else the agency edited
- * stays as it is.
- *
- * A kit without its skills is a packaging error: it throws instead of starting
- * without them. The caller turns that into a notice (DEC-011).
- */
-export async function refreshKitSkills(
-  workspace: string,
-  kitSource = KIT_SOURCE,
+/** Refresh managed skills, or only add missing files in an existing agency. */
+async function refreshKitSkills(
+  target: AgencyFiles,
+  kitSource: string,
+  managed: boolean,
 ): Promise<void> {
-  const sourceRoot = new AgencyFiles(join(kitSource, '.agents', 'skills'));
-  const target = new AgencyFiles(workspace);
+  const source = new AgencyFiles(join(kitSource, '.agents', 'skills'));
   async function copy(dir: string) {
-    for (const item of await readdir(await sourceRoot.path(dir), { withFileTypes: true })) {
+    for (const item of await readdir(await source.path(dir), { withFileTypes: true })) {
       const path = dir === '.' ? item.name : `${dir}/${item.name}`;
-      if (item.isDirectory()) await copy(path);
-      else {
-        const bytes = await sourceRoot.readBuffer(path);
-        const destination = `.agents/skills/${path}`;
-        if (await sameBytes(target, destination, bytes)) continue;
-        // Replaced when it differs: a skill is the kit's, and the allowlist
-        // expects the exact name at the exact path on every start.
-        await target.write(destination, bytes, false);
+      if (item.isDirectory()) {
+        await copy(path);
+        continue;
       }
+      const destination = `.agents/skills/${path}`;
+      const bytes = await source.readBuffer(path);
+      try {
+        const existing = await target.readBuffer(destination);
+        if (!managed || existing.equals(bytes)) continue;
+      } catch (error) {
+        if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+      }
+      try { await target.write(destination, bytes, !managed); }
+      catch (error) { if (managed || !alreadyExists(error)) throw error; }
     }
   }
   await copy('.');
+}
+
+async function kitState(state: AgencyFiles, marker: string, root: string, identity: string) {
+  try {
+    const saved: unknown = JSON.parse(await state.read(marker));
+    if (!saved || typeof saved !== 'object' || !('workspace' in saved) ||
+        typeof saved.workspace !== 'string' || !isAbsolute(saved.workspace) || relative(saved.workspace, root)) return;
+    if ('version' in saved && saved.version === 1) return 'legacy';
+    if (!('identity' in saved) || saved.identity !== identity) return;
+    if ('status' in saved && (saved.status === 'copying' || saved.status === 'ready' || saved.status === 'add-only')) return saved.status;
+  } catch (error) {
+    if (!(error instanceof SyntaxError) && !(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+  }
 }
 
 export async function initializeKit(
@@ -55,37 +58,48 @@ export async function initializeKit(
   data: string,
   kitSource = KIT_SOURCE,
 ): Promise<{ skillsError?: string }> {
-  await mkdir(workspace, {recursive:true});
-  await mkdir(data,{recursive:true});
-  let skillsError: string | undefined;
-  try { await refreshKitSkills(workspace, kitSource); }
-  catch (error) { skillsError = String(error); }
+  await mkdir(workspace, { recursive: true });
+  await mkdir(data, { recursive: true });
+  const root = await realpath(workspace);
+  const { birthtimeNs, ino } = await stat(root, { bigint: true });
+  const identity = `${birthtimeNs}:${ino}`;
   const source = new AgencyFiles(kitSource);
-  const target = new AgencyFiles(workspace);
+  const target = new AgencyFiles(root);
   const state = new AgencyFiles(data);
-  const marker = `kit-initialized-${createHash('sha256').update((await realpath(workspace)).toLowerCase()).digest('hex')}.json`;
-  // The marker keeps files the agency deleted on purpose from coming back, but
-  // without the kit's AGENTS.md the agent works without its rules (#65): the
-  // agency folder was deleted or moved, so the kit is copied again. The marker
-  // goes first, so a copy cut short is retried on the next start instead of
-  // passing for a whole kit. The copy never replaces a file the agency has.
-  let marked = true;
-  try { await state.read(marker); }
-  catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; marked = false; }
-  if (marked) {
-    try { await target.read('AGENTS.md'); return { skillsError }; }
-    catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
-    await rm(await state.path(marker));
+  const marker = `kit-initialized-${createHash('sha256').update(root.toLowerCase()).digest('hex')}.json`;
+  const previous = await kitState(state, marker, root, identity);
+  // A folder the kit set up that lost its AGENTS.md was emptied or moved
+  // (#65): it gets the missing kit files back, without overwriting anything.
+  const kitOwned = previous === 'ready' || previous === 'legacy';
+  const lostRules = kitOwned && !(await readdir(root)).some(name => name.toLowerCase() === 'agents.md');
+  const copyFullKit = (await readdir(root)).length === 0 || previous === 'copying' || lostRules;
+
+  async function saveMarker(status: 'copying' | 'ready' | 'add-only') {
+    await state.write(marker, JSON.stringify({ version: 2, workspace: root, identity, status }), false);
   }
   async function copy(dir: string) {
     for (const item of await readdir(await source.path(dir), { withFileTypes: true })) {
       const path = dir === '.' ? item.name : `${dir}/${item.name}`;
+      if (path === '.agents/skills') continue;
       if (item.isDirectory()) await copy(path);
       else try { await target.write(path, await source.readBuffer(path)); }
-      catch (e) { if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e; }
+      catch (error) { if (!alreadyExists(error)) throw error; }
     }
   }
-  await copy('.');
-  await state.write(marker, JSON.stringify({version:1,workspace:await realpath(workspace)}));
-  return { skillsError };
+
+  // Only an empty folder, or the same folder after a partial kit copy, gets
+  // the full kit. A replaced folder at the same path gets classified afresh.
+  if (copyFullKit) {
+    await saveMarker('copying');
+    await copy('.');
+  } else if (previous === 'legacy') {
+    await saveMarker('ready');
+  }
+  try {
+    await refreshKitSkills(target, kitSource, !copyFullKit && kitOwned);
+    if (copyFullKit) await saveMarker(previous === 'copying' ? 'add-only' : 'ready');
+    return {};
+  } catch (error) {
+    return { skillsError: String(error) };
+  }
 }

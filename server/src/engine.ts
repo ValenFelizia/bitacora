@@ -117,7 +117,7 @@ export interface Engine {
    */
   forgetDetails(keys: readonly string[]): void;
   subscribe(listener: (event: EngineEvent) => void): () => void;
-  close(): Promise<void>;
+  close(requireStop?: boolean): Promise<void>;
 }
 
 export class EngineFailure extends Error {
