@@ -70,6 +70,7 @@ export function CodexImport({ online, message, send }: Props) {
         ref={dialog}
         aria-labelledby="codex-import-heading"
         onCancel={event => { if (phase === "importing") event.preventDefault(); }}
+        onClose={() => { if (!dialog.current?.open) send({ type: "cancelCodexChatList" }); }}
         className="m-auto w-[calc(100%-2rem)] max-w-[560px] max-h-[calc(100dvh-2rem)] rounded-[6px] border border-line bg-surface p-0 text-ink backdrop:bg-ink/40"
       >
         <div className="flex max-h-[calc(100dvh-2rem)] flex-col">

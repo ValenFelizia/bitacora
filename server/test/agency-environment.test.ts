@@ -6,7 +6,8 @@ import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from "node:c
 import { existsSync, readdirSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
-import { mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -284,15 +285,38 @@ test("the real Codex engine continues an imported paginated chat with its earlie
       assert.equal(mock.bodies.length, 1);
     } finally { await original.close(); }
 
+    const link = join(root, "junction-to-source");
+    await symlink(source, link, "junction");
+    const state = new DatabaseSync(join(source, "state_5.sqlite"));
+    try {
+      const row = state.prepare("SELECT rollout_path FROM threads WHERE id = ?").get(id);
+      assert.equal(typeof row?.rollout_path, "string");
+      const originalPath = String(row!.rollout_path);
+      assert.ok(originalPath.toLowerCase().startsWith(source.toLowerCase()));
+      state.prepare("UPDATE threads SET rollout_path = ?, name = ? WHERE id = ?")
+        .run(link + originalPath.slice(source.length), "Nombre guardado en la base", id);
+    } finally { state.close(); }
+    const snapshotSource = async () => Promise.all(
+      (await readdir(source, { recursive: true, withFileTypes: true }))
+        .filter(entry => entry.isFile())
+        .map(async entry => {
+          const path = join(entry.parentPath, entry.name);
+          return [path, (await stat(path)).mtimeMs, await readFile(path)];
+        }),
+    );
+    const originalFiles = await snapshotSource();
     const history = new CodexHistory(source, home);
     const signal = AbortSignal.timeout(15_000);
     const [listed] = await history.list(workspace, signal);
     assert.equal(listed.id, id);
     assert.equal(listed.sameFolder, false);
+    assert.equal(listed.title, "Nombre guardado en la base");
+    assert.deepEqual(await snapshotSource(), originalFiles);
     const imported: ImportedChat[] = [];
     assert.deepEqual(await history.import([id], signal, chat => imported.push(chat)), []);
     const [chat] = imported;
     assert.deepEqual(chat.messages.map(message => message.text), [firstPrompt, oldAnswer]);
+    assert.deepEqual(await snapshotSource(), originalFiles);
 
     const resumed = startRealAppServer(args, workspace, home);
     try {

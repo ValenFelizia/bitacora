@@ -922,3 +922,23 @@ test("resuming a work that does not report a profile is not a refusal", async ()
     await f.close();
   }
 });
+
+test("an imported chat needs a confirmed agency profile before the first new message", async () => {
+  mxc();
+  process.env.BITACORA_FAKE_THREAD_PROFILE = "none";
+  const f = await fixture();
+  try {
+    await assert.rejects(f.engine.resumeWork("thread-1", undefined, undefined, "rollout-fixture.jsonl"), /permissions=none/);
+    assert.equal(f.engine.executionSafety().allowed, false);
+    assert.equal((await f.records()).some(record => record.method === "turn/start"), false);
+  } finally { delete process.env.BITACORA_FAKE_THREAD_PROFILE; await f.close(); }
+});
+
+test("the write-only fallback refuses to resume an imported chat", async () => {
+  const f = await fixture();
+  try {
+    await assert.rejects(f.engine.resumeWork("thread-1", undefined, undefined, "rollout-fixture.jsonl"), /proteger también la lectura/);
+    assert.equal((await f.records()).some(record => record.method === "thread/resume"), false);
+    await f.engine.resumeWork("thread-1");
+  } finally { await f.close(); }
+});

@@ -1,97 +1,34 @@
 import { spawn } from "node:child_process";
-import { constants } from "node:fs";
-import { copyFile, cp, lstat, mkdir, mkdtemp, readdir, realpath, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { basename, isAbsolute, join, relative, resolve, sep, win32 } from "node:path";
+import { createReadStream } from "node:fs";
+import { lstat, mkdir, mkdtemp, realpath } from "node:fs/promises";
+import { basename, join, relative, sep, win32 } from "node:path";
 import { createInterface } from "node:readline";
-import { DatabaseSync } from "node:sqlite";
+
 import { codexBinary } from "../../../scripts/codex-runtime.mjs";
 import { AGENCY_ENVIRONMENT } from "../agency-environment";
 import type { CodexChat, Message } from "../contracts";
 import { cleanTitle, fallbackTitle } from "../titles";
 import { codexEnvironmentArgs } from "./environment";
+import {
+  CHAT_ID, HistoryProblem, SESSION_DIRS, copyHistoryFile, createHistorySnapshot,
+  inside, logHistoryFailure, removeSnapshot, withoutWindowsPrefix,
+} from "./history-snapshot";
+import type { ThreadSourceKind } from "./generated/v2/ThreadSourceKind";
 import type { ClientRequest } from "./generated/ClientRequest";
 import type { Thread } from "./generated/v2/Thread";
-import type { ThreadItem } from "./generated/v2/ThreadItem";
-import type { ThreadItemsListResponse } from "./generated/v2/ThreadItemsListResponse";
 import type { ThreadListResponse } from "./generated/v2/ThreadListResponse";
 import type { ThreadReadResponse } from "./generated/v2/ThreadReadResponse";
 
-const SESSION_DIRS = ["sessions", "archived_sessions"];
-const STATE_DB = /^state.*\.sqlite$/i;
-// Paginated chats keep their visible items in a separate Codex history DB.
-const HISTORY_DB_FILE = /^(?:state.*|thread_history_\d+)\.sqlite(?:-wal|-shm)?$/i;
-const CHAT_ID = /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i;
+const CHAT_SOURCES: ThreadSourceKind[] = ["cli", "vscode", "exec", "appServer", "unknown"];
+const DEFAULT_LIMITS = { maxBytes: 3 * 1024 ** 3, timeoutMs: 30_000 };
 
-type HistoryRequest = Extract<ClientRequest, { method: "initialize" | "thread/list" | "thread/read" | "thread/items/list" }>;
+type HistoryRequest = Extract<ClientRequest, { method: "initialize" | "thread/list" | "thread/read" }>;
 type Reader = <R>(method: HistoryRequest["method"], params: HistoryRequest["params"]) => Promise<R>;
-
-function withoutWindowsPrefix(path: string) {
-  return path.replace(/^\\\\\?\\UNC\\/i, "\\\\").replace(/^\\\\\?\\/, "");
-}
-
-function inside(root: string, target: string): string | undefined {
-  const child = relative(root, target);
-  if (child && child !== ".." && !child.startsWith(".." + sep) && !isAbsolute(child)) return child;
-}
 
 async function folderKey(folder: string) {
   if (!folder) return "";
   const actual = await realpath(folder).catch(() => folder);
-  return win32.normalize(withoutWindowsPrefix(actual))
-    .replace(/\\+$/, "").toLowerCase();
-}
-
-async function optionalStat(path: string) {
-  try { return await lstat(path); }
-  catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-  }
-}
-
-async function copyHistory(source: string, home: string, signal: AbortSignal) {
-  let hasHistory = false;
-  for (const name of SESSION_DIRS) {
-    const path = join(source, name);
-    if (!(await optionalStat(path))?.isDirectory()) continue;
-    await cp(path, join(home, name), {
-      recursive: true,
-      preserveTimestamps: true,
-      filter: async (entry) => {
-        signal.throwIfAborted();
-        const stat = await lstat(entry);
-        const rollout = stat.isFile() && entry.endsWith(".jsonl");
-        if (rollout) hasHistory = true;
-        return stat.isDirectory() || rollout;
-      },
-    });
-  }
-  if (!hasHistory) return false;
-  for (const entry of await readdir(source, { withFileTypes: true })) {
-    signal.throwIfAborted();
-    if (!entry.isFile() || (!HISTORY_DB_FILE.test(entry.name) && entry.name !== "session_index.jsonl")) continue;
-    await copyFile(join(source, entry.name), join(home, entry.name));
-  }
-  return true;
-}
-
-/** The copied DB still contains absolute references to the user's live rollouts. */
-function rebaseStateDatabase(database: string, source: string, home: string) {
-  const db = new DatabaseSync(database);
-  try {
-    const columns = db.prepare("PRAGMA table_info(threads)").all();
-    if (!columns.some(column => column.name === "rollout_path")) return;
-    const rows = db.prepare("SELECT DISTINCT rollout_path FROM threads").all();
-    const update = db.prepare("UPDATE threads SET rollout_path = ? WHERE rollout_path = ?");
-    db.exec("BEGIN");
-    for (const { rollout_path: path } of rows) {
-      if (typeof path !== "string") continue;
-      const child = inside(source, resolve(withoutWindowsPrefix(path)));
-      const isSession = child && SESSION_DIRS.includes(child.split(sep)[0]);
-      update.run(isSession ? join(home, child) : join(home, "missing-rollout"), path);
-    }
-    db.exec("COMMIT");
-  } finally { db.close(); }
+  return win32.normalize(withoutWindowsPrefix(actual)).replace(/\\+$/, "").toLowerCase();
 }
 
 async function withReader<T>(binary: string, home: string, signal: AbortSignal, use: (rpc: Reader) => Promise<T>): Promise<T> {
@@ -101,6 +38,8 @@ async function withReader<T>(binary: string, home: string, signal: AbortSignal, 
   const child = spawn(binary, [
     "app-server", "--listen", "stdio://",
     "-c", 'cli_auth_credentials_store="file"',
+    "-c", 'sandbox_mode="read-only"',
+    "-c", 'approval_policy="never"',
     ...codexEnvironmentArgs({ ...AGENCY_ENVIRONMENT, aiImages: false, webSearch: "disabled", goals: false }),
   ], { cwd: home, env: { ...env, CODEX_HOME: home }, windowsHide: true, stdio: ["pipe", "pipe", "ignore"] });
   const closed = new Promise<void>(done => child.once("close", () => done()));
@@ -108,12 +47,20 @@ async function withReader<T>(binary: string, home: string, signal: AbortSignal, 
   const replies = lines[Symbol.asyncIterator]();
   child.on("error", () => lines.close());
   child.stdin.on("error", () => lines.close());
-  const stop = () => child.kill();
+  let stopping = false;
+  const stop = () => {
+    if (stopping) return;
+    stopping = true;
+    lines.close();
+    child.stdin.destroy();
+    child.stdout.destroy();
+    try { child.kill(); }
+    catch (error) { logHistoryFailure("reader stop", error); }
+  };
   signal.addEventListener("abort", stop, { once: true });
   let id = 0;
   const rpc: Reader = async <R>(method: HistoryRequest["method"], params: HistoryRequest["params"]) => {
     const requestId = ++id;
-    const timeout = setTimeout(stop, 60_000);
     try {
       signal.throwIfAborted();
       child.stdin.write(JSON.stringify({ id: requestId, method, params }) + "\n");
@@ -125,7 +72,11 @@ async function withReader<T>(binary: string, home: string, signal: AbortSignal, 
         if (message.error || !message.result) throw new Error("Codex history request failed: " + method);
         return message.result as R;
       }
-    } finally { clearTimeout(timeout); }
+    } catch (error) {
+      signal.throwIfAborted();
+      logHistoryFailure(method, error);
+      throw error;
+    }
   };
   try {
     await rpc("initialize", {
@@ -138,7 +89,9 @@ async function withReader<T>(binary: string, home: string, signal: AbortSignal, 
     signal.removeEventListener("abort", stop);
     lines.close();
     stop();
-    await closed;
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([closed, new Promise<void>(done => { timer = setTimeout(done, 500); })]);
+    clearTimeout(timer);
   }
 }
 
@@ -149,7 +102,7 @@ async function readList(rpc: Reader) {
     const seen = new Set<string>();
     do {
       const page: ThreadListResponse = await rpc("thread/list", {
-        archived, cursor, limit: 100, modelProviders: [], sortKey: "updated_at",
+        archived, cursor, limit: 100, modelProviders: [], sourceKinds: CHAT_SOURCES, sortKey: "updated_at",
       });
       for (const thread of page.data) if (!threads.has(thread.id)) threads.set(thread.id, thread);
       cursor = page.nextCursor;
@@ -160,33 +113,41 @@ async function readList(rpc: Reader) {
   return [...threads.values()];
 }
 
-function transcript(items: ThreadItem[]): Message[] {
-  return items.flatMap((item): Message[] => {
-    if (item.type === "agentMessage" && item.text.trim())
-      return [{ id: item.id, role: "assistant", text: item.text }];
-    if (item.type !== "userMessage") return [];
-    const text = item.content.flatMap(part => part.type === "text" ? [part.text] : []).join("\n");
-    return text.trim() ? [{ id: item.id, role: "user", text }] : [];
-  });
-}
-
-async function readMessages(rpc: Reader, thread: Thread): Promise<Message[]> {
-  if (thread.historyMode !== "paginated") {
-    const { thread: full } = await rpc<ThreadReadResponse>("thread/read", { threadId: thread.id, includeTurns: true });
-    return transcript(full.turns.flatMap(turn => turn.items));
-  }
+async function readRolloutMessages(path: string, signal: AbortSignal): Promise<Message[]> {
+  // A paginated store is optional. Its canonical rollout carries the display
+  // events as well as the model context. Consume only completed text messages.
+  const input = createReadStream(path, { signal });
+  const lines = createInterface({ input, crlfDelay: Infinity });
   const messages: Message[] = [];
   const seen = new Set<string>();
-  let cursor: string | null = null;
-  do {
-    const page: ThreadItemsListResponse = await rpc("thread/items/list", {
-      threadId: thread.id, cursor, limit: 100, sortDirection: "asc", deferOutput: { commandExecution: true },
-    });
-    messages.push(...transcript(page.data.map(entry => entry.item)));
-    cursor = page.nextCursor;
-    if (cursor && seen.has(cursor)) throw new Error("Codex repeated an item cursor");
-    if (cursor) seen.add(cursor);
-  } while (cursor);
+  try {
+    for await (const line of lines) {
+      signal.throwIfAborted();
+      let record;
+      try { record = JSON.parse(line); }
+      catch (error) { logHistoryFailure("rollout record", error); continue; }
+      if (record.type !== "event_msg" || !record.payload) continue;
+      const event = record.payload;
+      if (event.type === "user_message" || event.type === "agent_message") {
+        if (typeof event.message === "string" && event.message.trim())
+          messages.push({ id: "message-" + messages.length, role: event.type === "user_message" ? "user" : "assistant", text: event.message });
+        continue;
+      }
+      if (event.type !== "item_completed") continue;
+      const item = event.item;
+      if (!item || !["UserMessage", "AgentMessage"].includes(item.type) ||
+          typeof item.id !== "string" || seen.has(item.id) || !Array.isArray(item.content)) continue;
+      const text = item.content.flatMap((part: {type?: string; text?: string}) =>
+        part?.type?.toLowerCase() === "text" && typeof part.text === "string" ? [part.text] : []).join("\n");
+      if (!text.trim()) continue;
+      seen.add(item.id);
+      messages.push({ id: item.id, role: item.type === "UserMessage" ? "user" : "assistant", text });
+    }
+  } finally {
+    lines.close();
+    input.destroy();
+  }
+  signal.throwIfAborted();
   return messages;
 }
 
@@ -205,25 +166,26 @@ export class CodexHistory {
     private source: string,
     private home: string,
     private binary?: string,
+    private limits = DEFAULT_LIMITS,
   ) {}
 
-  private async withSnapshot<T>(empty: T, signal: AbortSignal, use: (rpc: Reader, snapshot: string) => Promise<T>): Promise<T> {
-    if (!await optionalStat(this.source)) return empty;
-    const source = await realpath(this.source);
-    const snapshot = await mkdtemp(join(tmpdir(), "bitacora-codex-history-"));
+  private async withSnapshot<T>(empty: T, signal: AbortSignal, selected: ReadonlySet<string> | undefined,
+    use: (rpc: Reader, snapshot: string, source: string, operation: AbortSignal) => Promise<T>): Promise<T> {
+    const deadline = AbortSignal.timeout(this.limits.timeoutMs);
+    const operation = AbortSignal.any([signal, deadline]);
     try {
-      if (!await copyHistory(source, snapshot, signal)) return empty;
-      for (const name of await readdir(snapshot)) {
-        if (STATE_DB.test(name)) rebaseStateDatabase(join(snapshot, name), source, snapshot);
-      }
-      return await withReader(this.binary || codexBinary(), snapshot, signal, rpc => use(rpc, snapshot));
-    } finally {
-      await rm(snapshot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      return await createHistorySnapshot(this.source, selected, operation, this.limits.maxBytes, empty,
+        (snapshot, source) => withReader(this.binary || codexBinary(), snapshot, operation,
+          rpc => use(rpc, snapshot, source, operation)));
+    } catch (error) {
+      if (deadline.aborted && !signal.aborted)
+        throw new HistoryProblem("Traer tus chats de Codex tardó demasiado. Probá de nuevo.");
+      throw error;
     }
   }
 
   list(workspace: string, signal: AbortSignal): Promise<Omit<CodexChat, "imported">[]> {
-    return this.withSnapshot([], signal, async rpc => {
+    return this.withSnapshot([], signal, undefined, async rpc => {
       const workspaceKey = await folderKey(workspace);
       const threads = await readList(rpc);
       const folders = new Map<string, Promise<string>>();
@@ -239,12 +201,14 @@ export class CodexHistory {
   }
 
   import(ids: string[], signal: AbortSignal, accept: (chat: ImportedChat) => void): Promise<string[]> {
-    return this.withSnapshot([...ids], signal, async (rpc, snapshot) => {
+    const selected = new Set(ids.filter(id => CHAT_ID.test(id)).map(id => id.toLowerCase()));
+    if (!selected.size) return Promise.resolve([...ids]);
+    return this.withSnapshot([...ids], signal, selected, async (rpc, snapshot, source, operation) => {
       // Populate the snapshot index before reading by ID (also works without a copied DB).
       const listed = new Set((await readList(rpc)).map(thread => thread.id));
       const failed: string[] = [];
       for (const id of ids) {
-        signal.throwIfAborted();
+        operation.throwIfAborted();
         try {
           if (!CHAT_ID.test(id) || !listed.has(id)) throw new Error("Unknown Codex chat ID");
           const { thread } = await rpc<ThreadReadResponse>("thread/read", { threadId: id });
@@ -253,9 +217,10 @@ export class CodexHistory {
           const child = inside(await realpath(snapshot), path);
           if (!child || !SESSION_DIRS.includes(child.split(sep)[0]) || !basename(path).endsWith(".jsonl"))
             throw new Error("Codex chat rollout is outside the snapshot");
-          const messages = await readMessages(rpc, thread);
+          // 0.168 cannot defer outputs on thread/read. Read metadata there
+          // and stream the display events without hydrating command output.
+          const messages = await readRolloutMessages(path, operation);
           const metadata = { ...summary(thread), createdAt: new Date(thread.createdAt * 1000).toISOString() };
-          const source = await realpath(this.source);
           // The data directory already exists. Reject junctions before creating anything below it.
           const data = await realpath(join(this.home, ".."));
           const home = join(data, basename(this.home));
@@ -272,18 +237,19 @@ export class CodexHistory {
             if (!(await lstat(parent)).isDirectory()) throw new Error("Unsafe Codex rollout directory");
           }
           let target = join(parent, basename(path));
-          try { await copyFile(path, target, constants.COPYFILE_EXCL); }
+          try { await copyHistoryFile(path, target, operation); }
           catch (error) {
             if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
             // A previous interrupted save may have left a copy. Never overwrite it.
             const retry = await mkdtemp(join(parent, "import-"));
             target = join(retry, basename(path));
-            try { await copyFile(path, target, constants.COPYFILE_EXCL); }
-            catch (error) { await rm(retry, { recursive: true, force: true }); throw error; }
+            try { await copyHistoryFile(path, target, operation); }
+            catch (error) { await removeSnapshot(retry); throw error; }
           }
           accept({ ...metadata, messages, rollout: relative(home, target) });
-        } catch {
-          signal.throwIfAborted();
+        } catch (error) {
+          operation.throwIfAborted();
+          logHistoryFailure("import", error);
           failed.push(id);
         }
       }

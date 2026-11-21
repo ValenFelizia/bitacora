@@ -54,6 +54,7 @@ export type CodexImportMessage =
   | { type: "codexImportProblem"; text: string };
 export type ClientCommand =
   | { type: "listCodexChats" }
+  | { type: "cancelCodexChatList" }
   | { type: "importCodexChats"; ids: string[] }
   | { type: "undo"; id: string }
   | { type: "discardUndo"; id: string }

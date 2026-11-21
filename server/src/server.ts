@@ -8,6 +8,7 @@ import { problemText, EngineFailure } from "./engine";
 import type { ClientCommand, ServerMessage } from "./contracts";
 import { App } from "./app";
 import type { CodexHistory } from "./codex/history";
+import { HistoryProblem } from "./codex/history-snapshot";
 import { desktopAssets } from "./desktop-assets";
 import { DICTATION_PATH } from "./dictation";
 import { handleDictation } from "./dictation-http";
@@ -121,6 +122,8 @@ export async function serve(
     );
   });
   sockets.on("connection", (ws) => {
+    let historyListing: AbortController | undefined;
+    ws.on("close", () => historyListing?.abort());
     ws.on("error", () => ws.terminate());
     send(ws, { type: "snapshot", state: app.snapshot() });
     ws.on("message", (data) => {
@@ -129,14 +132,19 @@ export async function serve(
           const command = JSON.parse(String(data)) as ClientCommand;
           if (
             !command ||
-            !["discardUndo", "undo", "connect", "retry", "prepareProtection", "send", "rename", "interrupt", "answer", "skipQuestion", "chooseModel", "refreshModels", "panelWidth", "welcome", "skipWelcome", "markOpened", "listCodexChats", "importCodexChats"].includes(command.type)
+            !["discardUndo", "undo", "connect", "retry", "prepareProtection", "send", "rename", "interrupt", "answer", "skipQuestion", "chooseModel", "refreshModels", "panelWidth", "welcome", "skipWelcome", "markOpened", "listCodexChats", "cancelCodexChatList", "importCodexChats"].includes(command.type)
           )
             throw new Error("Invalid message");
-          await app.command(command, (message) => send(ws, message));
+          if (command.type === "listCodexChats" || command.type === "cancelCodexChatList") {
+            historyListing?.abort();
+            if (command.type === "cancelCodexChatList") return;
+            historyListing = new AbortController();
+          }
+          await app.command(command, (message) => send(ws, message), historyListing?.signal);
         } catch (error) {
           send(ws, {
             type: "problem",
-            text: error instanceof FileProblem ? error.message : problemText(
+            text: error instanceof FileProblem || error instanceof HistoryProblem ? error.message : problemText(
               error instanceof EngineFailure ? error.kind : "other",
             ),
             detail: String(error),

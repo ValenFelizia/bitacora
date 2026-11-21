@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import type { CodexHistory } from "./codex/history";
+import { HistoryProblem, logHistoryFailure } from "./codex/history-snapshot";
 import { Backups, BACKUP_LIMITS, RestoreProblem, pathKey } from './backups';
 import { mkdir, readFile, writeFile, rename, copyFile, rm } from "node:fs/promises";
 import { WorkspaceFiles, MAX_RESULT, type FileScan } from "./workspace-files";
@@ -134,7 +135,7 @@ export class App {
   private catalogueRequest = 0;
   private listing = false;
   private historyAbort = new AbortController();
-  private historyList?: ReturnType<CodexHistory["list"]>;
+  private historyLists = new Set<ReturnType<CodexHistory["list"]>>();
   private historyImport?: Promise<void>;
   constructor(
     private engine: Engine,
@@ -756,18 +757,25 @@ export class App {
   async command(
     command: ClientCommand,
     reply: (message: ServerMessage) => void,
+    listing?: AbortSignal,
   ) {
+    if (command.type === "cancelCodexChatList") return;
     if (command.type === "listCodexChats") {
+      const signal = listing ? AbortSignal.any([listing, this.historyAbort.signal]) : this.historyAbort.signal;
+      const list = this.codexHistory && this.workspace
+        ? this.codexHistory.list(this.workspace.root, signal)
+        : Promise.resolve([]);
+      this.historyLists.add(list);
       try {
-        const chats = this.codexHistory && this.workspace
-          ? await (this.historyList ??= this.codexHistory.list(this.workspace.root, this.historyAbort.signal)
-            .finally(() => { this.historyList = undefined; }))
-          : [];
+        const chats = await list;
+        if (signal.aborted) return;
         const known = new Set(this.works.map(work => work.conversationId));
         reply({ type: "codexChats", chats: chats.map(chat => ({ ...chat, imported: known.has(chat.id) })) });
-      } catch {
-        reply({ type: "codexImportProblem", text: "No pude ver tus chats de Codex. Probá de nuevo." });
-      }
+      } catch (error) {
+        if (signal.aborted) return;
+        logHistoryFailure("list", error);
+        reply({ type: "codexImportProblem", text: error instanceof HistoryProblem ? error.message : "No pude ver tus chats de Codex. Probá de nuevo." });
+      } finally { this.historyLists.delete(list); }
       return;
     }
     if (command.type === "importCodexChats") {
@@ -777,8 +785,10 @@ export class App {
       }
       try {
         await (this.historyImport = this.importCodexChats(command.ids, reply));
-      } catch {
-        reply({ type: "codexImportProblem", text: "No pude terminar de traer tus chats. Volvé a abrir la lista para revisar cuáles quedaron guardados." });
+      } catch (error) {
+        if (this.historyAbort.signal.aborted) return;
+        logHistoryFailure("import batch", error);
+        reply({ type: "codexImportProblem", text: error instanceof HistoryProblem ? error.message : "No pude terminar de traer tus chats. Volvé a abrir la lista para revisar cuáles quedaron guardados." });
       } finally { this.historyImport = undefined; }
       return;
     }
@@ -1163,8 +1173,6 @@ export class App {
     }
   }
   async close() {
-    this.historyAbort.abort();
-    await Promise.allSettled([this.historyList, this.historyImport]);
     clearTimeout(this.flushTimer);
     // The desktop shell gives us a short grace period. Queue the current
     // transcript before waiting for titles, scans or Codex shutdown.
@@ -1176,6 +1184,8 @@ export class App {
       this.dirty = true;
     }
     if (this.dirty) this.changed();
+    this.historyAbort.abort();
+    const historyStopped = Promise.allSettled([...this.historyLists, this.historyImport]);
     // A title already on its way gets a short, bounded chance to finish before
     // the engine stops. If it does not, the work stays pending and the next
     // start titles it.
@@ -1188,7 +1198,7 @@ export class App {
     ]);
     await this.engine.close();
     this.unsubscribe?.();
-    await Promise.all(this.scans);
+    await Promise.all([historyStopped, ...this.scans]);
     // Stopping the engine settles whatever title request was still in flight,
     // so nothing writes after close() returns.
     await Promise.all([...this.titleTasks].map((task) => task.catch(() => {})));

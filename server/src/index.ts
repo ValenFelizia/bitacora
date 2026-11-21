@@ -1,6 +1,7 @@
 import { paths, preparePaths } from "./paths";
 import { CodexEngine } from "./codex/engine";
 import { CodexHistory } from "./codex/history";
+import { sweepHistorySnapshots } from "./codex/history-snapshot";
 import { serve } from "./server";
 import { isScreenSecret } from "./screen-session";
 import { join } from "node:path";
@@ -35,6 +36,7 @@ async function readDesktopSecret(): Promise<string> {
 }
 const runtime = fileURLToPath(new URL("../", import.meta.url));
 const locations = await preparePaths(paths());
+void sweepHistorySnapshots();
 const desktop = installed ? {
   webRoot: join(runtime, "web"),
   kitSource: join(runtime, "kit", "turismo"),

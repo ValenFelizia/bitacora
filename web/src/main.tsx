@@ -422,7 +422,7 @@ function App() {
   useEffect(() => {
     if (!navOpen && !deliverablesOpen) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
+      if (e.key !== "Escape" || document.querySelector("dialog:modal")) return;
       if (navOpen) {
         setNavOpen(false);
         navToggleRef.current?.focus();

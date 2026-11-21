@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, utimes, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { WebSocket } from "ws";
 import { CodexHistory } from "../src/codex/history";
+import { sweepHistorySnapshots } from "../src/codex/history-snapshot";
+import { App } from "../src/app";
+import { WorkspaceFiles } from "../src/workspace-files";
 import type { ClientCommand, ServerMessage } from "../src/contracts";
 import { serve } from "../src/server";
 import { FakeEngine } from "./fake-engine";
@@ -17,13 +20,13 @@ const ids = [
 ];
 const origin = "http://127.0.0.1:5173";
 
-async function fixtureRollout(home: string, id: string, cwd: string, day: string, archived = false) {
+async function fixtureRollout(home: string, id: string, cwd: string, day: string, archived = false, source: unknown = "cli") {
   const folder = archived ? join(home, "archived_sessions") : join(home, "sessions", "2026", "11", day);
   await mkdir(folder, { recursive: true });
   const timestamp = "2026-11-" + day + "T12:00:00.000Z";
   const file = join(folder, "rollout-2026-11-" + day + "T12-00-00-" + id + ".jsonl");
   const body = [
-    { type: "session_meta", payload: { id, timestamp, cwd, originator: "codex_cli_rs", cli_version: "0.168.0", source: "cli", model_provider: "openai" } },
+    { type: "session_meta", payload: { id, timestamp, cwd, originator: "codex_cli_rs", cli_version: "0.168.0", source, model_provider: "openai" } },
     { type: "event_msg", payload: { type: "task_started", turn_id: id } },
     { type: "event_msg", payload: { type: "user_message", message: "Guardá la palabra jacarandá.", images: [], local_images: [], text_elements: [] } },
     { type: "response_item", payload: { type: "message", role: "user", content: [{ type: "input_text", text: "Guardá la palabra jacarandá." }] } },
@@ -38,12 +41,12 @@ async function fixtureRollout(home: string, id: string, cwd: string, day: string
   return file;
 }
 
-async function readTree(path: string, folder = ""): Promise<[string, Buffer][]> {
-  const results: [string, Buffer][] = [];
+async function readTree(path: string, folder = ""): Promise<[string, number, Buffer][]> {
+  const results: [string, number, Buffer][] = [];
   for (const entry of await readdir(join(path, folder), { withFileTypes: true })) {
     const child = join(folder, entry.name);
     if (entry.isDirectory()) results.push(...await readTree(path, child));
-    else if (entry.isFile()) results.push([child, await readFile(join(path, child))]);
+    else if (entry.isFile()) results.push([child, (await stat(join(path, child))).mtimeMs, await readFile(join(path, child))]);
   }
   return results;
 }
@@ -83,12 +86,15 @@ test("Codex history lists both folders, imports two chosen chats once, and resum
   const alias = join(root, "Junction");
   await mkdir(workspace);
   await symlink(workspace, alias, "junction");
-  const current = await fixtureRollout(source, ids[0], alias, "17");
-  const archived = await fixtureRollout(source, ids[1], join(root, "Otra carpeta"), "19", true);
-  await fixtureRollout(source, ids[2], workspace.toUpperCase().replaceAll("\\", "/"), "15");
+  const current = await fixtureRollout(source, ids[0], alias, "17", false, "vscode");
+  const archived = await fixtureRollout(source, ids[1], join(root, "Otra carpeta"), "19", true, "exec");
+  await fixtureRollout(source, ids[2], workspace.toUpperCase().replaceAll("\\", "/"), "15", false, "mcp");
+  await fixtureRollout(source, "019ac000-0000-7000-8000-000000000004", workspace, "21", false, { subagent: "review" });
+  await writeFile(join(source, "state_5.sqlite"), "state copy interrupted");
+  await writeFile(join(source, "state_5.sqlite-wal"), "wal copy interrupted");
   await writeFile(join(source, "auth.json"), '{"auth":"untouched fixture"}');
   await writeFile(join(source, "config.toml"), 'model_provider="not-a-provider"\n');
-  await writeFile(join(source, "session_index.jsonl"), JSON.stringify({ id: ids[0], thread_name: "Nombre del chat", updated_at: "2026-11-17T12:00:00Z" }) + "\n");
+  await writeFile(join(source, "session_index.jsonl"), JSON.stringify({ id: ids[0], thread_name: "Nombre del chat", updated_at: "2026-11-17T12:00:00Z", rollout_path: current }) + "\n");
   const before = await readTree(source);
   const makeServer = (engine: FakeEngine) => serve(engine, data, 0, origin, workspace, undefined, screenSecret,
     new CodexHistory(source, join(data, "codex")));
@@ -168,4 +174,120 @@ test("a missing or empty Codex home returns an empty list without launching Code
   assert.deepEqual(await history.list(root, signal), []);
   await mkdir(join(home, "sessions"), { recursive: true });
   assert.deepEqual(await history.list(root, signal), []);
+});
+
+test("a selected import copies only its rollout and honors snapshot size and time limits", async t => {
+  await mkdir(".local", { recursive: true });
+  const root = await mkdtemp(resolve(".local/codex-history-limits-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const source = join(root, "source");
+  const home = join(root, "codex");
+  await fixtureRollout(source, ids[0], root, "17");
+  const unselected = await fixtureRollout(source, ids[1], root, "18");
+  await writeFile(unselected, Buffer.alloc(16_384));
+  const signal = new AbortController().signal;
+  const history = new CodexHistory(source, home, undefined, { maxBytes: 8192, timeoutMs: 10_000 });
+  await assert.rejects(history.list(root, signal), /ocupan demasiado espacio/);
+  const imported: string[] = [];
+  assert.deepEqual(await history.import([ids[0]], signal, chat => imported.push(chat.id)), []);
+  assert.deepEqual(imported, [ids[0]]);
+
+  const timed = new CodexHistory(source, home, undefined, { maxBytes: 32768, timeoutMs: 0 });
+  await assert.rejects(timed.list(root, signal), /tardó demasiado/);
+});
+
+test("closing the selector cancels its listing without sending an old result", async t => {
+  await mkdir(".local", { recursive: true });
+  const root = await mkdtemp(resolve(".local/codex-history-cancel-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  let started!: () => void;
+  const listingStarted = new Promise<void>(done => { started = done; });
+  let aborted!: () => void;
+  const listingAborted = new Promise<void>(done => { aborted = done; });
+  class SlowList extends CodexHistory {
+    calls = 0;
+    override async list(_workspace: string, signal: AbortSignal) {
+      if (++this.calls === 1) {
+        const cancel = once(signal, "abort", { signal: AbortSignal.timeout(10_000) });
+        started();
+        await cancel;
+        aborted();
+        return [{ id: ids[0], title: "Viejo", date: "", folder: "", sameFolder: false }];
+      }
+      return [];
+    }
+  }
+  const server = await serve(new FakeEngine(), join(root, "data"), 0, origin, join(root, "workspace"), undefined,
+    screenSecret, new SlowList(root, join(root, "data", "codex")));
+  const socket = new WebSocket("ws://127.0.0.1:" + server.port + "/ws", screenProtocols, { origin });
+  try {
+    await once(socket, "open");
+    const messages: ServerMessage[] = [];
+    socket.on("message", raw => messages.push(JSON.parse(String(raw))));
+    socket.send(JSON.stringify({ type: "listCodexChats" }));
+    await listingStarted;
+    socket.send(JSON.stringify({ type: "cancelCodexChatList" }));
+    await listingAborted;
+    const result = await request(socket, { type: "listCodexChats" }, "codexChats");
+    assert.deepEqual(result.chats, []);
+    assert.deepEqual(messages.filter(message => message.type === "codexChats"), [result]);
+  } finally { socket.terminate(); await server.close(); }
+});
+
+test("closing queues the buffered reply before waiting for an import to clean up", async t => {
+  await mkdir(".local", { recursive: true });
+  const root = await mkdtemp(resolve(".local/codex-history-shutdown-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  let endImport!: () => void;
+  const cleanup = new Promise<void>(done => { endImport = done; });
+  let started!: () => void;
+  const importing = new Promise<void>(done => { started = done; });
+  let aborted!: () => void;
+  const importAborted = new Promise<void>(done => { aborted = done; });
+  class SlowImport extends CodexHistory {
+    override async import(_ids: string[], signal: AbortSignal): Promise<string[]> {
+      const cancel = once(signal, "abort", { signal: AbortSignal.timeout(10_000) });
+      started();
+      await cancel;
+      aborted();
+      await cleanup;
+      return [];
+    }
+  }
+  const data = join(root, "data");
+  const engine = new FakeEngine();
+  const app = new App(engine, data, () => {}, undefined, new WorkspaceFiles(join(root, "workspace")),
+    undefined, new SlowImport(root, join(data, "codex")));
+  await app.start();
+  await app.command({ type: "send", text: "Pedido" }, () => {});
+  const pending = app.command({ type: "importCodexChats", ids: [ids[0]] }, () => {});
+  await importing;
+  engine.emit({ type: "message", conversationId: "conversation-1", id: "reply", text: "Respuesta en curso", delta: true });
+  const closed = app.close();
+  try {
+    await importAborted;
+    const until = Date.now() + 5000;
+    const saved = join(data, "works.json");
+    while (Date.now() < until && !(await readFile(saved, "utf8").catch(() => "")).includes("Respuesta en curso"))
+      await new Promise(resolve => setTimeout(resolve, 20));
+    assert.match(await readFile(saved, "utf8"), /Respuesta en curso/);
+  } finally { endImport(); await Promise.all([closed, pending]); }
+});
+
+test("startup cleanup removes expired snapshots and leaves active or unrelated folders", async t => {
+  await mkdir(".local", { recursive: true });
+  const root = await mkdtemp(resolve(".local/codex-history-sweep-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const now = Date.now();
+  const stale = "bitacora-codex-history-old";
+  const active = "bitacora-codex-history-" + process.pid + "-active";
+  const fresh = "bitacora-codex-history-fresh";
+  const unrelated = "unrelated";
+  for (const name of [stale, active, fresh, unrelated]) {
+    const path = join(root, name);
+    await mkdir(path);
+    if (name !== fresh) await utimes(path, new Date(0), new Date(0));
+  }
+  await sweepHistorySnapshots(root, now);
+  assert.deepEqual((await readdir(root)).sort(), [active, fresh, unrelated].sort());
 });
