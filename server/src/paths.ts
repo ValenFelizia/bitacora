@@ -3,14 +3,14 @@ import { join, resolve, relative, isAbsolute, sep } from "node:path";
 import { dirname, basename } from 'node:path';
 import { mkdir, realpath } from 'node:fs/promises';
 
-async function actualPath(path: string): Promise<string> {
+export async function actualPath(path: string): Promise<string> {
   try { return await realpath(path); }
   catch(e) {
     if ((e as NodeJS.ErrnoException).code !== 'ENOENT' || dirname(path) === path) throw e;
     return join(await actualPath(dirname(path)),basename(path));
   }
 }
-function inside(root: string, target: string) {
+export function inside(root: string, target: string) {
   const path = relative(root, target);
   return path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path);
 }

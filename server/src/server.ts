@@ -10,8 +10,11 @@ import { App } from "./app";
 import { desktopAssets } from "./desktop-assets";
 import { DICTATION_PATH } from "./dictation";
 import { handleDictation } from "./dictation-http";
-import { WorkspaceProblem, type WorkspaceChoice, type WorkspaceSelection } from "./workspace-selection";
+import { SAVED_FOLDER_UNAVAILABLE, WorkspaceProblem, type WorkspaceChoice, type WorkspaceSelection } from "./workspace-selection";
 import { DEV_SESSION_PATH, isScreenSecret, SCREEN_PROTOCOL } from "./screen-session";
+
+const SHUTDOWN_PROBLEM =
+  "No pude cambiar de carpeta porque algo de lo que estaba haciendo acá sigue abierto. Lo sigo intentando cerrar. Cuando termine, elegí la carpeta de nuevo.";
 
 export async function serve(
   engine: Engine,
@@ -26,6 +29,8 @@ export async function serve(
     initial: WorkspaceChoice;
     notice?: string;
     engineFor: (choice: WorkspaceChoice) => Engine;
+    /** Wait between background checks for an engine that did not stop. */
+    recoveryDelayMs?: number;
   },
 ) {
   if (!isScreenSecret(screenSecret)) throw new Error("Invalid screen session");
@@ -115,9 +120,105 @@ export async function serve(
   let commands = 0;
   let switching: Promise<void> | undefined;
   let closing = false;
+  // Set while something the current engine started could not be confirmed
+  // stopped: no other engine may start until it is gone.
+  let shutdownPending = false;
+  let pendingDefaultFallback = false;
+  let recovery: Promise<void> | undefined;
+  let recoveryTimer: NodeJS.Timeout | undefined;
+
+  function reopenCurrent() {
+    if (closing || !folders || !active.choice) return;
+    active = { ...active, engine: folders.engineFor(active.choice) };
+    void active.app.restartEngine(active.engine);
+  }
+
+  /**
+   * Stops the current engine and everything it started, with bounded waits.
+   * When something survives, the app stays on this folder without an engine,
+   * says so, and keeps checking in the background until it is gone.
+   */
+  async function stopCurrent() {
+    try {
+      await active.app.close(true);
+      shutdownPending = false;
+    } catch (error) {
+      shutdownPending = true;
+      active.app.showShutdownProblem();
+      scheduleRecovery();
+      throw new WorkspaceProblem(SHUTDOWN_PROBLEM, { cause: error });
+    }
+  }
+
+  function scheduleRecovery() {
+    clearTimeout(recoveryTimer);
+    if (closing || !folders) return;
+    recoveryTimer = setTimeout(() => {
+      recoveryTimer = undefined;
+      if (closing || !shutdownPending) return;
+      if (switching || recovery) { scheduleRecovery(); return; }
+      // A failed attempt schedules the next one from stopCurrent().
+      void recoverShutdown().catch(() => {});
+    }, folders.recoveryDelayMs ?? 3000);
+    recoveryTimer.unref?.();
+  }
+
+  /**
+   * Confirms that what the last engine left running is gone, then gives the
+   * app a fresh engine: in the same folder, or in the default folder when the
+   * saved one could not start. One attempt at a time.
+   */
+  function recoverShutdown() {
+    recovery ??= (async () => {
+      await stopCurrent();
+      if (closing) return;
+      if (pendingDefaultFallback) {
+        await fallbackToDefault();
+        pendingDefaultFallback = false;
+        void active.app.startEngine(true);
+      } else reopenCurrent();
+    })().finally(() => { recovery = undefined; });
+    return recovery;
+  }
+
+  /**
+   * Opens the default folder when the saved one cannot start. The saved choice
+   * is kept: a failure that goes away (a busy disk, a slow start) must not
+   * make the person choose the folder again, and the next start that fails
+   * lands here again instead of closing the app.
+   */
+  async function fallbackToDefault() {
+    if (!folders) return;
+    const choice = folders.selection.defaultChoice;
+    const fallback = runtime(folders.engineFor(choice), choice.root, choice, SAVED_FOLDER_UNAVAILABLE);
+    await fallback.app.initialize();
+    active = fallback;
+    broadcast({ type: "snapshot", state: active.app.snapshot() });
+  }
+
+  async function startEngine() {
+    const initial = active;
+    try { await initial.app.startEngine(); }
+    catch (error) {
+      if (switching) await switching.catch(() => {});
+      if (initial !== active || closing) return;
+      if (!initial.choice?.key) throw error;
+      pendingDefaultFallback = true;
+      switching = (async () => {
+        try { await stopCurrent(); } catch { return; }
+        if (closing) return;
+        await fallbackToDefault();
+        pendingDefaultFallback = false;
+        if (!closing) await active.app.startEngine(true);
+      })();
+      try { await switching; } finally { switching = undefined; }
+    }
+  }
 
   async function chooseWorkspace(path: unknown, reply: (message: ServerMessage) => void) {
     if (!folders || !active.choice) throw new Error("Workspace choice unavailable");
+    if (recovery)
+      throw new WorkspaceProblem("Estoy terminando de cerrar lo que quedó abierto. Esperá un momento y probá de nuevo.");
     if (closing || switching || commands || active.app.workspaceBusy)
       throw new WorkspaceProblem("Esperá a que termine el pedido actual o pausalo para cambiar de carpeta.");
 
@@ -125,7 +226,20 @@ export async function serve(
     const previousChoice = active.choice;
     switching = (async () => {
       const choice = await folders.selection.validate(path);
-      if (choice.root === previousChoice.root) return;
+      if (choice.root === previousChoice.root) {
+        if (shutdownPending) {
+          // The person chose this folder again: stay here, not in the default.
+          pendingDefaultFallback = false;
+          await recoverShutdown();
+        }
+        // After a startup fallback the saved choice still names the folder
+        // that failed; choosing the open one replaces it.
+        try { await folders.selection.save(choice); }
+        catch (error) {
+          throw new WorkspaceProblem("No pude guardar el cambio de carpeta. Probá de nuevo.", { cause: error });
+        }
+        return;
+      }
 
       const next = runtime(folders.engineFor(choice), choice.root, choice);
       try {
@@ -137,17 +251,17 @@ export async function serve(
 
       if (previous.app.workspaceBusy)
         throw new WorkspaceProblem("Esperá a que termine el pedido actual o pausalo para cambiar de carpeta.");
-      await previous.app.close(true);
+      // A delayed exit may settle during a second bounded drain. Keep ownership
+      // of the old engine when it cannot yet be confirmed.
+      await stopCurrent().catch(() => stopCurrent());
       try {
         await folders.selection.save(choice);
       } catch (error) {
-        if (!closing) {
-          active = { ...previous, engine: folders.engineFor(previousChoice) };
-          void active.app.restartEngine(active.engine);
-        }
+        reopenCurrent();
         throw new WorkspaceProblem("No pude guardar el cambio de carpeta. Probá de nuevo.", { cause: error });
       }
 
+      pendingDefaultFallback = false;
       active = next;
       broadcast({ type: "snapshot", state: next.app.snapshot() });
       if (!closing) void next.app.startEngine(true);
@@ -219,12 +333,17 @@ export async function serve(
             return;
           }
           commands++;
-          try { await active.app.command(command, (message) => send(ws, message)); }
+          try {
+            if (command.type === "retry" && shutdownPending) {
+              await recoverShutdown();
+              return;
+            }
+            await active.app.command(command, (message) => send(ws, message)); }
           finally { commands--; }
         } catch (error) {
           send(ws, {
             type: "problem",
-            text: error instanceof FileProblem ? error.message : problemText(
+            text: error instanceof FileProblem || error instanceof WorkspaceProblem ? error.message : problemText(
               error instanceof EngineFailure ? error.kind : "other",
             ),
             detail: String(error),
@@ -234,8 +353,12 @@ export async function serve(
     });
   });
   try {
-    if (desktop) await active.app.initialize();
-    else await active.app.start();
+    try { await active.app.initialize(!!active.choice?.key); }
+    catch (error) {
+      if (!active.choice?.key) throw error;
+      await fallbackToDefault();
+    }
+    if (!desktop) await startEngine();
     await new Promise<void>((resolve, reject) => {
       http.once("error", reject);
       http.listen(port, "127.0.0.1", () => {
@@ -250,22 +373,17 @@ export async function serve(
   return {
     // Local lifecycle handle; never serialized or exposed over HTTP/WebSocket.
     get app() { return active.app; },
-    async startEngine() {
-      const initial = active;
-      try { await initial.app.startEngine(); }
-      catch (error) {
-        if (switching) await switching.catch(() => {});
-        if (initial === active && !closing) throw error;
-      }
-    },
+    startEngine,
     port: boundPort(),
     async close() {
       closing = true;
+      clearTimeout(recoveryTimer);
       for (const ws of sockets.clients) ws.terminate();
       await new Promise<void>((resolve) => sockets.close(() => resolve()));
       http.closeAllConnections?.();
       await new Promise<void>((resolve) => http.close(() => resolve()));
       await switching?.catch(() => {});
+      await recovery?.catch(() => {});
       await active.app.close();
     },
   };

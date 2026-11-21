@@ -54,7 +54,7 @@ import {
 import { protectionText, protectionWarning } from "./protection-text";
 import { Welcome, type WelcomeAnswer } from "./welcome";
 import { WorkspaceControl } from "./workspace-control";
-import { pickWorkspace } from "./workspace-picker";
+import { FolderPickerProblem, pickWorkspace } from "./workspace-picker";
 import { suggestedRoutes } from "../../server/src/welcome";
 import {
   appendReadFiles,
@@ -213,6 +213,14 @@ function App() {
   const [welcomeSending, setWelcomeSending] = useState(false);
   const [folderAction, setFolderAction] = useState<"picking" | "changing">();
   const [folderProblem, setFolderProblem] = useState<string>();
+  useEffect(() => {
+    if (folderAction !== "changing") return;
+    const timer = window.setTimeout(() => {
+      setFolderAction(undefined);
+      setFolderProblem("El cambio está tardando. Revisá la carpeta que aparece antes de seguir.");
+    }, 90_000);
+    return () => window.clearTimeout(timer);
+  }, [folderAction]);
   const displayedWorkspace = useRef<string | undefined>(undefined);
   const [login, setLogin] = useState<string>();
   const loginWindow = useRef<Window | null>(null);
@@ -617,9 +625,9 @@ function App() {
       );
       if (generation === draftGeneration.current) setProblem(undefined);
     } catch (error) {
-      setProblem({ text: String((error as Error).message) });
+      if (generation === draftGeneration.current) setProblem({ text: String((error as Error).message) });
     } finally {
-      setReadingFiles(false);
+      if (generation === draftGeneration.current) setReadingFiles(false);
     }
   }
 
@@ -784,18 +792,24 @@ function App() {
     setFolderProblem(undefined);
     setFolderAction("picking");
     try {
-      const path = await pickWorkspace(state.workspace);
+      const path = await pickWorkspace(state.workspace, changeWorkspace);
       if (!path) {
         setFolderAction(undefined);
         return;
       }
-      if (socket.current?.readyState !== WebSocket.OPEN) throw new Error("Offline");
-      setFolderAction("changing");
-      sendQuietly({ type: "chooseWorkspace", path });
-    } catch {
+      if (!changeWorkspace(path)) throw new Error("Offline");
+    } catch (error) {
       setFolderAction(undefined);
-      setFolderProblem("No pude elegir la carpeta. Probá de nuevo.");
+      setFolderProblem(error instanceof FolderPickerProblem ? error.message : "No pude elegir la carpeta. Probá de nuevo.");
     }
+  }
+
+  function changeWorkspace(path: string) {
+    if (socket.current?.readyState !== WebSocket.OPEN) return false;
+    setFolderProblem(undefined);
+    setFolderAction("changing");
+    sendQuietly({ type: "chooseWorkspace", path });
+    return true;
   }
 
   const workspaceControl = state.workspace && (

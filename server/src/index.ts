@@ -3,7 +3,8 @@ import { CodexEngine } from "./codex/engine";
 import { serve } from "./server";
 import { WorkspaceSelection, type WorkspaceChoice } from "./workspace-selection";
 import { isScreenSecret } from "./screen-session";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { protectedWorkspaceFolders } from "./protected-folders";
 import { fileURLToPath } from "node:url";
 
 const installed = process.argv.includes("--desktop");
@@ -38,13 +39,26 @@ const desktop = installed ? {
   webRoot: join(runtime, "web"),
   kitSource: join(runtime, "kit", "turismo"),
 } : undefined;
-const selection = new WorkspaceSelection(locations.workspace, locations.data);
+const configuredBinary = installed ? join(runtime, "codex", "bin", "codex.exe") : process.env.BITACORA_CODEX_BIN;
+let binary = configuredBinary;
+if (!binary) {
+  try { binary = (await import("../../scripts/codex-runtime.mjs")).codexBinary(); }
+  catch { /* The engine reports an unavailable binary on start. */ }
+}
+const appPaths = [installed ? runtime : fileURLToPath(new URL(".", import.meta.url))];
+if (installed && process.env.BITACORA_INSTALL_DIR) appPaths.push(process.env.BITACORA_INSTALL_DIR);
+if (binary) appPaths.push(dirname(binary));
+const selection = new WorkspaceSelection(locations.workspace, locations.data, protectedWorkspaceFolders(appPaths));
+// Only a configuration error can put the default folder here; a saved folder
+// that cannot open falls back to the default instead of closing the app.
+await selection.refuseProtected(locations.workspace);
 const { choice, notice } = await selection.load();
 const engineFor = (folder: WorkspaceChoice) => new CodexEngine({
   home: locations.codexHome,
   workspace: folder.root,
   workspaceData: folder.data,
-  binary: installed ? join(runtime, "codex", "bin", "codex.exe") : process.env.BITACORA_CODEX_BIN,
+  binary,
+  verifyWorkspaceProtection: true,
   mcpEntry: installed ? join(runtime, "server", "mcp.mjs") : undefined,
 });
 const server = await serve(

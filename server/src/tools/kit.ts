@@ -1,6 +1,6 @@
 import { readdir, mkdir, realpath, stat } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AgencyFiles } from './paths';
 
@@ -40,11 +40,14 @@ async function refreshKitSkills(
   await copy('.');
 }
 
-async function kitState(state: AgencyFiles, marker: string, identity: string): Promise<'copying' | 'ready' | undefined> {
+async function kitState(state: AgencyFiles, marker: string, root: string, identity: string) {
   try {
     const saved: unknown = JSON.parse(await state.read(marker));
-    if (!saved || typeof saved !== 'object' || !('identity' in saved) || saved.identity !== identity) return;
-    if ('status' in saved && (saved.status === 'copying' || saved.status === 'ready')) return saved.status;
+    if (!saved || typeof saved !== 'object' || !('workspace' in saved) ||
+        typeof saved.workspace !== 'string' || !isAbsolute(saved.workspace) || relative(saved.workspace, root)) return;
+    if ('version' in saved && saved.version === 1) return 'legacy';
+    if (!('identity' in saved) || saved.identity !== identity) return;
+    if ('status' in saved && (saved.status === 'copying' || saved.status === 'ready' || saved.status === 'add-only')) return saved.status;
   } catch (error) {
     if (!(error instanceof SyntaxError) && !(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
   }
@@ -64,10 +67,10 @@ export async function initializeKit(
   const target = new AgencyFiles(root);
   const state = new AgencyFiles(data);
   const marker = `kit-initialized-${createHash('sha256').update(root.toLowerCase()).digest('hex')}.json`;
-  const previous = await kitState(state, marker, identity);
+  const previous = await kitState(state, marker, root, identity);
   const copyFullKit = (await readdir(root)).length === 0 || previous === 'copying';
 
-  async function saveMarker(status: 'copying' | 'ready') {
+  async function saveMarker(status: 'copying' | 'ready' | 'add-only') {
     await state.write(marker, JSON.stringify({ version: 2, workspace: root, identity, status }), false);
   }
   async function copy(dir: string) {
@@ -85,10 +88,12 @@ export async function initializeKit(
   if (copyFullKit) {
     await saveMarker('copying');
     await copy('.');
+  } else if (previous === 'legacy') {
     await saveMarker('ready');
   }
   try {
-    await refreshKitSkills(target, kitSource, copyFullKit || previous === 'ready');
+    await refreshKitSkills(target, kitSource, !copyFullKit && (previous === 'ready' || previous === 'legacy'));
+    if (copyFullKit) await saveMarker(previous === 'copying' ? 'add-only' : 'ready');
     return {};
   } catch (error) {
     return { skillsError: String(error) };

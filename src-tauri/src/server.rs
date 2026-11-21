@@ -64,7 +64,9 @@ impl Server {
             return Err(io::ErrorKind::Interrupted.into());
         }
         let job = create_job()?;
+        let executable = std::env::current_exe()?;
         let mut child = Command::new(runtime.join("node.exe"))
+            .env("BITACORA_INSTALL_DIR", executable.parent().unwrap_or(runtime))
             // Windows may return the resource directory in verbatim form.
             // Node resolves the entry relative to the working directory.
             .arg("server/index.mjs")

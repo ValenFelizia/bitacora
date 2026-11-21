@@ -56,11 +56,17 @@ pub fn install(
                     .set_parent(&window)
                     .set_title("Elegí tu carpeta de trabajo")
                     .pick_folder(move |folder| {
-                        let path = folder.and_then(|folder| folder.into_path().ok());
-                        let response = format!(
-                            "{RESPONSE}{request}:{}",
-                            path.as_deref().and_then(|path| path.to_str()).unwrap_or("")
-                        );
+                        let result = match folder {
+                            None => "cancel".to_owned(),
+                            Some(folder) => match folder.into_path() {
+                                Ok(path) => match path.to_str() {
+                                    Some(path) if !path.is_empty() => format!("ok:{path}"),
+                                    _ => "error".to_owned(),
+                                },
+                                Err(_) => "error".to_owned(),
+                            },
+                        };
+                        let response = format!("{RESPONSE}{request}:{result}");
                         let _ = reply.with_webview(move |webview| {
                             let _ = (|| -> windows_core::Result<()> {
                                 let core = webview.controller().CoreWebView2()?;

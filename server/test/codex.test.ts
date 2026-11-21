@@ -914,3 +914,55 @@ test("resuming a work that does not report a profile is not a refusal", async ()
     await f.close();
   }
 });
+
+test("elevated readiness needs a workspace check and setup uses that folder", async () => {
+  process.env.BITACORA_FAKE_WORKSPACE_PROTECTION = "1";
+  let f: Awaited<ReturnType<typeof fixture>> | undefined;
+  try {
+    f = await fixture(60_000, { verifyWorkspaceProtection: true, probeProtection: async () => false });
+    const { engine, records } = f;
+    assert.equal(engine.executionSafety().allowed, false);
+    assert.equal(engine.executionSafety().needsPermission, true);
+    await engine.prepareProtection();
+    await until(() => engine.executionSafety().allowed);
+    const entries = await records();
+    const setup = entries.find(entry => entry.method === "windowsSandbox/setupStart");
+    const probes = entries.filter(entry => entry.method === "command/exec");
+    assert.equal(probes.length, 2);
+    assert.ok(setup?.params.cwd);
+    for (const probe of probes) {
+      assert.equal(probe.params.cwd, setup.params.cwd);
+      assert.deepEqual(probe.params.sandboxPolicy.writableRoots, [setup.params.cwd]);
+      assert.equal(probe.params.sandboxPolicy.networkAccess, false);
+    }
+  } finally {
+    delete process.env.BITACORA_FAKE_WORKSPACE_PROTECTION;
+    await f?.close();
+  }
+});
+
+test("a bounded engine shutdown can be retried after remaining processes exit", async () => {
+  let leftover = true;
+  let kills = 0;
+  let releases = 0;
+  const f = await fixture(60_000, {
+    args: [resolve("server/test/stdio-server.mjs")],
+    killTimeoutMs: 100,
+    ownEngine: () => ({
+      active: () => leftover,
+      terminate: () => { kills++; },
+      close: () => { releases++; },
+    }),
+  });
+  try {
+    await assert.rejects(f.engine.close(true), /previous engine stopped/);
+    assert.equal(kills, 1);
+    assert.equal(releases, 0);
+    leftover = false;
+    await f.engine.close(true);
+    assert.equal(releases, 1);
+  } finally {
+    leftover = false;
+    await f.close();
+  }
+});

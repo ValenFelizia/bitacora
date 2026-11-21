@@ -57,6 +57,7 @@ const isQuestion = (value: unknown) => {
       !!q && isText(q.id) && isText(q.header) && isText(q.text) && typeof q.other === "boolean" && typeof q.secret === "boolean" &&
       Array.isArray(q.options) && q.options.every((o) => !!o && isText(o.label) && isText(o.description)));
 };
+const SHUTDOWN_PENDING = "Algo de lo que estaba haciendo en esta carpeta sigue abierto y puede cambiar archivos. Lo sigo intentando cerrar. También podés tocar Reintentar.";
 const WAITING_ANSWER = "Esperando tu respuesta…";
 const isSavedWork = (value: unknown) => {
   const work = value as Partial<SavedWork> | null;
@@ -456,6 +457,11 @@ export class App {
     }
     this.publish({ type: "snapshot", state: this.snapshot() });
   }
+  showShutdownProblem() {
+    this.exhausted = true;
+    this.notice = SHUTDOWN_PENDING;
+    this.publish({ type: "snapshot", state: this.snapshot() });
+  }
   /** Recover the current folder if changing the saved choice fails after stopping Codex. */
   async restartEngine(engine: Engine) {
     this.engine = engine;
@@ -463,6 +469,7 @@ export class App {
     this.available = false;
     this.failedStart = false;
     this.exhausted = false;
+    if (this.notice === SHUTDOWN_PENDING) this.notice = undefined;
     this.resumed.clear();
     this.pendingDetails = [];
     this.accountState = undefined;
