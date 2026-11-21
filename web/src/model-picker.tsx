@@ -4,7 +4,7 @@ import type { ModelState } from "../../server/src/contracts";
 import { NO_MODELS } from "../../server/src/models";
 
 const focusRing =
-  "focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2";
+  "focus-visible:outline-2 focus-visible:outline-ink focus-visible:outline-offset-2";
 
 function effortNote(effortText: string): string {
   if (/\bmuy alto\b|\bm[aá]ximo\b/i.test(effortText)) {
