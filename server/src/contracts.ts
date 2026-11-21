@@ -5,7 +5,7 @@ export type { ModelChoice, ModelState } from "./models";
 /** Narrowest and widest the deliverables panel can be dragged to, in CSS pixels. */
 export const PANEL_WIDTH = { min: 280, max: 640, default: 300 } as const;
 export type Upload = { name: string; data: string };
-export type FileRef = { id: string; path: string; name: string; mime: string; createdAt: string; reverted?: boolean };
+export type FileRef = { id: string; path: string; name: string; mime: string; createdAt: string; reverted?: boolean; openedAt?: string };
 export type Message = { id: string; role: "user" | "assistant"; text: string; attachments?: FileRef[]; results?: FileRef[] };
 /** Questions the agent asked in a work, waiting for the user or no longer answerable. */
 export type PendingQuestion = {
@@ -67,7 +67,9 @@ export type ClientCommand =
   /** Answers to the welcome questions: names first, then what she will use it for. */
   | { type: "welcome"; answers: { agency: string; person: string; uses: string[]; other?: string } }
   /** The welcome is closed without answers. */
-  | { type: "skipWelcome" };
+  | { type: "skipWelcome" }
+  /** Deliverable results opened, previewed, downloaded, or copied by the user. */
+  | { type: "markOpened"; fileIds: string[] };
 export type ServerMessage =
   | { type: "snapshot"; state: Snapshot }
   | {
