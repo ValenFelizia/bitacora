@@ -81,7 +81,11 @@ export async function serve(
   const boundPort = () => (http.address() as { port: number }).port;
   const localHost = (host?: string) => host === `127.0.0.1:${boundPort()}` ||
     (!desktop && host === `localhost:${boundPort()}`);
-  const sockets = new WebSocketServer({ noServer: true, maxPayload: Math.ceil(MAX_REQUEST / 3) * 4 + 100000 });
+  const sockets = new WebSocketServer({
+    noServer: true,
+    maxPayload: Math.ceil(MAX_REQUEST / 3) * 4 + 100000,
+    handleProtocols: () => SCREEN_PROTOCOL,
+  });
   const send = (ws: WebSocket, message: ServerMessage) => {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message));
   };
@@ -98,7 +102,6 @@ export async function serve(
   }
   http.on("upgrade", (req, socket, head) => {
     const protocols = req.headers["sec-websocket-protocol"]?.split(",").map((part) => part.trim());
-    // ws selects the first protocol. The credential stays out of the response.
     if (
       !origins.has(req.headers.origin || "") ||
       !localHost(req.headers.host) ||

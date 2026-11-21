@@ -48,7 +48,7 @@ test("desktop entry waits for stdin, announces its port, and closes on EOF", {
   const web = join(runtime, "web");
   const data = join(root, "datos");
   const workspace = join(root, "agencia");
-  const env = { ...process.env, BITACORA_DATA_DIR: data, BITACORA_WORKSPACE: workspace, BITACORA_SCREEN_SECRET: screenSecret };
+  const env = { ...process.env, BITACORA_DATA_DIR: data, BITACORA_WORKSPACE: workspace };
   try {
     await mkdir(dirname(version), { recursive: true });
     await mkdir(web, { recursive: true });
@@ -69,14 +69,15 @@ test("desktop entry waits for stdin, announces its port, and closes on EOF", {
     const lines: string[] = [];
     stdout.on("line", (line) => lines.push(line));
     try {
-      // Starting without the shell's handshake should leave the data dir untouched.
+      // A partial handshake should leave the data dir untouched.
+      child.stdin.write(screenSecret.slice(0, 32));
       await delay(300);
       assert.equal(child.exitCode, null, stderr);
-      assert.deepEqual(lines, []);
+      assert.equal(lines.length, 0);
       await assert.rejects(readFile(join(data, "codex", "config.toml")), { code: "ENOENT" });
       const ready = once(stdout, "line", { signal: AbortSignal.timeout(40_000) })
         .then(([line]) => line);
-      child.stdin.write("\n");
+      child.stdin.write(screenSecret.slice(32) + "\n");
       const line = await Promise.race([ready, closed.then(() => { throw new Error(stderr); })]);
       const port = /^BITACORA_READY (\d+)$/.exec(line)?.[1];
       assert.ok(port, line);
@@ -93,6 +94,8 @@ test("desktop entry waits for stdin, announces its port, and closes on EOF", {
       }
       child.stdin.end();
       assert.deepEqual(await closed, [0, null], stderr);
+      assert.ok(!lines.some((line) => line.includes(screenSecret)));
+      assert.ok(!stderr.includes(screenSecret));
       await assert.rejects(fetch(url));
     } finally {
       child.stdin.end();
@@ -151,7 +154,7 @@ test("desktop serves while Codex prepares, then saves buffered changes on stdin 
     });
 
     const child = spawn(process.execPath, [entry, "--desktop"], {
-      env: { ...process.env, BITACORA_DATA_DIR: data, BITACORA_WORKSPACE: workspace, BITACORA_SCREEN_SECRET: screenSecret },
+      env: { ...process.env, BITACORA_DATA_DIR: data, BITACORA_WORKSPACE: workspace },
       stdio: ["pipe", "pipe", "pipe", "ipc"], windowsHide: true,
     });
     const closed = once(child, "close");
@@ -162,7 +165,7 @@ test("desktop serves while Codex prepares, then saves buffered changes on stdin 
     const stdout = createInterface({ input: output });
     try {
       const ready = once(stdout, "line", { signal: AbortSignal.timeout(10_000) });
-      stdin.write("\n");
+      stdin.write(screenSecret + "\n");
       const [line] = await Promise.race([ready, closed.then(() => { throw new Error(stderr); })]);
       const port = /^BITACORA_READY (\d+)$/.exec(line)?.[1];
       assert.ok(port, line);

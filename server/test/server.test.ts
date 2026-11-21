@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { once } from "node:events";
 import { WebSocket } from "ws";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -57,6 +58,11 @@ test("desktop serves only bundled assets and accepts the window's assigned origi
     for (const [protocols, claimedOrigin] of [
       [[], origin],
       [[SCREEN_PROTOCOL, "0".repeat(64)], origin],
+      [[SCREEN_PROTOCOL, screenSecret.slice(1)], origin],
+      [[SCREEN_PROTOCOL, screenSecret.toUpperCase()], origin],
+      [[screenSecret], origin],
+      [[screenSecret, SCREEN_PROTOCOL], origin],
+      [[SCREEN_PROTOCOL, screenSecret, "extra"], origin],
       [screenProtocols, "http://127.0.0.1:5173"],
     ] as const) {
       const denied = new WebSocket(url, [...protocols], { origin: claimedOrigin });
@@ -68,6 +74,15 @@ test("desktop serves only bundled assets and accepts the window's assigned origi
         denied.once("error", reject);
       }));
       await waitForClose(denied);
+
+      const healthy = new WebSocket(url, screenProtocols, { origin });
+      try {
+        const [data] = await once(healthy, "message", { signal: AbortSignal.timeout(15_000) });
+        assert.equal(JSON.parse(String(data)).type, "snapshot");
+        assert.equal(healthy.protocol, SCREEN_PROTOCOL);
+      } finally {
+        await terminateAndClose(healthy);
+      }
     }
   } finally {
     await server.close();

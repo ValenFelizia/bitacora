@@ -72,7 +72,6 @@ impl Server {
             .current_dir(runtime)
             .env_remove("NODE_OPTIONS")
             .env_remove("NODE_PATH")
-            .env("BITACORA_SCREEN_SECRET", screen_secret)
             .creation_flags(CREATE_NO_WINDOW)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -111,7 +110,7 @@ impl Server {
             }
         });
         // Only now can Node start Codex and let it spawn its helpers.
-        stdin.write_all(b"\n")?;
+        stdin.write_all(format!("{screen_secret}\n").as_bytes())?;
         *active = Some(Process { child, stdin, job });
         Ok(ready)
     }

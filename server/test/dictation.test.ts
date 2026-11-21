@@ -196,7 +196,7 @@ test("dictation rejects oversized uploads with or without Content-Length", async
 });
 
 test("dictation rejects missing or wrong credentials and a foreign origin before reading audio", async (t) => {
-  const { url, headers, received, refreshes } = await setup(t, []);
+  const { send, url, headers, received, refreshes } = await setup(t, [200, 200]);
   const expectRejection = (requestHeaders: Record<string, string>) =>
     new Promise<number | undefined>((resolve, reject) => {
       const upload = request(url, {
@@ -215,8 +215,17 @@ test("dictation rejects missing or wrong credentials and a foreign origin before
   assert.equal(await expectRejection({ Origin: headers.Origin, "Content-Type": "audio/webm" }), 403);
   assert.equal(await expectRejection({ ...headers, Authorization: `Bearer ${"0".repeat(64)}` }), 403);
   assert.equal(await expectRejection({ ...headers, Origin: "https://example.org" }), 403);
-  assert.deepEqual(received, []);
+  assert.equal(received.length, 0);
   assert.deepEqual(refreshes, []);
+  for (const secret of [screenSecret.slice(1), screenSecret.toUpperCase()]) {
+    const previousRequests: number = received.length;
+    assert.equal(await expectRejection({ ...headers, Authorization: `Bearer ${secret}` }), 403);
+    assert.equal(received.length, previousRequests);
+    const healthy = await send();
+    assert.equal(healthy.status, 200);
+    await healthy.json();
+    assert.equal(received.length, previousRequests + 1);
+  }
 });
 
 test("closing the local connection aborts the pending upstream transcription", async (t) => {

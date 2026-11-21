@@ -102,6 +102,12 @@ test('HTTP files require session token, local host, allowed origin and registere
     const Origin = 'http://127.0.0.1:5173';
     assert.equal((await fetch(url, { headers: { Origin } })).status, 403);
     assert.equal((await fetch(url, { headers: { Origin, Authorization: `Bearer ${'0'.repeat(64)}` } })).status, 403);
+    for (const secret of [screenSecret.slice(1), screenSecret.toUpperCase()]) {
+      assert.equal((await fetch(url, { headers: { Origin, Authorization: `Bearer ${secret}` } })).status, 403);
+      const healthy = await fetch(url, { headers: { ...screenHeaders, Origin } });
+      assert.equal(healthy.status, 200);
+      assert.deepEqual(Buffer.from(await healthy.arrayBuffer()), png);
+    }
     assert.equal((await fetch(url + '&token=' + screenSecret, { headers: { Origin } })).status, 403);
     assert.equal((await fetch(url, { headers: { ...screenHeaders, Origin: 'https://evil.test' } })).status, 403);
     assert.equal(await new Promise<number | undefined>(resolve => get(url, { headers: { ...screenHeaders, Host: 'evil.test' } }, res => { res.resume(); resolve(res.statusCode); })), 403);

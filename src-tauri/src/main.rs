@@ -143,8 +143,8 @@ fn install_screen_script(
     window: &tauri::WebviewWindow,
     url: &Url,
     secret: &str,
-    previous_script: Option<String>,
-) -> io::Result<String> {
+    screen_script: Arc<Mutex<Option<String>>>,
+) -> io::Result<()> {
     let origin = url.origin().ascii_serialization();
     let script = format!(
         "if (window === window.top && location.origin === '{origin}') {{
@@ -157,14 +157,21 @@ fn install_screen_script(
             let installed = notify.clone();
             let result = (|| unsafe {
                 let core = webview.controller().CoreWebView2()?;
-                if let Some(id) = previous_script {
-                    core.RemoveScriptToExecuteOnDocumentCreated(&HSTRING::from(id))?;
+                {
+                    let mut previous_script = screen_script.lock().unwrap();
+                    if let Some(id) = previous_script.as_deref() {
+                        core.RemoveScriptToExecuteOnDocumentCreated(&HSTRING::from(id))?;
+                        *previous_script = None;
+                    }
                 }
                 core.AddScriptToExecuteOnDocumentCreated(
                     &HSTRING::from(script),
                     &AddScriptToExecuteOnDocumentCreatedCompletedHandler::create(Box::new(
                         move |status, id| {
-                            let _ = installed.send(status.map(|()| id).map_err(io::Error::other));
+                            let result = status.map(|()| {
+                                *screen_script.lock().unwrap() = Some(id);
+                            });
+                            let _ = installed.send(result.map_err(io::Error::other));
                             Ok(())
                         },
                     )),
@@ -188,7 +195,7 @@ fn supervise(
     reopen: mpsc::Receiver<()>,
 ) {
     let mut has_connected = false;
-    let mut screen_script = None;
+    let screen_script = Arc::new(Mutex::new(None));
     while !server.exiting() {
         let mut retried_start = false;
         let mut recovering = false;
@@ -197,12 +204,12 @@ fn supervise(
                 let secret = server::screen_secret()?;
                 let port = server::ready_port(server.start(&runtime, &secret)?)?;
                 let url = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
-                screen_script = Some(install_screen_script(
+                install_screen_script(
                     &window,
                     &url,
                     &secret,
-                    screen_script.take(),
-                )?);
+                    Arc::clone(&screen_script),
+                )?;
                 Ok::<_, io::Error>(url)
             })();
             if server.exiting() {
