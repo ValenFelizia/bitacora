@@ -29,25 +29,26 @@ export function formatTime(iso: string): string {
 
 export type DeliverableGroup = {
   id: string;
+  messageId: string;
   kind: "plates" | "images" | "file";
   title: string;
   meta: string;
   plates: FileRef[];
   /** Primary file to view/open/download when this is a single file or PDF. */
   primary: FileRef;
-  /** Every file produced in this latest batch (including plates, todas.png, piezas.pdf). */
+  /** Every file produced in this batch (including plates, todas.png, piezas.pdf). */
   allFiles: FileRef[];
 };
 
-export type GroupedDeliverables = {
+export type GroupedDeliverableBatches = {
   featured?: DeliverableGroup;
-  older: FileRef[];
+  olderGroups: DeliverableGroup[];
 };
 
 const isPlate = (file: FileRef) =>
   file.mime.startsWith("image/") && /^pieza-\d+\./i.test(file.name);
 
-const isOverview = (file: FileRef) =>
+export const isOverview = (file: FileRef) =>
   file.mime.startsWith("image/") && /^todas\./i.test(file.name);
 
 function sortPlates(files: FileRef[]): FileRef[] {
@@ -59,34 +60,28 @@ function sortPlates(files: FileRef[]): FileRef[] {
   });
 }
 
-/**
- * Groups the work's results so the chosen batch (latest by default, or the
- * requested message's batch) becomes the hero in the right panel, and files from
- * other messages stay in the `older` list without overlapping the `allFiles`
- * menu.
- */
-export function groupDeliverables(
-  work: Work | undefined,
-  messageId?: string,
-): GroupedDeliverables {
-  if (!work) return { older: [] };
-  const batches = work.messages
-    .filter((m) => m.results && m.results.length > 0)
-    .map((m) => ({ id: m.id, files: m.results! }));
+function folderKey(path: string): string {
+  const normalized = path.replaceAll("\\", "/");
+  const slash = normalized.lastIndexOf("/");
+  return slash >= 0 ? normalized.slice(0, slash) : "";
+}
 
-  if (!batches.length) return { older: [] };
+function folderTitle(dir: string, fallback: string): string {
+  if (!dir) return fallback;
+  const parts = dir.split("/").filter(Boolean);
+  // `propuestas/<destino>/salida` -> `<destino>` when `salida` is just the output folder.
+  const candidate =
+    parts.length >= 2 && parts[parts.length - 1].toLowerCase() === "salida"
+      ? parts[parts.length - 2]
+      : parts[parts.length - 1];
+  const cleaned = candidate.replace(/[-_]+/g, " ").trim();
+  return cleaned ? cleaned.charAt(0).toUpperCase() + cleaned.slice(1) : fallback;
+}
 
-  const requestedIndex = messageId
-    ? batches.findIndex((b) => b.id === messageId)
-    : -1;
-  const chosenIndex = requestedIndex >= 0 ? requestedIndex : batches.length - 1;
-  const target = batches[chosenIndex];
-  const otherFiles = batches
-    .filter((_, idx) => idx !== chosenIndex)
-    .flatMap((b) => b.files)
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-
-  const files = target.files;
+function buildDeliverableGroup(
+  batch: { id: string; messageId: string; title: string; files: FileRef[] },
+): DeliverableGroup {
+  const files = batch.files;
   const plates = sortPlates(files.filter(isPlate));
   const images = files.filter((f) => f.mime.startsWith("image/") && !isOverview(f));
   const latestTime = files.reduce(
@@ -99,32 +94,28 @@ export function groupDeliverables(
     const rest = files.filter((f) => !isPlate(f) && !isOverview(f));
     const countLabel = plates.length === 1 ? "1 placa" : `${plates.length} placas`;
     return {
-      featured: {
-        id: target.id,
-        kind: "plates",
-        title: work.title,
-        meta: `${countLabel}${timeText ? ` · ${timeText}` : ""}`,
-        plates,
-        primary: plates[0],
-        allFiles: [...plates, ...files.filter(isOverview), ...rest],
-      },
-      older: otherFiles,
+      id: batch.id,
+      messageId: batch.messageId,
+      kind: "plates",
+      title: batch.title,
+      meta: `${countLabel}${timeText ? ` · ${timeText}` : ""}`,
+      plates,
+      primary: plates[0],
+      allFiles: [...plates, ...files.filter(isOverview), ...rest],
     };
   }
 
   if (images.length >= 2) {
     const rest = files.filter((f) => !images.includes(f) && !isOverview(f));
     return {
-      featured: {
-        id: target.id,
-        kind: "images",
-        title: work.title,
-        meta: `${images.length} imágenes${timeText ? ` · ${timeText}` : ""}`,
-        plates: images,
-        primary: images[0],
-        allFiles: [...images, ...files.filter(isOverview), ...rest],
-      },
-      older: otherFiles,
+      id: batch.id,
+      messageId: batch.messageId,
+      kind: "images",
+      title: batch.title,
+      meta: `${images.length} imágenes${timeText ? ` · ${timeText}` : ""}`,
+      plates: images,
+      primary: images[0],
+      allFiles: [...images, ...files.filter(isOverview), ...rest],
     };
   }
 
@@ -138,17 +129,110 @@ export function groupDeliverables(
   const singleImage = sortedTarget.length === 1 && primary.mime.startsWith("image/");
 
   return {
-    featured: {
-      id: target.id,
-      kind: singleImage ? "images" : "file",
-      title: primary.name,
-      meta: timeText || "",
-      plates: primary.mime.startsWith("image/") ? [primary] : [],
-      primary,
-      allFiles: sortedTarget,
-    },
-    older: otherFiles,
+    id: batch.id,
+    messageId: batch.messageId,
+    kind: singleImage ? "images" : "file",
+    title: primary.name,
+    meta: timeText || "",
+    plates: primary.mime.startsWith("image/") ? [primary] : [],
+    primary,
+    allFiles: sortedTarget,
   };
+}
+
+/**
+ * Splits a message's results by proposal folder only when two or more folders
+ * contain `pieza-N` plates. Otherwise keeps a single group (plates first, rest
+ * as extras) so reference photos in another folder never overshadow the plates.
+ * When multiple groups remain, plate groups are ordered last so the featured
+ * group is always a plates group.
+ */
+function splitMessageBatches(
+  messageId: string,
+  files: FileRef[],
+  workTitle: string,
+): { id: string; messageId: string; title: string; files: FileRef[] }[] {
+  const byDir = new Map<string, { dir: string; files: FileRef[]; hasPlates: boolean }>();
+  for (const file of files) {
+    const dir = folderKey(file.path);
+    const key = dir.toLowerCase();
+    const bucket = byDir.get(key);
+    if (bucket) {
+      bucket.files.push(file);
+      if (isPlate(file)) bucket.hasPlates = true;
+    } else {
+      byDir.set(key, { dir, files: [file], hasPlates: isPlate(file) });
+    }
+  }
+  const buckets = Array.from(byDir.values());
+  const plateBucketCount = buckets.filter((b) => b.hasPlates).length;
+  if (plateBucketCount < 2) {
+    return [{ id: messageId, messageId, title: workTitle, files }];
+  }
+  // Keep non-plate buckets before plate buckets so the latest/featured slot is a plates group.
+  const ordered = [
+    ...buckets.filter((b) => !b.hasPlates),
+    ...buckets.filter((b) => b.hasPlates),
+  ];
+  return ordered.map(({ dir, files: groupFiles }) => ({
+    id: `${messageId}:${dir}`,
+    messageId,
+    title: folderTitle(dir, workTitle),
+    files: groupFiles,
+  }));
+}
+
+/**
+ * Groups the work's results by proposal/batch so the chosen batch (latest by
+ * default, or the requested message's batch) is featured at the top and older
+ * batches stay grouped below in reverse chronological order.
+ */
+export function groupDeliverableBatches(
+  work: Work | undefined,
+  messageId?: string,
+): GroupedDeliverableBatches {
+  if (!work) return { olderGroups: [] };
+  const batches = work.messages
+    .filter((m) => m.results && m.results.length > 0)
+    .flatMap((m) => splitMessageBatches(m.id, m.results!, work.title));
+
+  if (!batches.length) return { olderGroups: [] };
+
+  let chosenIndex = -1;
+  if (messageId) {
+    for (let i = batches.length - 1; i >= 0; i--) {
+      if (batches[i].id === messageId || batches[i].messageId === messageId) {
+        chosenIndex = i;
+        break;
+      }
+    }
+  }
+  if (chosenIndex < 0) chosenIndex = batches.length - 1;
+
+  const target = batches[chosenIndex];
+  const olderGroups = batches
+    .filter((_, idx) => idx !== chosenIndex)
+    .reverse()
+    .map(buildDeliverableGroup);
+
+  return {
+    featured: buildDeliverableGroup(target),
+    olderGroups,
+  };
+}
+
+/** Count shown on the mobile chat button so it matches the panel's piece count. */
+export function messageDeliverableCount(work: Work | undefined, messageId: string): number {
+  if (!work) return 0;
+  const message = work.messages.find((m) => m.id === messageId);
+  if (!message?.results?.length) return 0;
+  const groups = splitMessageBatches(message.id, message.results, work.title).map(
+    buildDeliverableGroup,
+  );
+  return groups.reduce(
+    (sum, g) => sum + (g.plates.length > 0 ? g.plates.length : g.allFiles.length),
+    0,
+  );
 }
 
 export function undoSummary(
@@ -161,19 +245,15 @@ export function undoSummary(
     : undefined;
   if (message) {
     if (!message.results?.length) return "";
-    const grouped = groupDeliverables(work, message.id);
-    const featured = grouped.featured;
-    if (featured?.kind === "plates") {
-      const count = featured.plates.length;
-      return count === 1
-        ? "Se cambió 1 placa"
-        : `Se cambiaron ${count} placas`;
+    const groups = splitMessageBatches(message.id, message.results, work!.title).map(
+      buildDeliverableGroup,
+    );
+    const totalPlates = groups.reduce((sum, g) => sum + g.plates.length, 0);
+    if (groups.every((g) => g.kind === "plates")) {
+      return totalPlates === 1 ? "Se cambió 1 placa" : `Se cambiaron ${totalPlates} placas`;
     }
-    if (featured?.kind === "images") {
-      const count = featured.plates.length;
-      return count === 1
-        ? "Se cambió 1 imagen"
-        : `Se cambiaron ${count} imágenes`;
+    if (groups.every((g) => g.kind === "images")) {
+      return totalPlates === 1 ? "Se cambió 1 imagen" : `Se cambiaron ${totalPlates} imágenes`;
     }
     const count = message.results.length;
     return count === 1
@@ -182,5 +262,3 @@ export function undoSummary(
   }
   return "Hubo cambios en los archivos";
 }
-
-

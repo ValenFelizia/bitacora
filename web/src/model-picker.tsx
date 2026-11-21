@@ -6,6 +6,22 @@ import { NO_MODELS } from "../../server/src/models";
 const focusRing =
   "focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2";
 
+function effortNote(effortText: string): string {
+  if (/\bmuy alto\b|\bm[aá]ximo\b/i.test(effortText)) {
+    return "Se toma más tiempo para pensar a fondo antes de responder.";
+  }
+  if (/\bbajo\b/i.test(effortText)) {
+    return "Responde más rápido.";
+  }
+  if (/\bmedio\b/i.test(effortText)) {
+    return "Equilibra velocidad y detalle antes de responder.";
+  }
+  if (/\balto\b/i.test(effortText)) {
+    return "Piensa más antes de responder (tarda un poco más).";
+  }
+  return "Piensa según el nivel del modelo antes de responder.";
+}
+
 /**
  * Shows which model works on the requests and lets the user pick another one.
  * The choice is the same for every work and applies from the next request.
@@ -75,6 +91,7 @@ export function ModelPicker({
   }
 
   const choices = model.choices.length ? model.choices : [model.current];
+  const note = effortNote(model.effortText);
   return (
     <div className="min-w-0">
       <button
@@ -83,7 +100,7 @@ export function ModelPicker({
         disabled={disabled}
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label={`Modelo: ${model.current.name}, ${model.effortText}. Cambiar modelo`}
+        aria-label={`Modelo: ${model.current.name}. ${note} Cambiar modelo`}
         title="Cambiar el modelo"
         onClick={() => {
           if (!open) onRefresh();
@@ -132,7 +149,7 @@ export function ModelPicker({
           })}
           {model.choices.length ? (
             <p className="mt-1 border-t border-line px-3 pt-2 pb-1.5 text-[13px] text-muted leading-snug">
-              {`Trabaja con ${model.effortText}: cuanto más alto, más piensa antes de responder. El cambio vale para todos tus trabajos desde el próximo pedido.`}
+              {`${note} El cambio vale para todos tus trabajos desde el próximo pedido.`}
             </p>
           ) : model.listed ? (
             <p role="status" className="mt-1 border-t border-line px-3 pt-2 pb-1.5 text-[13px] text-muted leading-snug">
@@ -142,8 +159,8 @@ export function ModelPicker({
             <div className="mt-1 border-t border-line px-3 pt-2 pb-2 flex flex-col items-start gap-2">
               <p role="status" className="text-[13px] text-muted leading-snug">
                 {model.listing
-                  ? "Buscando los modelos de tu cuenta…"
-                  : "No pude traer la lista de modelos de tu cuenta. Mientras tanto trabajo con este."}
+                  ? "Buscando modelos…"
+                  : "No pude traer los modelos de tu cuenta. Trabajo con este."}
               </p>
               <button
                 type="button"
