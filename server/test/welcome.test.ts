@@ -9,6 +9,7 @@ import { App } from '../src/app';
 import { AGENCY_DEVELOPER_INSTRUCTIONS } from '../src/agency-environment';
 import { CodexEngine } from '../src/codex/engine';
 import { serve } from '../src/server';
+import { screenProtocols, screenSecret } from './screen-fixture';
 import { WorkspaceFiles } from '../src/workspace-files';
 import type { ServerMessage } from '../src/contracts';
 import { FakeEngine } from './fake-engine';
@@ -399,7 +400,7 @@ test('the welcome answer and the skip work through the WebSocket', async () => {
     await mkdir('.local', { recursive: true });
     const dir = await mkdtemp(resolve('.local/welcome-ws-'));
     const root = join(dir, 'agencia');
-    const server = await serve(new FakeEngine(), join(dir, 'datos'), 0, origin, root);
+    const server = await serve(new FakeEngine(), join(dir, 'datos'), 0, origin, root, undefined, screenSecret);
     try { await run(server, root); }
     finally {
       await server.close();
@@ -407,7 +408,7 @@ test('the welcome answer and the skip work through the WebSocket', async () => {
     }
   }
   async function open(server: Awaited<ReturnType<typeof serve>>) {
-    const socket = new WebSocket(`ws://127.0.0.1:${server.port}/ws`, { origin });
+    const socket = new WebSocket(`ws://127.0.0.1:${server.port}/ws`, screenProtocols, { origin });
     const messages: ServerMessage[] = [];
     socket.on('message', (raw) => messages.push(JSON.parse(String(raw)) as ServerMessage));
     await new Promise<void>((ready, fail) => {

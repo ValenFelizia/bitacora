@@ -3,6 +3,7 @@
 mod server;
 
 use std::{
+    io,
     path::PathBuf,
     sync::{mpsc, Arc, Mutex},
     time::Duration,
@@ -10,7 +11,7 @@ use std::{
 use tauri::{webview::NewWindowResponse, Manager, RunEvent, Url, WebviewUrl, WebviewWindowBuilder};
 
 use webview2_com::{
-    take_pwstr,
+    take_pwstr, AddScriptToExecuteOnDocumentCreatedCompletedHandler,
     Microsoft::Web::WebView2::Win32::{
         ICoreWebView2PermissionRequestedEventArgs3, ICoreWebView2_22, COREWEBVIEW2_PERMISSION_KIND,
         COREWEBVIEW2_PERMISSION_KIND_MICROPHONE,
@@ -22,7 +23,7 @@ use webview2_com::{
     NavigationStartingEventHandler, PermissionRequestedEventHandler,
     WebResourceRequestedEventHandler,
 };
-use windows_core::{w, Interface};
+use windows_core::{w, Interface, HSTRING};
 
 const SPLASH: &str = "http://tauri.localhost/index.html";
 const ERROR: &str = "http://tauri.localhost/error.html";
@@ -138,6 +139,54 @@ fn restrict_webview(
     Ok(())
 }
 
+fn install_screen_script(
+    window: &tauri::WebviewWindow,
+    url: &Url,
+    secret: &str,
+    screen_script: Arc<Mutex<Option<String>>>,
+) -> io::Result<()> {
+    let origin = url.origin().ascii_serialization();
+    let script = format!(
+        "if (window === window.top && location.origin === '{origin}') {{
+            Object.defineProperty(window, '__BITACORA_SCREEN_SECRET__', {{ value: '{secret}' }});
+        }}"
+    );
+    let (notify, ready) = mpsc::channel();
+    window
+        .with_webview(move |webview| {
+            let installed = notify.clone();
+            let result = (|| unsafe {
+                let core = webview.controller().CoreWebView2()?;
+                {
+                    let mut previous_script = screen_script.lock().unwrap();
+                    if let Some(id) = previous_script.as_deref() {
+                        core.RemoveScriptToExecuteOnDocumentCreated(&HSTRING::from(id))?;
+                        *previous_script = None;
+                    }
+                }
+                core.AddScriptToExecuteOnDocumentCreated(
+                    &HSTRING::from(script),
+                    &AddScriptToExecuteOnDocumentCreatedCompletedHandler::create(Box::new(
+                        move |status, id| {
+                            let result = status.map(|()| {
+                                *screen_script.lock().unwrap() = Some(id);
+                            });
+                            let _ = installed.send(result.map_err(io::Error::other));
+                            Ok(())
+                        },
+                    )),
+                )
+            })();
+            if let Err(error) = result {
+                let _ = notify.send(Err(io::Error::other(error)));
+            }
+        })
+        .map_err(io::Error::other)?;
+    ready
+        .recv_timeout(Duration::from_secs(10))
+        .map_err(io::Error::other)?
+}
+
 fn supervise(
     server: Arc<server::Server>,
     window: tauri::WebviewWindow,
@@ -146,16 +195,27 @@ fn supervise(
     reopen: mpsc::Receiver<()>,
 ) {
     let mut has_connected = false;
+    let screen_script = Arc::new(Mutex::new(None));
     while !server.exiting() {
         let mut retried_start = false;
         let mut recovering = false;
         while !server.exiting() {
-            let result = server.start(&runtime).and_then(server::ready_port);
+            let result = (|| {
+                let secret = server::screen_secret()?;
+                let port = server::ready_port(server.start(&runtime, &secret)?)?;
+                let url = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
+                install_screen_script(
+                    &window,
+                    &url,
+                    &secret,
+                    Arc::clone(&screen_script),
+                )?;
+                Ok::<_, io::Error>(url)
+            })();
             if server.exiting() {
                 return;
             }
-            let retry = if let Ok(port) = result {
-                let url = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
+            let retry = if let Ok(url) = result {
                 *endpoint.lock().unwrap() = Some(url.clone());
                 let _ = window.navigate(url);
                 while server.running() {

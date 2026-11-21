@@ -7,6 +7,7 @@ import { WebSocket } from 'ws';
 import { WorkspaceFiles, MAX_FILE, MAX_REQUEST } from '../src/workspace-files';
 import { App } from '../src/app';
 import { serve } from '../src/server';
+import { screenHeaders, screenProtocols, screenSecret } from './screen-fixture';
 import { FakeEngine } from './fake-engine';
 import type { EngineFile } from '../src/engine';
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64');
@@ -85,31 +86,38 @@ test('new and modified results exclude inputs, hidden directories and dependenci
 test('HTTP files require session token, local host, allowed origin and registered real workspace path', async () => {
   const f = await fixture();
   const engine = new FakeEngine();
-  const server = await serve(engine, join(f.dir, 'data'), 0, undefined, f.files.root);
+  const server = await serve(engine, join(f.dir, 'data'), 0, undefined, f.files.root, undefined, screenSecret);
   const base = `http://127.0.0.1:${server.port}`;
-  const ws = new WebSocket(base.replace('http:', 'ws:') + '/ws', { origin: 'http://127.0.0.1:5173' });
+  const ws = new WebSocket(base.replace('http:', 'ws:') + '/ws', screenProtocols, { origin: 'http://127.0.0.1:5173' });
   ws.on('error', () => {});
   const messages: any[] = [];
   ws.on('message', data => messages.push(JSON.parse(String(data))));
   const until = async (check: () => boolean, timeoutMs = 15000) => { const deadline = Date.now() + timeoutMs; while (Date.now() < deadline) { if (check()) return; await new Promise(r => setTimeout(r, 10)); } throw new Error(`condition timed out after ${timeoutMs}ms`); };
   try {
     await until(() => !!messages[0]);
-    const token = messages[0].state.fileToken;
     ws.send(JSON.stringify({ type: 'send', text: 'foto', attachments: [upload()] }));
     await until(() => messages.some(m => m.state?.works[0]?.messages[0]?.attachments?.length));
     const ref = messages.find(m => m.state?.works[0]?.messages[0]?.attachments?.length).state.works[0].messages[0].attachments[0];
     const url = `${base}/files?id=${ref.id}`;
-    assert.equal((await fetch(url)).status, 403);
-    assert.equal((await fetch(url + '&token=incorrect')).status, 403);
-    assert.equal((await fetch(url + '&token=' + token, { headers: { Origin: 'https://evil.test' } })).status, 403);
-    assert.equal(await new Promise<number | undefined>(resolve => get(url + '&token=' + token, { headers: { Host: 'evil.test' } }, res => { res.resume(); resolve(res.statusCode); })), 403);
-    for (const id of ['../outside.png', 'C:/outside.png', '/outside.png', 'missing']) assert.equal((await fetch(`${base}/files?id=${encodeURIComponent(id)}&token=${token}`)).status, 404);
-    const good = await fetch(url + '&token=' + token + '&download=1');
+    const Origin = 'http://127.0.0.1:5173';
+    assert.equal((await fetch(url, { headers: { Origin } })).status, 403);
+    assert.equal((await fetch(url, { headers: { Origin, Authorization: `Bearer ${'0'.repeat(64)}` } })).status, 403);
+    for (const secret of [screenSecret.slice(1), screenSecret.toUpperCase()]) {
+      assert.equal((await fetch(url, { headers: { Origin, Authorization: `Bearer ${secret}` } })).status, 403);
+      const healthy = await fetch(url, { headers: { ...screenHeaders, Origin } });
+      assert.equal(healthy.status, 200);
+      assert.deepEqual(Buffer.from(await healthy.arrayBuffer()), png);
+    }
+    assert.equal((await fetch(url + '&token=' + screenSecret, { headers: { Origin } })).status, 403);
+    assert.equal((await fetch(url, { headers: { ...screenHeaders, Origin: 'https://evil.test' } })).status, 403);
+    assert.equal(await new Promise<number | undefined>(resolve => get(url, { headers: { ...screenHeaders, Host: 'evil.test' } }, res => { res.resume(); resolve(res.statusCode); })), 403);
+    for (const id of ['../outside.png', 'C:/outside.png', '/outside.png', 'missing']) assert.equal((await fetch(`${base}/files?id=${encodeURIComponent(id)}`, { headers: screenHeaders })).status, 404);
+    const good = await fetch(url + '&download=1', { headers: { ...screenHeaders, Origin } });
     assert.equal(good.status, 200); assert.match(good.headers.get('content-disposition')!, /attachment.*%C3%B1/);
     assert.deepEqual(Buffer.from(await good.arrayBuffer()), png);
     assert.equal(good.headers.get('access-control-allow-origin'), null);
     await rm(join(f.files.root, ref.path));
-    assert.equal((await fetch(url + '&token=' + token)).status, 404);
+    assert.equal((await fetch(url, { headers: screenHeaders })).status, 404);
   } finally {
     const closed = ws.readyState === WebSocket.CLOSED ? Promise.resolve() : new Promise<void>(r => { ws.once('close', () => r()); ws.terminate(); });
     await closed;

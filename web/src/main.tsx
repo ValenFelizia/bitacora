@@ -40,6 +40,8 @@ import "./style.css";
 import { DeliverablesPanel, FileCard, FilePreviewModal } from "./files";
 import { ModelPicker } from "./model-picker";
 import { useDictation } from "./dictation";
+import { SCREEN_PROTOCOL } from "../../server/src/screen-session";
+import { screenSecret } from "./screen-session";
 import { clampPanel, DESKTOP_MIN, panelBounds, panelKey } from "./panel";
 import { QuestionCard } from "./question";
 import { formatTime, formatWorkDate, undoSummary } from "./format";
@@ -187,6 +189,7 @@ function App() {
   const [savingName, setSavingName] = useState<string>();
   const [text, setText] = useState("");
   const [online, setOnline] = useState(false);
+  const [sessionSecret, setSessionSecret] = useState<string>();
   const [pending, setPending] = useState(false);
   // The question whose answer was sent and not yet confirmed by a snapshot. The
   // ref stops a second click before the state updates.
@@ -210,7 +213,7 @@ function App() {
   const panelLimits = panelBounds(viewport);
   const work = state.works.find((w) => w.id === selected);
   const dictationToken =
-    online && state.account.connected && state.engine.available && !gallery ? state.fileToken : undefined;
+    online && state.account.connected && state.engine.available && !gallery ? sessionSecret : undefined;
   const dictation = useDictation({
     token: dictationToken,
     workId: selected,
@@ -247,10 +250,21 @@ function App() {
   useEffect(() => {
     let disposed = false;
     let timer: ReturnType<typeof setTimeout>;
-    function connect() {
-      const ws = new WebSocket(`ws://${location.host}/ws`);
+    let attempt = 0;
+    async function connect() {
+      const current = ++attempt;
+      const secret = await screenSecret();
+      if (disposed || current !== attempt) return;
+      if (!secret) {
+        timer = setTimeout(connect, 1500);
+        return;
+      }
+      const ws = new WebSocket(`ws://${location.host}/ws`, [SCREEN_PROTOCOL, secret]);
       socket.current = ws;
-      ws.onopen = () => setOnline(true);
+      ws.onopen = () => {
+        setSessionSecret(secret);
+        setOnline(true);
+      };
       ws.onmessage = (e) => {
         const message = JSON.parse(e.data) as ServerMessage;
         // Any answer proves the server is there: the welcome button can be
@@ -321,6 +335,7 @@ function App() {
       };
       ws.onclose = () => {
         setOnline(false);
+        setSessionSecret(undefined);
         setPending(false);
         setWelcomeSending(false);
         // An answer in flight may never arrive: the card can send it again.
@@ -343,11 +358,11 @@ function App() {
           // Ignore close error
         }
       }
-      if (!disposed && socket.current?.readyState !== WebSocket.OPEN) connect();
+      if (!disposed && socket.current?.readyState !== WebSocket.OPEN) void connect();
     };
     const reopen = () => reconnectRef.current();
     window.addEventListener("bitacora-reopen", reopen);
-    connect();
+    void connect();
     return () => {
       window.removeEventListener("bitacora-reopen", reopen);
       disposed = true;
@@ -1246,7 +1261,7 @@ function App() {
                               <FileCard
                                 key={`${f.id}-${state.fileRevision}`}
                                 file={f}
-                                token={state.fileToken}
+                                token={sessionSecret}
                                 fileRevision={state.fileRevision}
                                 result
                                 onPreview={(file) =>
@@ -1447,7 +1462,7 @@ function App() {
                               <FileCard
                                 key={`${f.id}-${state.fileRevision}`}
                                 file={f}
-                                token={state.fileToken}
+                                token={sessionSecret}
                                 fileRevision={state.fileRevision}
                                 onPreview={(file) => setPreview({ file, list: [file] })}
                               />
@@ -1960,7 +1975,7 @@ function App() {
           <DeliverablesPanel
             work={work}
             focusedMessageId={focusedMessageId}
-            token={state.fileToken}
+            token={sessionSecret}
             fileRevision={state.fileRevision}
             hasGalleryResults={hasGalleryResults}
             onOpenGallery={() => {
@@ -1979,7 +1994,7 @@ function App() {
         <FilePreviewModal
           file={preview.file}
           list={preview.list}
-          token={state.fileToken}
+          token={sessionSecret}
           fileRevision={state.fileRevision}
           onSelect={(file) => setPreview((prev) => (prev ? { ...prev, file } : prev))}
           onClose={() => setPreview(undefined)}
