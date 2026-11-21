@@ -83,7 +83,7 @@ export function ModelPicker({
         disabled={disabled}
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label={`Modelo: ${model.current.name}, ${model.effortText}. Cambiar modelo`}
+        aria-label={`Modelo: ${model.current.name}. Cambiar modelo`}
         title="Cambiar el modelo"
         onClick={() => {
           if (!open) onRefresh();
@@ -132,7 +132,7 @@ export function ModelPicker({
           })}
           {model.choices.length ? (
             <p className="mt-1 border-t border-line px-3 pt-2 pb-1.5 text-[13px] text-muted leading-snug">
-              {`Usa ${model.effortText}. Vale para todos los trabajos desde el próximo pedido.`}
+              El modelo que elijas se aplica a todos tus trabajos desde el próximo pedido.
             </p>
           ) : model.listed ? (
             <p role="status" className="mt-1 border-t border-line px-3 pt-2 pb-1.5 text-[13px] text-muted leading-snug">

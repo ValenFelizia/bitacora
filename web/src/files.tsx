@@ -13,8 +13,13 @@ import {
   X,
 } from "lucide-react";
 import type { FileRef, Work } from "../../server/src/contracts";
-import { formatTime, groupDeliverableBatches, type DeliverableGroup } from "./format";
-import { isDeliverableUnopened } from "./opened";
+import {
+  formatTime,
+  groupDeliverableBatches,
+  isOverview,
+  type DeliverableGroup,
+} from "./format";
+import { isDeliverableUnopened, type OpenedState } from "./opened";
 
 export function fileUrl(file: FileRef, token?: string) {
   return `/files?id=${encodeURIComponent(file.id)}&token=${encodeURIComponent(token || "")}`;
@@ -276,17 +281,23 @@ async function downloadBatchFiles(
   token: string,
   onMarkOpened: (files: FileRef[]) => void,
   cachedPrimary?: { id: string; url?: string },
-): Promise<string> {
-  if (files.length === 1 && cachedPrimary?.id === files[0].id && cachedPrimary.url) {
-    triggerDownload(cachedPrimary.url, files[0].name);
-    onMarkOpened([files[0]]);
-    return "Descargado.";
+): Promise<{ message: string; allMissing: boolean }> {
+  const active = files.filter((f) => !f.reverted);
+  if (!active.length) return { message: "Ya no está disponible.", allMissing: true };
+  if (active.length === 1 && cachedPrimary?.id === active[0].id && cachedPrimary.url) {
+    triggerDownload(cachedPrimary.url, active[0].name);
+    onMarkOpened([active[0]]);
+    return { message: "Descargado.", allMissing: false };
   }
   const downloaded: FileRef[] = [];
-  for (const file of files) {
+  let missingCount = 0;
+  for (const file of active) {
     try {
       const res = await fetch(fileUrl(file, token));
-      if (!res.ok) continue;
+      if (!res.ok) {
+        if (res.status === 404) missingCount++;
+        continue;
+      }
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       triggerDownload(url, file.name);
@@ -297,15 +308,27 @@ async function downloadBatchFiles(
     }
   }
   if (downloaded.length > 0) onMarkOpened(downloaded);
-  if (downloaded.length === files.length) {
-    return files.length === 1 ? "Descargado." : "Descargadas.";
+  if (downloaded.length === active.length) {
+    return {
+      message: active.length === 1 ? "Descargado." : "Descargadas.",
+      allMissing: false,
+    };
   }
   if (downloaded.length > 0) {
-    return `Descargué ${downloaded.length} de ${files.length}.`;
+    return {
+      message: `Descargué ${downloaded.length} de ${active.length}.`,
+      allMissing: false,
+    };
   }
-  return files.length === 1
-    ? "No pude descargarlo."
-    : "No pude descargarlas. Probá de a una.";
+  if (missingCount === active.length) {
+    return { message: "Ya no está disponible.", allMissing: true };
+  }
+  return {
+    message: active.length === 1
+      ? "No pude descargarlo."
+      : "No pude descargarlas. Probá de a una.",
+    allMissing: false,
+  };
 }
 
 function UnopenedDot() {
@@ -343,7 +366,7 @@ export function FileCard({
   token,
   result = false,
   fileRevision,
-  openedIds,
+  opened,
   onMarkOpened,
   onPreview,
 }: {
@@ -351,18 +374,19 @@ export function FileCard({
   token?: string;
   result?: boolean;
   fileRevision?: number;
-  openedIds?: Set<string>;
+  opened?: OpenedState;
   onMarkOpened?: (files: FileRef[]) => void;
   onPreview: (file: FileRef) => void;
 }) {
   const fetched = useFetchedFile(file, token, fileRevision);
   const [notice, setNotice] = useState("");
   const image = file.mime.startsWith("image/");
-  const unopened = result && !fetched.missing && !!openedIds && isDeliverableUnopened(file, openedIds);
+  const unopened = result && !fetched.missing && !!opened && isDeliverableUnopened(file, opened);
 
   async function copy() {
     if (!fetched.blob) return;
     const ok = await copyImageBlob(fetched.blob);
+    if (ok && result) onMarkOpened?.([file]);
     setNotice(ok ? "Copiada." : "No pude copiar. Probá descargarla.");
   }
 
@@ -432,7 +456,7 @@ export function FileCard({
             className="block w-full rounded-[3px] overflow-hidden border border-line bg-paper cursor-pointer focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
             onClick={() => onPreview(file)}
             title={`Ver ${file.name}`}
-            aria-label={`Ver ${file.name}`}
+            aria-label={unopened ? `Ver ${file.name}, nueva` : `Ver ${file.name}`}
           >
             <SharpImage
               className="max-h-56 w-full object-contain"
@@ -450,6 +474,7 @@ export function FileCard({
           <button
             type="button"
             onClick={() => onPreview(file)}
+            aria-label={unopened ? `Abrir ${file.name}, nueva` : `Abrir ${file.name}`}
             className="w-full flex items-center justify-center gap-2 py-8 rounded-[3px] border border-line bg-paper text-muted hover:text-ink cursor-pointer transition-colors duration-150"
           >
             <FileText size={18} strokeWidth={1.75} aria-hidden="true" />
@@ -561,13 +586,14 @@ function PlateThumbnail({
     moreCount && moreCount > 0
       ? `Ver ${moreCount} más`
       : `Ver ${file.name}`;
+  const ariaLabel = unopened && !fetched.missing ? `${label}, nueva` : label;
   return (
     <div className={compact ? "relative" : "relative w-fit max-w-full mx-auto"}>
       <button
         type="button"
         onClick={onClick}
         title={label}
-        aria-label={label}
+        aria-label={ariaLabel}
         className={`relative group block overflow-hidden rounded-[3px] border border-line bg-paper cursor-pointer focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 ${
           compact ? "w-full aspect-[9/16]" : "w-fit max-w-full max-h-[280px]"
         }`}
@@ -604,20 +630,20 @@ function OlderDeliverableRow({
   file,
   token,
   fileRevision,
-  openedIds,
+  opened,
   onMarkOpened,
   onPreview,
 }: {
   file: FileRef;
   token?: string;
   fileRevision?: number;
-  openedIds: Set<string>;
+  opened: OpenedState;
   onMarkOpened: (files: FileRef[]) => void;
   onPreview: (file: FileRef) => void;
 }) {
   const fetched = useFetchedFile(file, token, fileRevision);
   const isImage = file.mime.startsWith("image/");
-  const unopened = !fetched.missing && isDeliverableUnopened(file, openedIds);
+  const unopened = !fetched.missing && isDeliverableUnopened(file, opened);
 
   return (
     <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] gap-[10px] items-center py-[10px] border-t border-line text-[14px]">
@@ -641,6 +667,7 @@ function OlderDeliverableRow({
             type="button"
             disabled={!fetched.url}
             onClick={() => onPreview(file)}
+            aria-label={unopened ? `${file.name}, nueva` : file.name}
             className="truncate text-left text-ink hover:underline cursor-pointer focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
             title={file.name}
           >
@@ -671,19 +698,19 @@ function BatchPdfRow({
   file,
   token,
   fileRevision,
-  openedIds,
+  opened,
   onMarkOpened,
   onPreview,
 }: {
   file: FileRef;
   token?: string;
   fileRevision?: number;
-  openedIds: Set<string>;
+  opened: OpenedState;
   onMarkOpened: (files: FileRef[]) => void;
   onPreview: (file: FileRef) => void;
 }) {
   const fetched = useFetchedFile(file, token, fileRevision);
-  const unopened = !fetched.missing && isDeliverableUnopened(file, openedIds);
+  const unopened = !fetched.missing && isDeliverableUnopened(file, opened);
 
   return (
     <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] gap-[10px] items-center pt-[10px] border-t border-line text-[14px]">
@@ -705,6 +732,7 @@ function BatchPdfRow({
             type="button"
             disabled={!fetched.url}
             onClick={() => onPreview(file)}
+            aria-label={unopened ? `${file.name}, nueva` : file.name}
             className="truncate text-left text-ink hover:underline cursor-pointer focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
             title={file.name}
           >
@@ -736,7 +764,7 @@ function FeaturedDeliverable({
   workTitle,
   token,
   fileRevision,
-  openedIds,
+  opened,
   onMarkOpened,
   onPreview,
 }: {
@@ -744,15 +772,21 @@ function FeaturedDeliverable({
   workTitle?: string;
   token?: string;
   fileRevision?: number;
-  openedIds: Set<string>;
+  opened: OpenedState;
   onMarkOpened: (files: FileRef[]) => void;
   onPreview: (file: FileRef, list: FileRef[]) => void;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [notice, setNotice] = useState("");
+  const [missingAll, setMissingAll] = useState(false);
   const primaryFetched = useFetchedFile(group.primary, token, fileRevision);
   const isImage = group.primary.mime.startsWith("image/");
   const isMulti = group.plates.length >= 2;
+  const allReverted = isMulti
+    ? group.plates.every((p) => p.reverted)
+    : !!group.primary.reverted;
+  const batchUnavailable =
+    allReverted || missingAll || (!isMulti && primaryFetched.missing);
   const batchPdfs =
     group.plates.length > 0
       ? group.allFiles.filter((f) => f.mime === "application/pdf")
@@ -766,20 +800,27 @@ function FeaturedDeliverable({
   const featuredPlate = group.plates[0];
   const restPlates = group.plates.slice(1, 7);
   const overflowCount = Math.max(0, group.plates.length - 1 - restPlates.length);
+  const primaryPdfUnopened = !primaryFetched.missing && isDeliverableUnopened(group.primary, opened);
+
+  useEffect(() => {
+    setMissingAll(false);
+  }, [group.id, fileRevision]);
 
   async function downloadAll() {
     if (!token) return;
     const filesToGet = isMulti ? group.plates : [group.primary];
-    const message = await downloadBatchFiles(filesToGet, token, onMarkOpened, {
+    const result = await downloadBatchFiles(filesToGet, token, onMarkOpened, {
       id: group.primary.id,
       url: primaryFetched.url,
     });
-    setNotice(message);
+    if (result.allMissing) setMissingAll(true);
+    setNotice(result.message);
   }
 
   async function copyPrimary() {
     if (!primaryFetched.blob) return;
     const ok = await copyImageBlob(primaryFetched.blob);
+    if (ok) onMarkOpened([group.primary]);
     setNotice(ok ? "Copiada." : "No pude copiar.");
   }
 
@@ -792,7 +833,7 @@ function FeaturedDeliverable({
           token={token}
           fileRevision={fileRevision}
           compact={false}
-          unopened={isDeliverableUnopened(featuredPlate, openedIds)}
+          unopened={isDeliverableUnopened(featuredPlate, opened)}
           fetched={featuredPlate.id === group.primary.id ? primaryFetched : undefined}
           onClick={() => onPreview(featuredPlate, group.plates)}
         />
@@ -802,14 +843,13 @@ function FeaturedDeliverable({
             type="button"
             disabled={!primaryFetched.url}
             onClick={() => onPreview(group.primary, [group.primary])}
+            aria-label={primaryPdfUnopened ? `Abrir ${group.primary.name}, nueva` : `Abrir ${group.primary.name}`}
             className="w-full flex flex-col items-center justify-center gap-2 py-8 rounded-[3px] border border-line bg-paper text-muted hover:text-ink cursor-pointer transition-colors duration-150"
           >
             <FileText size={18} strokeWidth={1.75} aria-hidden="true" />
             <span className="text-[13px] font-bold">PDF</span>
           </button>
-          {!primaryFetched.missing && isDeliverableUnopened(group.primary, openedIds) && (
-            <UnopenedDot />
-          )}
+          {primaryPdfUnopened && <UnopenedDot />}
         </div>
       )}
 
@@ -881,25 +921,16 @@ function FeaturedDeliverable({
         </div>
       )}
 
-      {primaryFetched.missing ? (
+      {primaryFetched.missing && (
         <p role="status" className="text-[13px] text-muted flex items-center gap-2 border-t border-line pt-[10px]">
           <FileX size={18} strokeWidth={1.75} aria-hidden="true" />
           Ya no está disponible.
         </p>
-      ) : (
-        <button
-          type="button"
-          disabled={!primaryFetched.url && !isMulti}
-          className={batchDownloadBtn}
-          onClick={() => void downloadAll()}
-        >
-          <ArrowDownToLine size={18} strokeWidth={1.75} aria-hidden="true" />
-          <span>{downloadText}</span>
-        </button>
       )}
-      {primaryFetched.missing && isMulti && (
+      {(!batchUnavailable || isMulti) && (
         <button
           type="button"
+          disabled={batchUnavailable || (!primaryFetched.url && !isMulti)}
           className={batchDownloadBtn}
           onClick={() => void downloadAll()}
         >
@@ -914,8 +945,8 @@ function FeaturedDeliverable({
             const hasMoreTile =
               overflowCount > 0 && index === restPlates.length - 1;
             const tileUnopened = hasMoreTile
-              ? group.plates.slice(6).some((p) => isDeliverableUnopened(p, openedIds))
-              : isDeliverableUnopened(plate, openedIds);
+              ? group.plates.slice(6).some((p) => isDeliverableUnopened(p, opened))
+              : isDeliverableUnopened(plate, opened);
             return (
               <PlateThumbnail
                 key={`${plate.id}-${fileRevision ?? 0}`}
@@ -927,7 +958,7 @@ function FeaturedDeliverable({
                 unopened={tileUnopened}
                 onClick={() =>
                   onPreview(
-                    hasMoreTile ? group.plates[6] : plate,
+                    hasMoreTile ? group.plates[7] : plate,
                     group.plates,
                   )
                 }
@@ -941,7 +972,7 @@ function FeaturedDeliverable({
         <BatchPdfRow
           key={`${pdf.id}-${fileRevision ?? 0}`}
           file={pdf}
-          openedIds={openedIds}
+          opened={opened}
           onMarkOpened={onMarkOpened}
           onPreview={(file) => onPreview(file, [file])}
           token={token}
@@ -957,7 +988,7 @@ function FeaturedDeliverable({
               file={f}
               token={token}
               fileRevision={fileRevision}
-              openedIds={openedIds}
+              opened={opened}
               onMarkOpened={onMarkOpened}
               onPreview={(target) =>
                 onPreview(target, menuFiles.filter((x) => x.mime.startsWith("image/")))
@@ -981,7 +1012,7 @@ function OlderBatchGroup({
   workTitle,
   token,
   fileRevision,
-  openedIds,
+  opened,
   onMarkOpened,
   onPreview,
 }: {
@@ -989,12 +1020,18 @@ function OlderBatchGroup({
   workTitle?: string;
   token?: string;
   fileRevision?: number;
-  openedIds: Set<string>;
+  opened: OpenedState;
   onMarkOpened: (files: FileRef[]) => void;
   onPreview: (file: FileRef, list: FileRef[]) => void;
 }) {
+  const [menuOpen, setMenuOpen] = useState(false);
   const [notice, setNotice] = useState("");
+  const [missingAll, setMissingAll] = useState(false);
   const isMulti = group.plates.length >= 2;
+
+  useEffect(() => {
+    setMissingAll(false);
+  }, [group.id, fileRevision]);
 
   if (!isMulti) {
     return (
@@ -1005,7 +1042,7 @@ function OlderBatchGroup({
             file={file}
             token={token}
             fileRevision={fileRevision}
-            openedIds={openedIds}
+            opened={opened}
             onMarkOpened={onMarkOpened}
             onPreview={(target) =>
               onPreview(
@@ -1022,12 +1059,16 @@ function OlderBatchGroup({
   const visiblePlates = group.plates.slice(0, 6);
   const overflowCount = Math.max(0, group.plates.length - visiblePlates.length);
   const batchPdfs = group.allFiles.filter((f) => f.mime === "application/pdf");
+  const menuFiles = group.allFiles.filter((f) => f.mime !== "application/pdf");
+  const extraFiles = menuFiles.filter((f) => !group.plates.includes(f) && !isOverview(f));
   const showTitle = group.title && group.title !== workTitle;
+  const allReverted = group.plates.every((p) => p.reverted) || missingAll;
 
   async function downloadAll() {
     if (!token) return;
-    const message = await downloadBatchFiles(group.plates, token, onMarkOpened);
-    setNotice(message);
+    const result = await downloadBatchFiles(group.plates, token, onMarkOpened);
+    if (result.allMissing) setMissingAll(true);
+    setNotice(result.message);
   }
 
   return (
@@ -1041,21 +1082,36 @@ function OlderBatchGroup({
             <div className="text-[13px] text-muted tabular-nums">{group.meta}</div>
           )}
         </div>
-        <button
-          type="button"
-          className={downloadLink}
-          onClick={() => void downloadAll()}
-        >
-          <ArrowDownToLine size={16} strokeWidth={1.75} className="text-accent shrink-0" aria-hidden="true" />
-          <span>{`Descargar las ${group.plates.length}`}</span>
-        </button>
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            type="button"
+            disabled={allReverted}
+            className={downloadLink}
+            onClick={() => void downloadAll()}
+          >
+            <ArrowDownToLine size={16} strokeWidth={1.75} className="text-accent shrink-0" aria-hidden="true" />
+            <span>{`Descargar las ${group.plates.length}`}</span>
+          </button>
+          {menuFiles.length > 1 && (
+            <button
+              type="button"
+              className={iconBtn}
+              title="Más"
+              aria-label="Más piezas del lote"
+              aria-expanded={menuOpen}
+              onClick={() => setMenuOpen((v) => !v)}
+            >
+              <Ellipsis size={18} strokeWidth={1.75} aria-hidden="true" />
+            </button>
+          )}
+        </div>
       </div>
       <div className="grid grid-cols-3 gap-2">
         {visiblePlates.map((plate, index) => {
           const hasMoreTile = overflowCount > 0 && index === visiblePlates.length - 1;
           const tileUnopened = hasMoreTile
-            ? group.plates.slice(5).some((p) => isDeliverableUnopened(p, openedIds))
-            : isDeliverableUnopened(plate, openedIds);
+            ? group.plates.slice(5).some((p) => isDeliverableUnopened(p, opened))
+            : isDeliverableUnopened(plate, opened);
           return (
             <PlateThumbnail
               key={`${plate.id}-${fileRevision ?? 0}`}
@@ -1066,23 +1122,53 @@ function OlderBatchGroup({
               moreCount={hasMoreTile ? overflowCount : undefined}
               unopened={tileUnopened}
               onClick={() =>
-                onPreview(hasMoreTile ? group.plates[5] : plate, group.plates)
+                onPreview(hasMoreTile ? group.plates[6] : plate, group.plates)
               }
             />
           );
         })}
       </div>
+      {extraFiles.map((file) => (
+        <OlderDeliverableRow
+          key={`${file.id}-${fileRevision ?? 0}`}
+          file={file}
+          token={token}
+          fileRevision={fileRevision}
+          opened={opened}
+          onMarkOpened={onMarkOpened}
+          onPreview={(target) =>
+            onPreview(target, menuFiles.filter((x) => x.mime.startsWith("image/")))
+          }
+        />
+      ))}
       {batchPdfs.map((pdf) => (
         <BatchPdfRow
           key={`${pdf.id}-${fileRevision ?? 0}`}
           file={pdf}
           token={token}
           fileRevision={fileRevision}
-          openedIds={openedIds}
+          opened={opened}
           onMarkOpened={onMarkOpened}
           onPreview={(file) => onPreview(file, [file])}
         />
       ))}
+      {menuOpen && menuFiles.length > 0 && (
+        <div className="rounded-[6px] border border-line bg-paper p-2 flex flex-col gap-1">
+          {menuFiles.map((f) => (
+            <OlderDeliverableRow
+              key={`${f.id}-${fileRevision ?? 0}`}
+              file={f}
+              token={token}
+              fileRevision={fileRevision}
+              opened={opened}
+              onMarkOpened={onMarkOpened}
+              onPreview={(target) =>
+                onPreview(target, menuFiles.filter((x) => x.mime.startsWith("image/")))
+              }
+            />
+          ))}
+        </div>
+      )}
       {notice && (
         <p role="status" className="text-[13px] text-muted">
           {notice}
@@ -1097,7 +1183,7 @@ export function DeliverablesPanel({
   focusedMessageId,
   token,
   fileRevision,
-  openedIds,
+  opened,
   onMarkOpened,
   hasGalleryResults,
   onOpenGallery,
@@ -1109,7 +1195,7 @@ export function DeliverablesPanel({
   focusedMessageId?: string;
   token?: string;
   fileRevision?: number;
-  openedIds: Set<string>;
+  opened: OpenedState;
   onMarkOpened: (files: FileRef[]) => void;
   hasGalleryResults: boolean;
   onOpenGallery: () => void;
@@ -1163,7 +1249,7 @@ export function DeliverablesPanel({
             workTitle={work?.title}
             token={token}
             fileRevision={fileRevision}
-            openedIds={openedIds}
+            opened={opened}
             onMarkOpened={onMarkOpened}
             onPreview={onPreview}
           />
@@ -1174,7 +1260,7 @@ export function DeliverablesPanel({
               workTitle={work?.title}
               token={token}
               fileRevision={fileRevision}
-              openedIds={openedIds}
+              opened={opened}
               onMarkOpened={onMarkOpened}
               onPreview={onPreview}
             />
@@ -1331,6 +1417,7 @@ export function FilePreviewModal({
                 onClick={async () => {
                   if (!fetched.blob) return;
                   const ok = await copyImageBlob(fetched.blob);
+                  if (ok) onMarkOpened?.([file]);
                   setNotice(ok ? "Copiada." : "No pude copiar.");
                 }}
               >

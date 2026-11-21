@@ -40,11 +40,21 @@ import { MAX_TITLE } from "../../server/src/titles";
 import "./style.css";
 import { DeliverablesPanel, FileCard, FilePreviewModal } from "./files";
 import { ModelPicker } from "./model-picker";
-import { markDeliverablesOpened, readOpenedIds } from "./opened";
+import {
+  initOpenedState,
+  markDeliverablesOpened,
+  pruneOpenedState,
+  type OpenedState,
+} from "./opened";
 import { useDictation } from "./dictation";
 import { clampPanel, DESKTOP_MIN, panelBounds, panelKey } from "./panel";
 import { QuestionCard } from "./question";
-import { formatTime, formatWorkDate, undoSummary } from "./format";
+import {
+  formatTime,
+  formatWorkDate,
+  messageDeliverableCount,
+  undoSummary,
+} from "./format";
 import { protectionText, protectionWarning } from "./protection-text";
 import { Welcome, type WelcomeAnswer } from "./welcome";
 import { suggestedRoutes } from "../../server/src/welcome";
@@ -168,10 +178,10 @@ function App() {
   const [navOpen, setNavOpen] = useState(false);
   const [deliverablesOpen, setDeliverablesOpen] = useState(false);
   const [focusedMessageId, setFocusedMessageId] = useState<string>();
-  const [preview, setPreview] = useState<{ file: FileRef; list: FileRef[] }>();
-  const [openedIds, setOpenedIds] = useState<Set<string>>(() => readOpenedIds());
+  const [preview, setPreview] = useState<{ file: FileRef; list: FileRef[]; trackOpened?: boolean }>();
+  const [opened, setOpened] = useState<OpenedState>(() => initOpenedState());
   const markOpened = (files: FileRef[]) =>
-    setOpenedIds((current) => markDeliverablesOpened(current, files));
+    setOpened((current) => markDeliverablesOpened(current, files));
   const [attachments, setAttachments] = useState<Upload[]>([]);
   const [readingFiles, setReadingFiles] = useState(false);
   const sentDraft = useRef<SentDraft | undefined>(undefined);
@@ -263,6 +273,7 @@ function App() {
         setWelcomeSending(false);
         if (message.type === "snapshot") {
           setState(message.state);
+          setOpened((current) => pruneOpenedState(current, message.state.works));
           if (message.state.account.connected) setLogin(undefined);
         }
         if (message.type === "message") {
@@ -1089,7 +1100,7 @@ function App() {
                     }}
                     className={`min-[960px]:hidden inline-flex items-center justify-center gap-1.5 px-2.5 min-w-[40px] h-[40px] rounded-[6px] border border-line bg-surface text-ink text-[13px] font-bold hover:bg-soft cursor-pointer ${focusRing}`}
                     title="Para mandar"
-                    aria-label="Abrir para mandar"
+                    aria-label="Ver lo que está para mandar"
                   >
                     <Package size={18} strokeWidth={1.75} aria-hidden="true" />
                     {workResultCount > 0 && (
@@ -1136,7 +1147,7 @@ function App() {
                         onClick={() => {
                           if (
                             window.confirm(
-                              "Voy a dejar tu carpeta como está ahora. Después podés seguir trabajando.",
+                              "Voy a dejar tu carpeta como está ahora y ya no vas a poder deshacer ese cambio. Después podés seguir trabajando.",
                             )
                           )
                             send({ type: "discardUndo", id: state.undo!.id });
@@ -1165,8 +1176,8 @@ function App() {
                 className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-line"
               >
                 <p className="text-muted">
-                  Vuelvo atrás los cambios de ese pedido. Lo que tocaste a mano
-                  después queda intacto.
+                  Vuelvo atrás los cambios de ese pedido, aunque sea de otro
+                  trabajo. Lo que tocaste a mano después queda intacto.
                 </p>
                 <div className="flex items-center gap-2 shrink-0">
                   <button
@@ -1257,7 +1268,7 @@ function App() {
                                 file={f}
                                 token={state.fileToken}
                                 fileRevision={state.fileRevision}
-                                openedIds={openedIds}
+                                opened={opened}
                                 onMarkOpened={markOpened}
                                 result
                                 onPreview={(file) =>
@@ -1266,6 +1277,7 @@ function App() {
                                     list: results.filter((x) =>
                                       x.mime.startsWith("image/"),
                                     ),
+                                    trackOpened: true,
                                   })
                                 }
                               />
@@ -1467,21 +1479,24 @@ function App() {
                         )}
                       </div>
                     </article>
-                    {i === lastDeliverablesIndex && !!m.results?.length && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setFocusedMessageId(m.id);
-                          setDeliverablesOpen(true);
-                        }}
-                        className={`min-[960px]:hidden inline-flex items-center gap-1.5 text-[13px] font-bold text-ink underline decoration-accent decoration-2 underline-offset-4 cursor-pointer ${focusRing} ${
-                          m.role === "user" ? "self-end -mt-2" : "self-start pl-4 -mt-2"
-                        }`}
-                      >
-                        <Package size={18} strokeWidth={1.75} className="text-accent" aria-hidden="true" />
-                        Ver {m.results.length} para mandar
-                      </button>
-                    )}
+                    {i === lastDeliverablesIndex && !!m.results?.length && (() => {
+                      const count = messageDeliverableCount(work, m.id);
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setFocusedMessageId(m.id);
+                            setDeliverablesOpen(true);
+                          }}
+                          className={`min-[960px]:hidden inline-flex items-center gap-1.5 text-[13px] font-bold text-ink underline decoration-accent decoration-2 underline-offset-4 cursor-pointer ${focusRing} ${
+                            m.role === "user" ? "self-end -mt-2" : "self-start pl-4 -mt-2"
+                          }`}
+                        >
+                          <Package size={18} strokeWidth={1.75} className="text-accent" aria-hidden="true" />
+                          Ver {count} para mandar
+                        </button>
+                      );
+                    })()}
                   </React.Fragment>
                 ))}
 
@@ -1608,7 +1623,7 @@ function App() {
                           className="text-muted shrink-0"
                           aria-hidden="true"
                         />
-                        <span>Preparando la protección…</span>
+                        <span>Preparando la protección de tu carpeta…</span>
                       </div>
                     ) : (
                       <section
@@ -1970,7 +1985,7 @@ function App() {
             focusedMessageId={focusedMessageId}
             token={state.fileToken}
             fileRevision={state.fileRevision}
-            openedIds={openedIds}
+            opened={opened}
             onMarkOpened={markOpened}
             hasGalleryResults={hasGalleryResults}
             onOpenGallery={() => {
@@ -1978,7 +1993,7 @@ function App() {
               setDeliverablesOpen(false);
               setFocusedMessageId(undefined);
             }}
-            onPreview={(file, list) => setPreview({ file, list })}
+            onPreview={(file, list) => setPreview({ file, list, trackOpened: true })}
             onCloseMobile={() => closeDeliverablesDrawer(true)}
             closeMobileRef={deliverablesCloseRef}
           />
@@ -1991,7 +2006,7 @@ function App() {
           list={preview.list}
           token={state.fileToken}
           fileRevision={state.fileRevision}
-          onMarkOpened={markOpened}
+          onMarkOpened={preview.trackOpened ? markOpened : undefined}
           onSelect={(file) => setPreview((prev) => (prev ? { ...prev, file } : prev))}
           onClose={() => setPreview(undefined)}
         />

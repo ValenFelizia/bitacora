@@ -7,20 +7,27 @@ import {
   formatTime,
   formatWorkDate,
   groupDeliverableBatches,
-  groupDeliverables,
+  messageDeliverableCount,
   undoSummary,
 } from "../../web/src/format";
 import {
+  initOpenedState,
   isDeliverableUnopened,
   markDeliverablesOpened,
-  readOpenedIds,
+  pruneOpenedState,
 } from "../../web/src/opened";
 
-const makeFile = (name: string, mime = "image/png", createdAt = "2026-11-16T14:05:00.000Z"): FileRef => ({
-  id: name,
+const makeFile = (
+  name: string,
+  mime = "image/png",
+  createdAt = "2026-11-16T14:05:00.000Z",
+  path = name,
+  id = path,
+): FileRef => ({
+  id,
   name,
   mime,
-  path: name,
+  path,
   createdAt,
 });
 
@@ -53,7 +60,7 @@ test("formatTime returns HH:MM in 24-hour format and empty string on invalid inp
   assert.equal(formatTime("invalid"), "");
 });
 
-test("groupDeliverables promotes multi-plate batch to hero and leaves older files below", () => {
+test("groupDeliverableBatches promotes multi-plate batch to hero and keeps older batches grouped", () => {
   const work = makeWork({
     messages: [
       { id: "m1", role: "user", text: "Cotización" },
@@ -80,7 +87,7 @@ test("groupDeliverables promotes multi-plate batch to hero and leaves older file
     ],
   });
 
-  const grouped = groupDeliverables(work);
+  const grouped = groupDeliverableBatches(work);
   assert.ok(grouped.featured);
   assert.equal(grouped.featured.title, "Porto de Galinhas, febrero");
   assert.match(grouped.featured.meta, /^4 placas/);
@@ -90,27 +97,22 @@ test("groupDeliverables promotes multi-plate batch to hero and leaves older file
   );
   assert.equal(grouped.featured.primary.name, "pieza-1.png");
   assert.ok(grouped.featured.allFiles.some((f) => f.name === "piezas.pdf"));
-  assert.deepEqual(
-    grouped.older.map((f) => f.name),
-    ["Cotización.pdf"],
-  );
-  const menuIds = new Set(grouped.featured.allFiles.map((f) => f.id));
-  for (const older of grouped.older) {
-    assert.equal(menuIds.has(older.id), false, `${older.name} must not appear in both menu and older`);
-  }
+  assert.equal(grouped.olderGroups.length, 1);
+  assert.equal(grouped.olderGroups[0].primary.name, "Cotización.pdf");
+  assert.equal(messageDeliverableCount(work, "m4"), 4);
 
-  const targeted = groupDeliverables(work, "m2");
+  const targeted = groupDeliverableBatches(work, "m2");
   assert.equal(targeted.featured?.id, "m2");
   assert.equal(targeted.featured?.primary.name, "Cotización.pdf");
-  assert.equal(targeted.older.some((f) => f.name === "Cotización.pdf"), false);
-  assert.equal(targeted.older.some((f) => f.name === "pieza-1.png"), true);
+  assert.equal(targeted.olderGroups.length, 1);
+  assert.equal(targeted.olderGroups[0].id, "m4");
 });
 
-test("groupDeliverables uses work title for single-plate batch and handles single PDF or empty works", () => {
-  assert.deepEqual(groupDeliverables(undefined), { older: [] });
-  assert.deepEqual(groupDeliverables(makeWork()), { older: [] });
+test("groupDeliverableBatches handles single-plate, single-PDF, empty works, and multi-folder splits", () => {
+  assert.deepEqual(groupDeliverableBatches(undefined), { olderGroups: [] });
+  assert.deepEqual(groupDeliverableBatches(makeWork()), { olderGroups: [] });
 
-  const singlePlate = groupDeliverables(
+  const singlePlate = groupDeliverableBatches(
     makeWork({
       messages: [
         {
@@ -128,9 +130,9 @@ test("groupDeliverables uses work title for single-plate batch and handles singl
   assert.equal(singlePlate.featured?.title, "Porto de Galinhas, febrero");
   assert.match(singlePlate.featured?.meta ?? "", /^1 placa/);
   assert.equal(singlePlate.featured?.plates.length, 1);
-  assert.equal(singlePlate.older.length, 0);
+  assert.equal(singlePlate.olderGroups.length, 0);
 
-  const single = groupDeliverables(
+  const single = groupDeliverableBatches(
     makeWork({
       messages: [
         {
@@ -144,7 +146,31 @@ test("groupDeliverables uses work title for single-plate batch and handles singl
   );
   assert.equal(single.featured?.title, "viaje.pdf");
   assert.equal(single.featured?.plates.length, 0);
-  assert.equal(single.older.length, 0);
+  assert.equal(single.olderGroups.length, 0);
+
+  // One message touching two proposal folders splits into two separate groups.
+  const multiFolder = groupDeliverableBatches(
+    makeWork({
+      messages: [
+        {
+          id: "m1",
+          role: "assistant",
+          text: "Dos propuestas.",
+          results: [
+            makeFile("pieza-1.png", "image/png", "2026-11-16T14:00:00.000Z", "propuestas/porto/salida/pieza-1.png"),
+            makeFile("pieza-2.png", "image/png", "2026-11-16T14:00:00.000Z", "propuestas/porto/salida/pieza-2.png"),
+            makeFile("pieza-1.png", "image/png", "2026-11-16T14:01:00.000Z", "propuestas/cancun/salida/pieza-1.png"),
+            makeFile("pieza-2.png", "image/png", "2026-11-16T14:01:00.000Z", "propuestas/cancun/salida/pieza-2.png"),
+          ],
+        },
+      ],
+    }),
+  );
+  assert.equal(multiFolder.featured?.title, "Cancun");
+  assert.equal(multiFolder.featured?.plates.length, 2);
+  assert.equal(multiFolder.olderGroups.length, 1);
+  assert.equal(multiFolder.olderGroups[0].title, "Porto");
+  assert.equal(multiFolder.olderGroups[0].plates.length, 2);
 });
 
 test("undoSummary formats plate counts, images, file counts, empty results, and fallback", () => {
@@ -218,13 +244,13 @@ test("undoSummary formats plate counts, images, file counts, empty results, and 
     }),
   ];
 
-  assert.equal(groupDeliverables(works[0], "m-plates").featured?.kind, "plates");
-  assert.equal(groupDeliverables(works[0], "m-single").featured?.kind, "file");
-  assert.equal(groupDeliverables(works[0], "m-images").featured?.kind, "images");
-  assert.equal(groupDeliverables(works[0], "m-single-image").featured?.kind, "images");
-  assert.equal(groupDeliverables(works[0], "m-image-pdf").featured?.kind, "file");
-  assert.equal(groupDeliverables(works[0], "m-plates-extra").featured?.kind, "plates");
-  assert.equal(groupDeliverables(works[0], "m-multi-pdf").featured?.kind, "file");
+  assert.equal(groupDeliverableBatches(works[0], "m-plates").featured?.kind, "plates");
+  assert.equal(groupDeliverableBatches(works[0], "m-single").featured?.kind, "file");
+  assert.equal(groupDeliverableBatches(works[0], "m-images").featured?.kind, "images");
+  assert.equal(groupDeliverableBatches(works[0], "m-single-image").featured?.kind, "images");
+  assert.equal(groupDeliverableBatches(works[0], "m-image-pdf").featured?.kind, "file");
+  assert.equal(groupDeliverableBatches(works[0], "m-plates-extra").featured?.kind, "plates");
+  assert.equal(groupDeliverableBatches(works[0], "m-multi-pdf").featured?.kind, "file");
 
   assert.equal(
     undoSummary({ workId: "w1", messageId: "m-plates" }, works),
@@ -268,52 +294,7 @@ test("undoSummary formats plate counts, images, file counts, empty results, and 
   );
 });
 
-test("groupDeliverableBatches groups older proposals by batch in reverse chronological order", () => {
-  const work = makeWork({
-    messages: [
-      { id: "m1", role: "user", text: "Primera" },
-      {
-        id: "m2",
-        role: "assistant",
-        text: "Primera propuesta.",
-        results: [
-          makeFile("pieza-1.png", "image/png", "2026-11-16T12:00:00.000Z"),
-          makeFile("pieza-2.png", "image/png", "2026-11-16T12:00:00.000Z"),
-        ],
-      },
-      { id: "m3", role: "user", text: "Segunda" },
-      {
-        id: "m4",
-        role: "assistant",
-        text: "Presupuesto.",
-        results: [makeFile("presupuesto.pdf", "application/pdf", "2026-11-16T13:00:00.000Z")],
-      },
-      { id: "m5", role: "user", text: "Tercera" },
-      {
-        id: "m6",
-        role: "assistant",
-        text: "Tercera propuesta.",
-        results: [
-          makeFile("pieza-1.png", "image/png", "2026-11-16T14:00:00.000Z"),
-          makeFile("pieza-2.png", "image/png", "2026-11-16T14:00:00.000Z"),
-          makeFile("pieza-3.png", "image/png", "2026-11-16T14:00:00.000Z"),
-        ],
-      },
-    ],
-  });
-
-  const grouped = groupDeliverableBatches(work);
-  assert.equal(grouped.featured?.id, "m6");
-  assert.equal(grouped.featured?.plates.length, 3);
-  assert.deepEqual(
-    grouped.olderGroups.map((g) => g.id),
-    ["m4", "m2"],
-  );
-  assert.equal(grouped.olderGroups[0].primary.name, "presupuesto.pdf");
-  assert.equal(grouped.olderGroups[1].plates.length, 2);
-});
-
-test("opened deliverable tracking persists via storage and ignores storage errors", () => {
+test("opened deliverable tracking sets first-run baseline, handles blocked storage, caps in memory, prunes, and uses LRU", () => {
   const store = new Map<string, string>();
   const storage = {
     getItem: (k: string) => store.get(k) ?? null,
@@ -324,23 +305,46 @@ test("opened deliverable tracking persists via storage and ignores storage error
     setItem: () => { throw new Error("quota"); },
   };
 
-  const fileA = makeFile("pieza-1.png");
-  const fileB = { ...makeFile("pieza-2.png"), reverted: true };
+  // First run: existing deliverables at or before `since` show no dot; new ones show a dot.
+  let state = initOpenedState(storage, () => "2026-11-16T14:00:00.000Z");
+  assert.equal(state.available, true);
+  const oldFile = makeFile("vieja.png", "image/png", "2026-11-16T13:59:00.000Z");
+  const newFile = makeFile("nueva.png", "image/png", "2026-11-16T14:05:00.000Z");
+  const revertedFile = { ...makeFile("revertida.png", "image/png", "2026-11-16T14:05:00.000Z"), reverted: true };
+  assert.equal(isDeliverableUnopened(oldFile, state), false);
+  assert.equal(isDeliverableUnopened(newFile, state), true);
+  assert.equal(isDeliverableUnopened(revertedFile, state), false);
 
-  let opened = readOpenedIds(storage);
-  assert.equal(isDeliverableUnopened(fileA, opened), true);
-  assert.equal(isDeliverableUnopened(fileB, opened), false);
+  state = markDeliverablesOpened(state, [newFile], storage);
+  assert.equal(isDeliverableUnopened(newFile, state), false);
+  assert.equal(isDeliverableUnopened(newFile, initOpenedState(storage)), false);
 
-  opened = markDeliverablesOpened(opened, [fileA], storage);
-  assert.equal(isDeliverableUnopened(fileA, opened), false);
-  assert.equal(isDeliverableUnopened(fileA, readOpenedIds(storage)), false);
+  // Blocked storage shows no dots at all and ignores writes.
+  const blocked = initOpenedState(brokenStorage, () => "2026-11-16T14:00:00.000Z");
+  assert.equal(blocked.available, false);
+  assert.equal(isDeliverableUnopened(newFile, blocked), false);
+  assert.equal(markDeliverablesOpened(blocked, [newFile], brokenStorage), blocked);
 
-  const same = markDeliverablesOpened(opened, [fileA], storage);
-  assert.equal(same, opened);
+  // Cap of 1000 applies in memory too, and reopening moves an ID to the tail (LRU).
+  const manyFiles = Array.from({ length: 1005 }, (_, i) =>
+    makeFile(`f-${i}.png`, "image/png", "2026-11-16T14:10:00.000Z", `f-${i}.png`, `id-${i}`),
+  );
+  let capped = initOpenedState(storage, () => "2026-11-16T14:00:00.000Z");
+  capped = markDeliverablesOpened(capped, manyFiles.slice(0, 1000), storage);
+  assert.equal(capped.ids.size, 1000);
+  // Reopen id-0 so it moves to the end before adding 5 more.
+  capped = markDeliverablesOpened(capped, [manyFiles[0]], storage);
+  capped = markDeliverablesOpened(capped, manyFiles.slice(1000), storage);
+  assert.equal(capped.ids.size, 1000);
+  assert.equal(capped.ids.has("id-0"), true);
+  assert.equal(capped.ids.has("id-1"), false);
 
-  assert.equal(readOpenedIds(brokenStorage).size, 0);
-  const stillWorks = markDeliverablesOpened(new Set(), [fileA], brokenStorage);
-  assert.equal(stillWorks.has(fileA.id), true);
+  // Pruning drops IDs that are no longer in works.
+  const work = makeWork({
+    messages: [{ id: "m1", role: "assistant", text: "Ok", results: [manyFiles[0]] }],
+  });
+  const pruned = pruneOpenedState(capped, [work], storage);
+  assert.deepEqual(Array.from(pruned.ids), ["id-0"]);
 });
 
 test("web UI source avoids forbidden technical words", async () => {
@@ -352,4 +356,6 @@ test("web UI source avoids forbidden technical words", async () => {
     assert.doesNotMatch(text, /archivo\s+JSON/i, `web/src/${entry} should not mention "archivo JSON"`);
     assert.doesNotMatch(text, /\bservidor\b/i, `web/src/${entry} should not mention "servidor"`);
   }
+  const picker = await readFile(join("web/src", "model-picker.tsx"), "utf8");
+  assert.doesNotMatch(picker, /razonamiento/i);
 });
