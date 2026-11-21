@@ -41,6 +41,29 @@ test('path boundaries, Windows names, links and kit preservation', async () => {
     assert.match(await f.files.read('ejemplo/pieza.html'), /data-cites/);
   } finally { await f.close(); }
 });
+test('the kit comes back when the agency folder is deleted', async () => {
+  const f = await fixture();
+  try {
+    await initializeKit(f.root, f.data);
+    await rm(join(f.root, 'ejemplo'), { recursive: true, force: true });
+    await initializeKit(f.root, f.data);
+    // A kit file the agency deleted on purpose stays deleted.
+    await assert.rejects(f.files.read('ejemplo/pieza.html'));
+    // The whole folder is deleted, as if the agency moved it: the next start
+    // copies the kit again.
+    await rm(f.root, { recursive: true, force: true });
+    await initializeKit(f.root, f.data);
+    assert.match(await f.files.read('AGENTS.md'), /\S/);
+    assert.match(await f.files.read('ejemplo/pieza.html'), /data-cites/);
+    // Without the kit's AGENTS.md the copy fills in what is missing and keeps
+    // what the agency changed.
+    await f.files.write('ejemplo/pieza.html', 'Pieza propia', false);
+    await rm(join(f.root, 'AGENTS.md'));
+    await initializeKit(f.root, f.data);
+    assert.match(await f.files.read('AGENTS.md'), /\S/);
+    assert.equal(await f.files.read('ejemplo/pieza.html'), 'Pieza propia');
+  } finally { await f.close(); }
+});
 test('kit skills arrive in an agency initialized before the kit shipped them', async () => {
   const f = await fixture();
   try {

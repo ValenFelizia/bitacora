@@ -64,7 +64,11 @@ export async function initializeKit(
   const target = new AgencyFiles(workspace);
   const state = new AgencyFiles(data);
   const marker = `kit-initialized-${createHash('sha256').update((await realpath(workspace)).toLowerCase()).digest('hex')}.json`;
-  try { await state.read(marker); return { skillsError }; }
+  // The marker keeps files the agency deleted on purpose from coming back, but
+  // without the kit's AGENTS.md the agent works without its rules (#65): the
+  // agency folder was deleted or moved, so the kit is copied again. The copy
+  // never replaces a file the agency already has.
+  try { await state.read(marker); await target.read('AGENTS.md'); return { skillsError }; }
   catch(e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
   async function copy(dir: string) {
     for (const item of await readdir(await source.path(dir), { withFileTypes: true })) {
@@ -75,6 +79,6 @@ export async function initializeKit(
     }
   }
   await copy('.');
-  await state.write(marker, JSON.stringify({version:1,workspace:await realpath(workspace)}));
+  await state.write(marker, JSON.stringify({version:1,workspace:await realpath(workspace)}), false);
   return { skillsError };
 }
