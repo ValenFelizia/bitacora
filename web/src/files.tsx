@@ -19,7 +19,8 @@ import {
   isOverview,
   type DeliverableGroup,
 } from "./format";
-import { isDeliverableUnopened, type OpenedState } from "./opened";
+
+const isDeliverableUnopened = (file: FileRef) => !file.reverted && !file.openedAt;
 
 function fileUrl(file: FileRef) {
   return `/files?id=${encodeURIComponent(file.id)}`;
@@ -366,7 +367,6 @@ export function FileCard({
   token,
   result = false,
   fileRevision,
-  opened,
   onMarkOpened,
   onPreview,
 }: {
@@ -374,14 +374,13 @@ export function FileCard({
   token?: string;
   result?: boolean;
   fileRevision?: number;
-  opened?: OpenedState;
   onMarkOpened?: (files: FileRef[]) => void;
   onPreview: (file: FileRef) => void;
 }) {
   const fetched = useFetchedFile(file, token, fileRevision);
   const [notice, setNotice] = useState("");
   const image = file.mime.startsWith("image/");
-  const unopened = result && !fetched.missing && !!opened && isDeliverableUnopened(file, opened);
+  const unopened = result && !fetched.missing && isDeliverableUnopened(file);
 
   async function copy() {
     if (!fetched.blob) return;
@@ -630,20 +629,18 @@ function OlderDeliverableRow({
   file,
   token,
   fileRevision,
-  opened,
   onMarkOpened,
   onPreview,
 }: {
   file: FileRef;
   token?: string;
   fileRevision?: number;
-  opened: OpenedState;
   onMarkOpened: (files: FileRef[]) => void;
   onPreview: (file: FileRef) => void;
 }) {
   const fetched = useFetchedFile(file, token, fileRevision);
   const isImage = file.mime.startsWith("image/");
-  const unopened = !fetched.missing && isDeliverableUnopened(file, opened);
+  const unopened = !fetched.missing && isDeliverableUnopened(file);
 
   return (
     <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] gap-[10px] items-center py-[10px] border-t border-line text-[14px]">
@@ -698,19 +695,17 @@ function BatchPdfRow({
   file,
   token,
   fileRevision,
-  opened,
   onMarkOpened,
   onPreview,
 }: {
   file: FileRef;
   token?: string;
   fileRevision?: number;
-  opened: OpenedState;
   onMarkOpened: (files: FileRef[]) => void;
   onPreview: (file: FileRef) => void;
 }) {
   const fetched = useFetchedFile(file, token, fileRevision);
-  const unopened = !fetched.missing && isDeliverableUnopened(file, opened);
+  const unopened = !fetched.missing && isDeliverableUnopened(file);
 
   return (
     <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] gap-[10px] items-center pt-[10px] border-t border-line text-[14px]">
@@ -764,7 +759,6 @@ function FeaturedDeliverable({
   workTitle,
   token,
   fileRevision,
-  opened,
   onMarkOpened,
   onPreview,
 }: {
@@ -772,7 +766,6 @@ function FeaturedDeliverable({
   workTitle?: string;
   token?: string;
   fileRevision?: number;
-  opened: OpenedState;
   onMarkOpened: (files: FileRef[]) => void;
   onPreview: (file: FileRef, list: FileRef[]) => void;
 }) {
@@ -782,8 +775,9 @@ function FeaturedDeliverable({
   const primaryFetched = useFetchedFile(group.primary, token, fileRevision);
   const isImage = group.primary.mime.startsWith("image/");
   const isMulti = group.plates.length >= 2;
+  const availablePlates = group.plates.filter((p) => !p.reverted);
   const allReverted = isMulti
-    ? group.plates.every((p) => p.reverted)
+    ? availablePlates.length === 0
     : !!group.primary.reverted;
   const batchUnavailable =
     allReverted || missingAll || (!isMulti && primaryFetched.missing);
@@ -796,11 +790,15 @@ function FeaturedDeliverable({
       ? group.allFiles.filter((f) => f.mime !== "application/pdf")
       : group.allFiles;
   const showTitle = group.title && group.title !== workTitle;
-  const downloadText = isMulti ? `Descargar las ${group.plates.length}` : "Descargar";
+  const downloadText =
+    isMulti && availablePlates.length >= 2
+      ? `Descargar las ${availablePlates.length}`
+      : "Descargar";
   const featuredPlate = group.plates[0];
-  const restPlates = group.plates.slice(1, 7);
-  const overflowCount = Math.max(0, group.plates.length - 1 - restPlates.length);
-  const primaryPdfUnopened = !primaryFetched.missing && isDeliverableUnopened(group.primary, opened);
+  const hasOverflow = group.plates.length > 7;
+  const restPlates = hasOverflow ? group.plates.slice(1, 7) : group.plates.slice(1);
+  const overflowCount = hasOverflow ? group.plates.length - 6 : 0;
+  const primaryPdfUnopened = !primaryFetched.missing && isDeliverableUnopened(group.primary);
 
   useEffect(() => {
     setMissingAll(false);
@@ -833,7 +831,7 @@ function FeaturedDeliverable({
           token={token}
           fileRevision={fileRevision}
           compact={false}
-          unopened={isDeliverableUnopened(featuredPlate, opened)}
+          unopened={isDeliverableUnopened(featuredPlate)}
           fetched={featuredPlate.id === group.primary.id ? primaryFetched : undefined}
           onClick={() => onPreview(featuredPlate, group.plates)}
         />
@@ -921,16 +919,15 @@ function FeaturedDeliverable({
         </div>
       )}
 
-      {primaryFetched.missing && (
+      {batchUnavailable ? (
         <p role="status" className="text-[13px] text-muted flex items-center gap-2 border-t border-line pt-[10px]">
           <FileX size={18} strokeWidth={1.75} aria-hidden="true" />
           Ya no está disponible.
         </p>
-      )}
-      {(!batchUnavailable || isMulti) && (
+      ) : (
         <button
           type="button"
-          disabled={batchUnavailable || (!primaryFetched.url && !isMulti)}
+          disabled={!primaryFetched.url && !isMulti}
           className={batchDownloadBtn}
           onClick={() => void downloadAll()}
         >
@@ -945,8 +942,8 @@ function FeaturedDeliverable({
             const hasMoreTile =
               overflowCount > 0 && index === restPlates.length - 1;
             const tileUnopened = hasMoreTile
-              ? group.plates.slice(6).some((p) => isDeliverableUnopened(p, opened))
-              : isDeliverableUnopened(plate, opened);
+              ? group.plates.slice(6).some(isDeliverableUnopened)
+              : isDeliverableUnopened(plate);
             return (
               <PlateThumbnail
                 key={`${plate.id}-${fileRevision ?? 0}`}
@@ -956,12 +953,7 @@ function FeaturedDeliverable({
                 compact
                 moreCount={hasMoreTile ? overflowCount : undefined}
                 unopened={tileUnopened}
-                onClick={() =>
-                  onPreview(
-                    hasMoreTile ? group.plates[7] : plate,
-                    group.plates,
-                  )
-                }
+                onClick={() => onPreview(plate, group.plates)}
               />
             );
           })}
@@ -972,7 +964,6 @@ function FeaturedDeliverable({
         <BatchPdfRow
           key={`${pdf.id}-${fileRevision ?? 0}`}
           file={pdf}
-          opened={opened}
           onMarkOpened={onMarkOpened}
           onPreview={(file) => onPreview(file, [file])}
           token={token}
@@ -988,7 +979,6 @@ function FeaturedDeliverable({
               file={f}
               token={token}
               fileRevision={fileRevision}
-              opened={opened}
               onMarkOpened={onMarkOpened}
               onPreview={(target) =>
                 onPreview(target, menuFiles.filter((x) => x.mime.startsWith("image/")))
@@ -1012,7 +1002,6 @@ function OlderBatchGroup({
   workTitle,
   token,
   fileRevision,
-  opened,
   onMarkOpened,
   onPreview,
 }: {
@@ -1020,7 +1009,6 @@ function OlderBatchGroup({
   workTitle?: string;
   token?: string;
   fileRevision?: number;
-  opened: OpenedState;
   onMarkOpened: (files: FileRef[]) => void;
   onPreview: (file: FileRef, list: FileRef[]) => void;
 }) {
@@ -1042,7 +1030,6 @@ function OlderBatchGroup({
             file={file}
             token={token}
             fileRevision={fileRevision}
-            opened={opened}
             onMarkOpened={onMarkOpened}
             onPreview={(target) =>
               onPreview(
@@ -1056,13 +1043,25 @@ function OlderBatchGroup({
     );
   }
 
+  const hasOverflow = group.plates.length > 6;
   const visiblePlates = group.plates.slice(0, 6);
-  const overflowCount = Math.max(0, group.plates.length - visiblePlates.length);
+  const overflowCount = hasOverflow ? group.plates.length - 5 : 0;
   const batchPdfs = group.allFiles.filter((f) => f.mime === "application/pdf");
-  const menuFiles = group.allFiles.filter((f) => f.mime !== "application/pdf");
-  const extraFiles = menuFiles.filter((f) => !group.plates.includes(f) && !isOverview(f));
+  const extraFiles = group.allFiles.filter(
+    (f) => f.mime !== "application/pdf" && !group.plates.includes(f) && !isOverview(f),
+  );
+  // Only offer the ⋯ menu when it adds items not already shown above (overview sheets or overflow plates).
+  const menuFiles = group.allFiles.filter(
+    (f) =>
+      f.mime !== "application/pdf" &&
+      !extraFiles.includes(f) &&
+      (isOverview(f) || !visiblePlates.includes(f) || (hasOverflow && f === visiblePlates[5])),
+  );
   const showTitle = group.title && group.title !== workTitle;
-  const allReverted = group.plates.every((p) => p.reverted) || missingAll;
+  const availablePlates = group.plates.filter((p) => !p.reverted);
+  const allReverted = availablePlates.length === 0 || missingAll;
+  const downloadText =
+    availablePlates.length >= 2 ? `Descargar las ${availablePlates.length}` : "Descargar";
 
   async function downloadAll() {
     if (!token) return;
@@ -1083,16 +1082,22 @@ function OlderBatchGroup({
           )}
         </div>
         <div className="flex items-center gap-1 shrink-0">
-          <button
-            type="button"
-            disabled={allReverted}
-            className={downloadLink}
-            onClick={() => void downloadAll()}
-          >
-            <ArrowDownToLine size={16} strokeWidth={1.75} className="text-accent shrink-0" aria-hidden="true" />
-            <span>{`Descargar las ${group.plates.length}`}</span>
-          </button>
-          {menuFiles.length > 1 && (
+          {allReverted ? (
+            <span role="status" className="text-[13px] text-muted flex items-center gap-1.5">
+              <FileX size={16} strokeWidth={1.75} aria-hidden="true" />
+              Ya no está disponible.
+            </span>
+          ) : (
+            <button
+              type="button"
+              className={downloadLink}
+              onClick={() => void downloadAll()}
+            >
+              <ArrowDownToLine size={16} strokeWidth={1.75} className="text-accent shrink-0" aria-hidden="true" />
+              <span>{downloadText}</span>
+            </button>
+          )}
+          {menuFiles.length > 0 && (
             <button
               type="button"
               className={iconBtn}
@@ -1110,8 +1115,8 @@ function OlderBatchGroup({
         {visiblePlates.map((plate, index) => {
           const hasMoreTile = overflowCount > 0 && index === visiblePlates.length - 1;
           const tileUnopened = hasMoreTile
-            ? group.plates.slice(5).some((p) => isDeliverableUnopened(p, opened))
-            : isDeliverableUnopened(plate, opened);
+            ? group.plates.slice(5).some(isDeliverableUnopened)
+            : isDeliverableUnopened(plate);
           return (
             <PlateThumbnail
               key={`${plate.id}-${fileRevision ?? 0}`}
@@ -1121,9 +1126,7 @@ function OlderBatchGroup({
               compact
               moreCount={hasMoreTile ? overflowCount : undefined}
               unopened={tileUnopened}
-              onClick={() =>
-                onPreview(hasMoreTile ? group.plates[6] : plate, group.plates)
-              }
+              onClick={() => onPreview(plate, group.plates)}
             />
           );
         })}
@@ -1134,10 +1137,12 @@ function OlderBatchGroup({
           file={file}
           token={token}
           fileRevision={fileRevision}
-          opened={opened}
           onMarkOpened={onMarkOpened}
           onPreview={(target) =>
-            onPreview(target, menuFiles.filter((x) => x.mime.startsWith("image/")))
+            onPreview(
+              target,
+              group.allFiles.filter((x) => x.mime.startsWith("image/")),
+            )
           }
         />
       ))}
@@ -1147,7 +1152,6 @@ function OlderBatchGroup({
           file={pdf}
           token={token}
           fileRevision={fileRevision}
-          opened={opened}
           onMarkOpened={onMarkOpened}
           onPreview={(file) => onPreview(file, [file])}
         />
@@ -1160,10 +1164,12 @@ function OlderBatchGroup({
               file={f}
               token={token}
               fileRevision={fileRevision}
-              opened={opened}
               onMarkOpened={onMarkOpened}
               onPreview={(target) =>
-                onPreview(target, menuFiles.filter((x) => x.mime.startsWith("image/")))
+                onPreview(
+                  target,
+                  group.allFiles.filter((x) => x.mime.startsWith("image/")),
+                )
               }
             />
           ))}
@@ -1183,7 +1189,6 @@ export function DeliverablesPanel({
   focusedMessageId,
   token,
   fileRevision,
-  opened,
   onMarkOpened,
   hasGalleryResults,
   onOpenGallery,
@@ -1195,7 +1200,6 @@ export function DeliverablesPanel({
   focusedMessageId?: string;
   token?: string;
   fileRevision?: number;
-  opened: OpenedState;
   onMarkOpened: (files: FileRef[]) => void;
   hasGalleryResults: boolean;
   onOpenGallery: () => void;
@@ -1249,7 +1253,6 @@ export function DeliverablesPanel({
             workTitle={work?.title}
             token={token}
             fileRevision={fileRevision}
-            opened={opened}
             onMarkOpened={onMarkOpened}
             onPreview={onPreview}
           />
@@ -1260,7 +1263,6 @@ export function DeliverablesPanel({
               workTitle={work?.title}
               token={token}
               fileRevision={fileRevision}
-              opened={opened}
               onMarkOpened={onMarkOpened}
               onPreview={onPreview}
             />

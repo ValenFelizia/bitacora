@@ -33,7 +33,9 @@ const KIT_NOT_READY =
   "No pude preparar la carpeta de tu agencia. Sin los archivos del kit no puedo empezar tus pedidos. Volvé a abrir Bitácora para intentarlo de nuevo.";
 const isFileRef = (value: unknown) => {
   const file = value as Partial<FileRef> | null;
-  return !!file && isText(file.id) && isText(file.path) && isText(file.name) && isText(file.mime) && isText(file.createdAt);
+  return !!file && isText(file.id) && isText(file.path) && isText(file.name) && isText(file.mime) && isText(file.createdAt) &&
+    (file.reverted === undefined || typeof file.reverted === "boolean") &&
+    (file.openedAt === undefined || isText(file.openedAt));
 };
 const isMessage = (value: unknown) => {
   const message = value as Partial<Message> | null;
@@ -200,10 +202,21 @@ export class App {
       const saved = JSON.parse(
         await readFile(join(this.data, "works.json"), "utf8"),
       );
-      if (!saved || saved.version !== 1 || !Array.isArray(saved.works) || !saved.works.every(isSavedWork))
+      if (!saved || (saved.version !== 1 && saved.version !== 2) || !Array.isArray(saved.works) || !saved.works.every(isSavedWork))
         throw new SyntaxError("Invalid saved work list");
       this.works = saved.works;
       this.backupReceipt = typeof saved.backupReceipt === "string" ? saved.backupReceipt : undefined;
+      if (saved.version === 1) {
+        const now = new Date().toISOString();
+        for (const work of this.works) {
+          for (const message of work.messages) {
+            for (const file of message.results || []) {
+              if (!file.openedAt) file.openedAt = file.createdAt || now;
+            }
+          }
+        }
+        this.dirty = true;
+      }
       // A work whose first request was paused or failed before it could be
       // titled stays pending across restarts, so its next finished request
       // still names it. A name the user chose is final across restarts too.
@@ -244,6 +257,7 @@ export class App {
       if (this.backups?.restoring) this.notice = "Quedó un Deshacer pendiente. Podés reintentarlo o dejar la carpeta como está.";
     }
     for (const work of this.works) if (work.pendingFiles) { await this.collectResults(work); this.dirty = true; }
+    if (this.dirty) { this.changed(); await this.writes; }
     await this.loadSettings();
     if (this.workspace) {
       // The profile is the agency's file, not a preference: it is read at each
@@ -412,7 +426,7 @@ export class App {
   private changed() {
     const revision = ++this.writeRevision;
     this.dirty = false;
-    const content = JSON.stringify({ version: 1, works: this.works, backupReceipt: this.backupReceipt }, null, 2);
+    const content = JSON.stringify({ version: 2, works: this.works, backupReceipt: this.backupReceipt }, null, 2);
     this.writes = this.writes
       .catch(() => {})
       .then(async () => {
@@ -834,6 +848,25 @@ export class App {
       // Not published: the window that dragged it already shows it, and the
       // next snapshot carries it to any other window.
       await this.saveSettings().catch(() => {});
+      return;
+    }
+    if (command.type === "markOpened") {
+      if (!Array.isArray(command.fileIds)) throw new Error("Invalid fileIds");
+      const ids = new Set(command.fileIds.filter((id): id is string => typeof id === "string" && id.length > 0));
+      if (!ids.size) return;
+      const now = new Date().toISOString();
+      let updated = false;
+      for (const work of this.works) {
+        for (const message of work.messages) {
+          for (const file of message.results || []) {
+            if (ids.has(file.id) && !file.openedAt) {
+              file.openedAt = now;
+              updated = true;
+            }
+          }
+        }
+      }
+      if (updated) this.changed();
       return;
     }
     if (command.type === "interrupt") {

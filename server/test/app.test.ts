@@ -586,3 +586,95 @@ test("a notice the queue cap pushes out is said again in the next work", async (
     assert.doesNotMatch(work.details, /aviso 1\b|aviso 2\b/);
   } finally { await f.app.close(); await rm(f.dir, { recursive: true }); }
 });
+
+test("markOpened records openedAt on results, persists across restart, ignores unknown ids, and migrates v1 works.json", async () => {
+  await mkdir(".local", { recursive: true });
+  const dir = await mkdtemp(resolve(".local/opened-"));
+  const legacyWorks = {
+    version: 1,
+    works: [
+      {
+        id: "w-legacy",
+        conversationId: "conv-1",
+        title: "Viaje viejo",
+        createdAt: "2026-11-16T12:00:00.000Z",
+        updatedAt: "2026-11-16T12:05:00.000Z",
+        details: "",
+        busy: false,
+        progress: "Listo.",
+        messages: [
+          {
+            id: "m-1",
+            role: "user",
+            text: "Adjunto",
+            attachments: [
+              { id: "att-1", path: "adjuntos/foto.png", name: "foto.png", mime: "image/png", createdAt: "2026-11-16T12:01:00.000Z" },
+            ],
+          },
+          {
+            id: "m-2",
+            role: "assistant",
+            text: "Listo.",
+            results: [
+              { id: "res-old", path: "propuestas/a/pieza-1.png", name: "pieza-1.png", mime: "image/png", createdAt: "2026-11-16T12:05:00.000Z" },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+  await writeFile(join(dir, "works.json"), JSON.stringify(legacyWorks, null, 2));
+
+  try {
+    const first = new App(new FakeEngine(), dir, () => {});
+    await first.start();
+    try {
+      // Version 1 migration marks existing results opened and bumps works.json to version 2.
+      const migratedFile = first.snapshot().works[0].messages[1].results![0];
+      assert.equal(migratedFile.openedAt, "2026-11-16T12:05:00.000Z");
+      assert.equal(first.snapshot().works[0].messages[0].attachments![0].openedAt, undefined);
+      const savedAfterMigration = JSON.parse(await readFile(join(dir, "works.json"), "utf8"));
+      assert.equal(savedAfterMigration.version, 2);
+
+      // Unknown ids and attachment ids are ignored without marking attachments or throwing.
+      await first.command({ type: "markOpened", fileIds: ["does-not-exist", "att-1"] }, () => {});
+      assert.equal(first.snapshot().works[0].messages[0].attachments![0].openedAt, undefined);
+    } finally {
+      await first.close();
+    }
+
+    // Add a fresh unopened result in v2 works.json and verify it stays unopened until markOpened.
+    const v2 = JSON.parse(await readFile(join(dir, "works.json"), "utf8"));
+    v2.works[0].messages.push({
+      id: "m-3",
+      role: "assistant",
+      text: "Nuevo lote",
+      results: [
+        { id: "res-new", path: "propuestas/b/pieza-1.png", name: "pieza-1.png", mime: "image/png", createdAt: "2026-11-20T10:00:00.000Z" },
+      ],
+    });
+    await writeFile(join(dir, "works.json"), JSON.stringify(v2, null, 2));
+
+    const second = new App(new FakeEngine(), dir, () => {});
+    await second.start();
+    try {
+      const fresh = second.snapshot().works[0].messages[2].results![0];
+      assert.equal(fresh.openedAt, undefined);
+      await second.command({ type: "markOpened", fileIds: ["res-new", "unknown-id"] }, () => {});
+      assert.ok(second.snapshot().works[0].messages[2].results![0].openedAt);
+    } finally {
+      await second.close();
+    }
+
+    // Reopen and confirm openedAt persisted across restart.
+    const third = new App(new FakeEngine(), dir, () => {});
+    await third.start();
+    try {
+      assert.ok(third.snapshot().works[0].messages[2].results![0].openedAt);
+    } finally {
+      await third.close();
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

@@ -10,12 +10,6 @@ import {
   messageDeliverableCount,
   undoSummary,
 } from "../../web/src/format";
-import {
-  initOpenedState,
-  isDeliverableUnopened,
-  markDeliverablesOpened,
-  pruneOpenedState,
-} from "../../web/src/opened";
 
 const makeFile = (
   name: string,
@@ -171,6 +165,48 @@ test("groupDeliverableBatches handles single-plate, single-PDF, empty works, and
   assert.equal(multiFolder.olderGroups.length, 1);
   assert.equal(multiFolder.olderGroups[0].title, "Porto");
   assert.equal(multiFolder.olderGroups[0].plates.length, 2);
+
+  // Reference photos in another folder do not split or overshadow a single plates folder.
+  const platesAndRefs = groupDeliverableBatches(
+    makeWork({
+      messages: [
+        {
+          id: "m1",
+          role: "assistant",
+          text: "Placas y referencia.",
+          results: [
+            makeFile("pieza-1.png", "image/png", "2026-11-16T14:00:00.000Z", "propuestas/porto/salida/pieza-1.png"),
+            makeFile("pieza-2.png", "image/png", "2026-11-16T14:00:00.000Z", "propuestas/porto/salida/pieza-2.png"),
+            makeFile("playa.jpg", "image/jpeg", "2026-11-16T14:01:00.000Z", "referencias/playa.jpg"),
+          ],
+        },
+      ],
+    }),
+  );
+  assert.equal(platesAndRefs.featured?.kind, "plates");
+  assert.equal(platesAndRefs.featured?.plates.length, 2);
+  assert.equal(platesAndRefs.olderGroups.length, 0);
+  assert.equal(platesAndRefs.featured?.allFiles.some((f) => f.name === "playa.jpg"), true);
+
+  // Two plate folders + a reference folder: plates group is always featured even if refs appear later.
+  const twoPlatesAndRefs = groupDeliverableBatches(
+    makeWork({
+      messages: [
+        {
+          id: "m1",
+          role: "assistant",
+          text: "Dos propuestas y refs.",
+          results: [
+            makeFile("pieza-1.png", "image/png", "2026-11-16T14:00:00.000Z", "propuestas/porto/salida/pieza-1.png"),
+            makeFile("pieza-1.png", "image/png", "2026-11-16T14:01:00.000Z", "propuestas/cancun/salida/pieza-1.png"),
+            makeFile("playa.jpg", "image/jpeg", "2026-11-16T14:02:00.000Z", "referencias/playa.jpg"),
+          ],
+        },
+      ],
+    }),
+  );
+  assert.equal(twoPlatesAndRefs.featured?.kind, "plates");
+  assert.equal(twoPlatesAndRefs.olderGroups.length, 2);
 });
 
 test("undoSummary formats plate counts, images, file counts, empty results, and fallback", () => {
@@ -292,59 +328,6 @@ test("undoSummary formats plate counts, images, file counts, empty results, and 
     undoSummary({ workId: "missing", messageId: "m-plates" }, works),
     "Hubo cambios en los archivos",
   );
-});
-
-test("opened deliverable tracking sets first-run baseline, handles blocked storage, caps in memory, prunes, and uses LRU", () => {
-  const store = new Map<string, string>();
-  const storage = {
-    getItem: (k: string) => store.get(k) ?? null,
-    setItem: (k: string, v: string) => { store.set(k, v); },
-  };
-  const brokenStorage = {
-    getItem: () => { throw new Error("blocked"); },
-    setItem: () => { throw new Error("quota"); },
-  };
-
-  // First run: existing deliverables at or before `since` show no dot; new ones show a dot.
-  let state = initOpenedState(storage, () => "2026-11-16T14:00:00.000Z");
-  assert.equal(state.available, true);
-  const oldFile = makeFile("vieja.png", "image/png", "2026-11-16T13:59:00.000Z");
-  const newFile = makeFile("nueva.png", "image/png", "2026-11-16T14:05:00.000Z");
-  const revertedFile = { ...makeFile("revertida.png", "image/png", "2026-11-16T14:05:00.000Z"), reverted: true };
-  assert.equal(isDeliverableUnopened(oldFile, state), false);
-  assert.equal(isDeliverableUnopened(newFile, state), true);
-  assert.equal(isDeliverableUnopened(revertedFile, state), false);
-
-  state = markDeliverablesOpened(state, [newFile], storage);
-  assert.equal(isDeliverableUnopened(newFile, state), false);
-  assert.equal(isDeliverableUnopened(newFile, initOpenedState(storage)), false);
-
-  // Blocked storage shows no dots at all and ignores writes.
-  const blocked = initOpenedState(brokenStorage, () => "2026-11-16T14:00:00.000Z");
-  assert.equal(blocked.available, false);
-  assert.equal(isDeliverableUnopened(newFile, blocked), false);
-  assert.equal(markDeliverablesOpened(blocked, [newFile], brokenStorage), blocked);
-
-  // Cap of 1000 applies in memory too, and reopening moves an ID to the tail (LRU).
-  const manyFiles = Array.from({ length: 1005 }, (_, i) =>
-    makeFile(`f-${i}.png`, "image/png", "2026-11-16T14:10:00.000Z", `f-${i}.png`, `id-${i}`),
-  );
-  let capped = initOpenedState(storage, () => "2026-11-16T14:00:00.000Z");
-  capped = markDeliverablesOpened(capped, manyFiles.slice(0, 1000), storage);
-  assert.equal(capped.ids.size, 1000);
-  // Reopen id-0 so it moves to the end before adding 5 more.
-  capped = markDeliverablesOpened(capped, [manyFiles[0]], storage);
-  capped = markDeliverablesOpened(capped, manyFiles.slice(1000), storage);
-  assert.equal(capped.ids.size, 1000);
-  assert.equal(capped.ids.has("id-0"), true);
-  assert.equal(capped.ids.has("id-1"), false);
-
-  // Pruning drops IDs that are no longer in works.
-  const work = makeWork({
-    messages: [{ id: "m1", role: "assistant", text: "Ok", results: [manyFiles[0]] }],
-  });
-  const pruned = pruneOpenedState(capped, [work], storage);
-  assert.deepEqual(Array.from(pruned.ids), ["id-0"]);
 });
 
 test("web UI source avoids forbidden technical words", async () => {

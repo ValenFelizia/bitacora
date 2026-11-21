@@ -40,12 +40,6 @@ import { MAX_TITLE } from "../../server/src/titles";
 import "./style.css";
 import { DeliverablesPanel, FileCard, FilePreviewModal } from "./files";
 import { ModelPicker } from "./model-picker";
-import {
-  initOpenedState,
-  markDeliverablesOpened,
-  pruneOpenedState,
-  type OpenedState,
-} from "./opened";
 import { useDictation } from "./dictation";
 import { SCREEN_PROTOCOL } from "../../server/src/screen-session";
 import { screenSecret } from "./screen-session";
@@ -181,9 +175,10 @@ function App() {
   const [deliverablesOpen, setDeliverablesOpen] = useState(false);
   const [focusedMessageId, setFocusedMessageId] = useState<string>();
   const [preview, setPreview] = useState<{ file: FileRef; list: FileRef[]; trackOpened?: boolean }>();
-  const [opened, setOpened] = useState<OpenedState>(() => initOpenedState());
-  const markOpened = (files: FileRef[]) =>
-    setOpened((current) => markDeliverablesOpened(current, files));
+  const markOpened = (files: FileRef[]) => {
+    const fileIds = files.filter((f) => !f.openedAt).map((f) => f.id);
+    if (fileIds.length) sendQuietly({ type: "markOpened", fileIds });
+  };
   const [attachments, setAttachments] = useState<Upload[]>([]);
   const [readingFiles, setReadingFiles] = useState(false);
   const sentDraft = useRef<SentDraft | undefined>(undefined);
@@ -287,7 +282,6 @@ function App() {
         setWelcomeSending(false);
         if (message.type === "snapshot") {
           setState(message.state);
-          setOpened((current) => pruneOpenedState(current, message.state.works));
           if (message.state.account.connected) setLogin(undefined);
         }
         if (message.type === "message") {
@@ -1283,7 +1277,6 @@ function App() {
                                 file={f}
                                 token={sessionSecret}
                                 fileRevision={state.fileRevision}
-                                opened={opened}
                                 onMarkOpened={markOpened}
                                 result
                                 onPreview={(file) =>
@@ -2000,7 +1993,6 @@ function App() {
             focusedMessageId={focusedMessageId}
             token={sessionSecret}
             fileRevision={state.fileRevision}
-            opened={opened}
             onMarkOpened={markOpened}
             hasGalleryResults={hasGalleryResults}
             onOpenGallery={() => {

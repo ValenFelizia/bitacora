@@ -141,27 +141,40 @@ function buildDeliverableGroup(
 }
 
 /**
- * Splits a message's results by proposal folder so one message touching two
- * folders produces two separate groups instead of mixing `pieza-1` files.
+ * Splits a message's results by proposal folder only when two or more folders
+ * contain `pieza-N` plates. Otherwise keeps a single group (plates first, rest
+ * as extras) so reference photos in another folder never overshadow the plates.
+ * When multiple groups remain, plate groups are ordered last so the featured
+ * group is always a plates group.
  */
 function splitMessageBatches(
   messageId: string,
   files: FileRef[],
   workTitle: string,
 ): { id: string; messageId: string; title: string; files: FileRef[] }[] {
-  const byDir = new Map<string, { dir: string; files: FileRef[] }>();
+  const byDir = new Map<string, { dir: string; files: FileRef[]; hasPlates: boolean }>();
   for (const file of files) {
     const dir = folderKey(file.path);
     const key = dir.toLowerCase();
     const bucket = byDir.get(key);
-    if (bucket) bucket.files.push(file);
-    else byDir.set(key, { dir, files: [file] });
+    if (bucket) {
+      bucket.files.push(file);
+      if (isPlate(file)) bucket.hasPlates = true;
+    } else {
+      byDir.set(key, { dir, files: [file], hasPlates: isPlate(file) });
+    }
   }
   const buckets = Array.from(byDir.values());
-  if (buckets.length <= 1) {
+  const plateBucketCount = buckets.filter((b) => b.hasPlates).length;
+  if (plateBucketCount < 2) {
     return [{ id: messageId, messageId, title: workTitle, files }];
   }
-  return buckets.map(({ dir, files: groupFiles }) => ({
+  // Keep non-plate buckets before plate buckets so the latest/featured slot is a plates group.
+  const ordered = [
+    ...buckets.filter((b) => !b.hasPlates),
+    ...buckets.filter((b) => b.hasPlates),
+  ];
+  return ordered.map(({ dir, files: groupFiles }) => ({
     id: `${messageId}:${dir}`,
     messageId,
     title: folderTitle(dir, workTitle),

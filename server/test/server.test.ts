@@ -123,6 +123,59 @@ test("development bootstrap issues the server's credential to the Vite origin", 
   }
 });
 
+test("markOpened WebSocket command requires the screen secret and broadcasts openedAt", async () => {
+  await mkdir(".local", { recursive: true });
+  const dir = await mkdtemp(resolve(".local/mark-opened-ws-"));
+  await writeFile(join(dir, "works.json"), JSON.stringify({
+    version: 2,
+    works: [{
+      id: "w-1",
+      conversationId: "conv-1",
+      title: "Prueba",
+      createdAt: "2026-11-20T10:00:00.000Z",
+      updatedAt: "2026-11-20T10:00:00.000Z",
+      details: "",
+      busy: false,
+      progress: "Listo.",
+      messages: [{
+        id: "m-1",
+        role: "assistant",
+        text: "Placa",
+        results: [{ id: "res-1", path: "pieza-1.png", name: "pieza-1.png", mime: "image/png", createdAt: "2026-11-20T10:00:00.000Z" }],
+      }],
+    }],
+  }));
+  const origin = "http://127.0.0.1:5173";
+  const server = await serve(new FakeEngine(), dir, 0, origin, undefined, undefined, screenSecret);
+  const wsUrl = `ws://127.0.0.1:${server.port}/ws`;
+  try {
+    // Without the screen secret, WebSocket connections (and thus markOpened) are rejected.
+    const unauth = new WebSocket(wsUrl, [SCREEN_PROTOCOL, "0".repeat(64)], { origin });
+    await assert.rejects(new Promise<void>((resolve, reject) => {
+      unauth.once("open", () => { unauth.terminate(); resolve(); });
+      unauth.once("error", reject);
+    }));
+    await waitForClose(unauth);
+
+    const authed = new WebSocket(wsUrl, screenProtocols, { origin });
+    try {
+      const [initialRaw] = await once(authed, "message", { signal: AbortSignal.timeout(10_000) });
+      const initial = JSON.parse(String(initialRaw));
+      assert.equal(initial.state.works[0].messages[0].results[0].openedAt, undefined);
+
+      authed.send(JSON.stringify({ type: "markOpened", fileIds: ["res-1"] }));
+      const [updatedRaw] = await once(authed, "message", { signal: AbortSignal.timeout(10_000) });
+      const updated = JSON.parse(String(updatedRaw));
+      assert.ok(updated.state.works[0].messages[0].results[0].openedAt);
+    } finally {
+      await terminateAndClose(authed);
+    }
+  } finally {
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("startup uses the reported account while Codex is being replaced", async () => {
   class ReplacingEngine extends FakeEngine {
     override async start() {
