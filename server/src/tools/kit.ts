@@ -1,4 +1,4 @@
-import { readdir, mkdir, realpath } from 'node:fs/promises';
+import { readdir, mkdir, realpath, rm } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -66,10 +66,17 @@ export async function initializeKit(
   const marker = `kit-initialized-${createHash('sha256').update((await realpath(workspace)).toLowerCase()).digest('hex')}.json`;
   // The marker keeps files the agency deleted on purpose from coming back, but
   // without the kit's AGENTS.md the agent works without its rules (#65): the
-  // agency folder was deleted or moved, so the kit is copied again. The copy
-  // never replaces a file the agency already has.
-  try { await state.read(marker); await target.read('AGENTS.md'); return { skillsError }; }
-  catch(e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
+  // agency folder was deleted or moved, so the kit is copied again. The marker
+  // goes first, so a copy cut short is retried on the next start instead of
+  // passing for a whole kit. The copy never replaces a file the agency has.
+  let marked = true;
+  try { await state.read(marker); }
+  catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; marked = false; }
+  if (marked) {
+    try { await target.read('AGENTS.md'); return { skillsError }; }
+    catch (e) { if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw e; }
+    await rm(await state.path(marker));
+  }
   async function copy(dir: string) {
     for (const item of await readdir(await source.path(dir), { withFileTypes: true })) {
       const path = dir === '.' ? item.name : `${dir}/${item.name}`;
@@ -79,6 +86,6 @@ export async function initializeKit(
     }
   }
   await copy('.');
-  await state.write(marker, JSON.stringify({version:1,workspace:await realpath(workspace)}), false);
+  await state.write(marker, JSON.stringify({version:1,workspace:await realpath(workspace)}));
   return { skillsError };
 }

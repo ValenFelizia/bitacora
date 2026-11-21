@@ -48,7 +48,7 @@ test('the kit comes back when the agency folder is deleted', async () => {
     await rm(join(f.root, 'ejemplo'), { recursive: true, force: true });
     await initializeKit(f.root, f.data);
     // A kit file the agency deleted on purpose stays deleted.
-    await assert.rejects(f.files.read('ejemplo/pieza.html'));
+    await assert.rejects(f.files.read('ejemplo/pieza.html'), { code: 'ENOENT' });
     // The whole folder is deleted, as if the agency moved it: the next start
     // copies the kit again.
     await rm(f.root, { recursive: true, force: true });
@@ -62,6 +62,17 @@ test('the kit comes back when the agency folder is deleted', async () => {
     await initializeKit(f.root, f.data);
     assert.match(await f.files.read('AGENTS.md'), /\S/);
     assert.equal(await f.files.read('ejemplo/pieza.html'), 'Pieza propia');
+    // A restore cut short after AGENTS.md is written is not taken for a whole
+    // kit: a file where the kit has a folder stops the copy, and once it is
+    // gone the next start finishes the job.
+    await rm(f.root, { recursive: true, force: true });
+    await mkdir(f.root);
+    await writeFile(join(f.root, 'ejemplo'), 'estorbo');
+    await assert.rejects(initializeKit(f.root, f.data));
+    assert.match(await f.files.read('AGENTS.md'), /\S/);
+    await rm(join(f.root, 'ejemplo'));
+    await initializeKit(f.root, f.data);
+    assert.match(await f.files.read('ejemplo/pieza.html'), /data-cites/);
   } finally { await f.close(); }
 });
 test('kit skills arrive in an agency initialized before the kit shipped them', async () => {
