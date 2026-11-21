@@ -1,8 +1,10 @@
 import { paths, preparePaths } from "./paths";
 import { CodexEngine } from "./codex/engine";
 import { serve } from "./server";
+import { WorkspaceSelection, type WorkspaceChoice } from "./workspace-selection";
 import { isScreenSecret } from "./screen-session";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { protectedWorkspaceFolders } from "./protected-folders";
 import { fileURLToPath } from "node:url";
 
 const installed = process.argv.includes("--desktop");
@@ -37,19 +39,37 @@ const desktop = installed ? {
   webRoot: join(runtime, "web"),
   kitSource: join(runtime, "kit", "turismo"),
 } : undefined;
+const configuredBinary = installed ? join(runtime, "codex", "bin", "codex.exe") : process.env.BITACORA_CODEX_BIN;
+let binary = configuredBinary;
+if (!binary) {
+  try { binary = (await import("../../scripts/codex-runtime.mjs")).codexBinary(); }
+  catch { /* The engine reports an unavailable binary on start. */ }
+}
+const appPaths = [installed ? runtime : fileURLToPath(new URL(".", import.meta.url))];
+if (installed && process.env.BITACORA_INSTALL_DIR) appPaths.push(process.env.BITACORA_INSTALL_DIR);
+if (binary) appPaths.push(dirname(binary));
+const selection = new WorkspaceSelection(locations.workspace, locations.data, protectedWorkspaceFolders(appPaths));
+// Only a configuration error can put the default folder here; a saved folder
+// that cannot open falls back to the default instead of closing the app.
+await selection.refuseProtected(locations.workspace);
+const { choice, notice } = await selection.load();
+const engineFor = (folder: WorkspaceChoice) => new CodexEngine({
+  home: locations.codexHome,
+  workspace: folder.root,
+  workspaceData: folder.data,
+  binary,
+  verifyWorkspaceProtection: true,
+  mcpEntry: installed ? join(runtime, "server", "mcp.mjs") : undefined,
+});
 const server = await serve(
-  new CodexEngine({
-    home: locations.codexHome,
-    workspace: locations.workspace,
-    binary: installed ? join(runtime, "codex", "bin", "codex.exe") : process.env.BITACORA_CODEX_BIN,
-    mcpEntry: installed ? join(runtime, "server", "mcp.mjs") : undefined,
-  }),
+  engineFor(choice),
   locations.data,
   installed ? 0 : Number(process.env.BITACORA_PORT || 4317),
   installed ? undefined : process.env.BITACORA_WEB_ORIGIN,
-  locations.workspace,
+  choice.root,
   desktop,
   screenSecret,
+  { selection, initial: choice, notice, engineFor },
 );
 let closing = false;
 function close(code = 0) {
@@ -69,7 +89,7 @@ if (installed) {
   } else {
     console.log(`BITACORA_READY ${server.port}`);
     try {
-      await server.app.startEngine();
+      await server.startEngine();
       // The shell tells a first-start failure from a lost connection by this line.
       if (!closing) console.log("BITACORA_STARTED");
     } catch (error) {
