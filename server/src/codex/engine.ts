@@ -1248,7 +1248,11 @@ export class CodexEngine implements Engine {
           this.emit({
             type: "detail",
             conversationId,
-            text: JSON.stringify(item),
+            text: JSON.stringify(item, (key, value: unknown) =>
+              key === "result" && item.type === "mcpToolCall" &&
+              item.server === "bitacora" && item.tool === "mirar_pdf" && item.status === "completed"
+                ? "[vista del PDF]"
+                : value),
           });
         }
         if (n.method === "item/completed")

@@ -33,7 +33,7 @@ type FetchedFile = {
   loading: boolean;
 };
 
-function useFetchedFile(file: FileRef | undefined, token?: string, fileRevision?: number): FetchedFile {
+function useFetchedFile(file: FileRef | undefined, token?: string, fileRevision?: number, sourceUrl?: string): FetchedFile {
   const [state, setState] = useState<FetchedFile>({
     missing: false,
     loading: !!file && !!token && !file.reverted,
@@ -55,7 +55,7 @@ function useFetchedFile(file: FileRef | undefined, token?: string, fileRevision?
     setState({ missing: false, loading: true });
     const controller = new AbortController();
     let objectUrl: string | undefined;
-    void fetch(fileUrl(file), { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal })
+    void fetch(sourceUrl || fileUrl(file), { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) throw new Error("unavailable");
         const blob = await response.blob();
@@ -70,7 +70,7 @@ function useFetchedFile(file: FileRef | undefined, token?: string, fileRevision?
       controller.abort();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [file?.id, file?.reverted, token, fileRevision]);
+  }, [file?.id, file?.reverted, token, fileRevision, sourceUrl]);
 
   return state;
 }
@@ -1193,6 +1193,7 @@ export function DeliverablesPanel({
   hasGalleryResults,
   onOpenGallery,
   onPreview,
+  heading,
   onCloseMobile,
   closeMobileRef,
 }: {
@@ -1204,6 +1205,7 @@ export function DeliverablesPanel({
   hasGalleryResults: boolean;
   onOpenGallery: () => void;
   onPreview: (file: FileRef, list: FileRef[]) => void;
+  heading?: React.ReactNode;
   onCloseMobile?: () => void;
   closeMobileRef?: React.RefObject<HTMLButtonElement | null>;
 }) {
@@ -1212,7 +1214,7 @@ export function DeliverablesPanel({
   return (
     <div className="flex flex-col gap-4 h-full overflow-y-auto">
       <div className="flex items-center justify-between gap-2">
-        <h2 className="font-display text-[20px] font-normal text-ink">Para mandar</h2>
+        {heading ?? <h2 className="font-display text-[20px] font-normal text-ink">Para mandar</h2>}
         {onCloseMobile && (
           <button
             ref={closeMobileRef}
@@ -1281,6 +1283,7 @@ export function FilePreviewModal({
   onMarkOpened,
   onSelect,
   onClose,
+  sourceUrl,
 }: {
   file: FileRef;
   list: FileRef[];
@@ -1289,10 +1292,13 @@ export function FilePreviewModal({
   onMarkOpened?: (files: FileRef[]) => void;
   onSelect: (file: FileRef) => void;
   onClose: () => void;
+  sourceUrl?: string;
 }) {
-  const fetched = useFetchedFile(file, token, fileRevision);
+  const fetched = useFetchedFile(file, token, fileRevision, sourceUrl);
   const [notice, setNotice] = useState("");
   const image = file.mime.startsWith("image/");
+  const htmlPreview = sourceUrl && /\.html$/i.test(file.name);
+  const drawn = useFetchedFile(htmlPreview ? file : undefined, token, fileRevision, htmlPreview ? sourceUrl + "&preview=1" : undefined);
   const pdf = fetched.blob?.type === "application/pdf";
   const plainText = fetched.blob?.type === "text/plain";
   const index = list.findIndex((f) => f.id === file.id);
@@ -1380,16 +1386,16 @@ export function FilePreviewModal({
               sandbox={plainText ? "" : undefined}
               className="h-[68dvh] w-full border-0"
             />
-          ) : fetched.url && image ? (
+          ) : (fetched.url && image) || drawn.url ? (
             <img
-              src={fetched.url}
+              src={drawn.url || fetched.url}
               alt={file.name}
               className="max-h-[65dvh] max-w-full rounded-[3px] object-contain"
             />
           ) : (
             <p className="text-[14px] text-muted">
               {fetched.missing ? "Ya no está disponible."
-                : fetched.loading ? "Cargando…"
+                 : fetched.loading || drawn.loading ? "Cargando…"
                 : "Descargalo para verlo."}
             </p>
           )}

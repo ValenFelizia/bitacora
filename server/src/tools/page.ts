@@ -1,6 +1,6 @@
 import { chromium, type Page } from 'playwright-core';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { relative } from 'node:path';
+import { relative, sep } from 'node:path';
 import { extname } from 'node:path';
 import { load } from 'cheerio';
 import { AgencyFiles } from './paths';
@@ -11,8 +11,9 @@ function validateMarkup(html: string) {
   if (unsupported.length) throw new Error(`Sacá de la pieza estas construcciones: ${[...new Set(unsupported.toArray().map(el => el.tagName))].join(', ')}. Usá texto y fotos en el HTML principal, sin paneles internos ni formularios.`);
 }
 
-export async function withPage<T>(files: AgencyFiles, html: string, run: (page: Page) => Promise<T>) {
+export async function withPage<T>(files: AgencyFiles, html: string, run: (page: Page) => Promise<T>, resourceRoot?: string) {
   const path = await files.path(html);
+  const assets = resourceRoot && await files.path(resourceRoot);
   validateMarkup(await files.read(html));
   const browser = await chromium.launch({ channel: 'msedge', headless: true });
   const timer = setTimeout(() => { void browser.close(); }, 60000);
@@ -24,6 +25,7 @@ export async function withPage<T>(files: AgencyFiles, html: string, run: (page: 
         const url = new URL(route.request().url());
         if (url.protocol !== 'file:') throw new Error('Recurso externo');
         const local = fileURLToPath(url);
+        if (assets && !local.toLowerCase().startsWith(assets.toLowerCase() + sep)) throw new Error('Recurso fuera de la plantilla');
         const safe = await files.path(relative(await files.path('.'), local));
         if (safe.toLowerCase() !== local.toLowerCase()) throw new Error('Ruta no válida');
         const body = await files.readBuffer(relative(await files.path('.'), safe));

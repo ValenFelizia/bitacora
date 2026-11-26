@@ -5,6 +5,11 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createRequire } from 'node:module';
 import { parse, stringify } from 'smol-toml';
 
+export const BITACORA_TOOLS = [
+  'traer', 'controlar', 'dibujar', 'listar_plantillas', 'leer_plantilla',
+  'sumar_plantilla', 'actualizar_plantilla', 'mirar_pdf',
+] as const;
+
 export async function registerKit(home: string, workspace: string, mcpEntry?: string, data = dirname(home)) {
   const path = join(home, 'config.toml');
   let config: Record<string, any> = {};
@@ -19,8 +24,8 @@ export async function registerKit(home: string, workspace: string, mcpEntry?: st
   config.mcp_servers.bitacora = {
     command: process.execPath,
     args: [...launch, workspace, allowedUrlsPath(data)],
-    enabled_tools: ['traer', 'controlar', 'dibujar'],
-    tools: Object.fromEntries(['traer', 'controlar', 'dibujar'].map(name => [name, {approval_mode: 'approve'}])),
+    enabled_tools: [...BITACORA_TOOLS],
+    tools: Object.fromEntries(BITACORA_TOOLS.map(name => [name, {approval_mode: 'approve'}])),
     tool_timeout_sec: 120,
   };
   await writeFile(path, stringify(config), 'utf8');

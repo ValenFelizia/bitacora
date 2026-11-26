@@ -5,7 +5,7 @@ import { spawn } from 'node:child_process';
 import assert from 'node:assert/strict';
 import { AgencyFiles } from '../server/src/tools/paths';
 import { initializeKit } from '../server/src/tools/kit';
-import { registerKit } from '../server/src/codex/kit';
+import { BITACORA_TOOLS, registerKit } from '../server/src/codex/kit';
 import { dibujar } from '../server/src/tools/draw';
 import { controlar } from '../server/src/tools/check';
 import { codexBinary } from './codex-runtime.mjs';
@@ -62,7 +62,7 @@ try {
   const catalog = await rpc('mcpServerStatus/list',{threadId:thread.thread.id,serverName:'bitacora'});
   const server = catalog.data.find((s:any)=>s.name === 'bitacora');
   assert.ok(server,JSON.stringify(catalog));
-  assert.equal(Object.keys(server.tools).length,3);
+  assert.deepEqual(Object.keys(server.tools).sort(), [...BITACORA_TOOLS].sort());
   const call = await rpc('mcpServer/tool/call',{threadId:thread.thread.id,server:'bitacora',tool:'traer',arguments:{destination:'ejemplo',notes:'Dato de prueba: 5 kg.'}});
   assert.ok(!call.isError,JSON.stringify(call));
   const calls = [call];

@@ -3,7 +3,7 @@ import { join, relative, isAbsolute, dirname, basename } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import type { Stats } from 'node:fs';
 import { BackupTrash } from './backup-trash';
-import { WorkspaceFiles, SCAN_LIMITS, excludedFromCopy, type FileScan, type Fingerprint } from './workspace-files';
+import { WorkspaceFiles, SCAN_LIMITS, excludedCopyPath, isTemplateStorage, type FileScan, type Fingerprint } from './workspace-files';
 export type UndoTarget = { id: string; workId: string; title: string; request: string; messageId?: string; retry?: boolean };
 type Copy = UndoTarget & { before: FileScan; after?: FileScan };
 type Value = { kind: 'file'; entry: Fingerprint } | { kind: 'directory' } | { kind: 'missing' };
@@ -82,7 +82,7 @@ export class Backups {
     }
   }
   private validPath(path: string) {
-    if (typeof path !== 'string' || !path || isAbsolute(path) || path.split(/[\\/]/).some(p => !p || p === '..' || excludedFromCopy(p) || /[:\x00-\x1f]|[. ]$/.test(p) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(p))) throw new Error('Unsafe backup path');
+    if (typeof path !== 'string' || !path || isAbsolute(path) || excludedCopyPath(path) || path.split(/[\\/]/).some(p => !p || p === '..' || /[:\x00-\x1f]|[. ]$/.test(p) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(p))) throw new Error('Unsafe backup path');
   }
   private validate() {
     if (this.state.root !== this.root || !Array.isArray(this.state.notices) || this.state.notices.some(p => typeof p !== 'string')) throw new Error('Invalid backup state');
@@ -135,7 +135,7 @@ export class Backups {
       target = join(target, part);
       try {
         const resolved = await realpath(target);
-        if ((await lstat(target)).isSymbolicLink() || !inside(this.root, resolved) || relative(this.root, resolved).split(/[\\/]/).some(excludedFromCopy)) throw new RestoreProblem(path, 'hay un enlace o una carpeta excluida en el camino');
+        if ((await lstat(target)).isSymbolicLink() || !inside(this.root, resolved) || excludedCopyPath(relative(this.root, resolved))) throw new RestoreProblem(path, 'hay un enlace o una carpeta excluida en el camino');
       }
       catch (e) { if (!(missing && ['ENOENT', 'ENOTDIR'].includes((e as NodeJS.ErrnoException).code || ''))) throw e; }
     } return target;
@@ -394,6 +394,13 @@ export class Backups {
         try { const h = await open(await this.path(a.path), readonly(current.entry) ? 'r' : 'r+'); await h.close(); }
         catch { throw new RestoreProblem(a.path, 'el archivo está abierto o no se puede reemplazar'); }
       }
+    }
+    // The index and its bundles describe one catalogue. Never restore only its
+    // files when a later edit caused any of its actions to be skipped.
+    if ([...plan.skipped, ...plan.omitted].some(isTemplateStorage)) {
+      for (const action of plan.actions)
+        if (isTemplateStorage(action.path) && !action.done && !plan.skipped.includes(action.path))
+          plan.skipped.push(action.path);
     }
     for (const a of plan.actions.filter(a => !a.done && !plan.skipped.includes(a.path) && a.from.kind === 'directory' && a.to.kind !== 'directory')) {
       if ((await this.current(a.path)).kind !== 'directory') continue;

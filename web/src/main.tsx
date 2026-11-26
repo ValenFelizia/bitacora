@@ -40,6 +40,7 @@ import { PANEL_WIDTH } from "../../server/src/contracts";
 import { MAX_TITLE } from "../../server/src/titles";
 import "./style.css";
 import { DeliverablesPanel, FileCard, FilePreviewModal } from "./files";
+import { TemplatesPanel } from "./templates-panel";
 import { ModelPicker } from "./model-picker";
 import { useDictation } from "./dictation";
 import { SCREEN_PROTOCOL } from "../../server/src/screen-session";
@@ -197,8 +198,9 @@ function App() {
   const [gallery, setGallery] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [deliverablesOpen, setDeliverablesOpen] = useState(false);
+  const [rightPanel, setRightPanel] = useState<"deliverables" | "templates">("deliverables");
   const [focusedMessageId, setFocusedMessageId] = useState<string>();
-  const [preview, setPreview] = useState<{ file: FileRef; list: FileRef[]; trackOpened?: boolean }>();
+  const [preview, setPreview] = useState<{ file: FileRef; list: FileRef[]; trackOpened?: boolean; sourceUrl?: string }>();
   const markOpened = (files: FileRef[]) => {
     const fileIds = files.filter((f) => !f.openedAt).map((f) => f.id);
     if (fileIds.length) sendQuietly({ type: "markOpened", fileIds });
@@ -286,6 +288,14 @@ function App() {
     },
   });
   const busy = state.works.some((w) => w.busy);
+  const panelSelector = (
+    <select aria-label="Qué querés ver en el panel" value={rightPanel}
+      className={`min-w-0 rounded-[6px] border border-line bg-surface px-2 py-1 font-display text-[19px] text-ink ${focusRing}`}
+      onChange={event => setRightPanel(event.target.value === "templates" ? "templates" : "deliverables")}>
+      <option value="deliverables">Para mandar</option>
+      <option value="templates">Plantillas</option>
+    </select>
+  );
   const updating = updateNotice === "working";
   const updateReady = state.engine.updateReady === true;
   const updateBlocked = busy || pending || readingFiles || dictation.active() ||
@@ -1660,6 +1670,7 @@ function App() {
                         <button
                           type="button"
                           onClick={() => {
+                            setRightPanel("deliverables");
                             setFocusedMessageId(m.id);
                             setDeliverablesOpen(true);
                           }}
@@ -2156,7 +2167,21 @@ function App() {
               className={`absolute inset-y-0 left-[6px] w-px ${resizingPanel ? "bg-accent" : "group-focus-visible:bg-accent"}`}
             />
           </div>
-          <DeliverablesPanel
+          {rightPanel === "templates" ? (
+            <div className="flex min-h-0 flex-col gap-4 overflow-y-auto">
+              <div className="flex items-center justify-between gap-2">
+                {panelSelector}
+                <button ref={deliverablesCloseRef} type="button" onClick={() => closeDeliverablesDrawer(true)}
+                  className={`${iconButton} min-[960px]:hidden`} aria-label="Cerrar panel">
+                  <X size={18} strokeWidth={1.75} aria-hidden="true" />
+                </button>
+              </div>
+              <TemplatesPanel key={state.workspace} workspace={state.workspace} token={sessionSecret}
+                revision={state.fileRevision} busy={busy || !online}
+                onPreview={(file, sourceUrl) => setPreview({ file, list: [file], sourceUrl })} />
+            </div>
+          ) : <DeliverablesPanel
+            heading={panelSelector}
             work={work}
             focusedMessageId={focusedMessageId}
             token={sessionSecret}
@@ -2171,7 +2196,7 @@ function App() {
             onPreview={(file, list) => setPreview({ file, list, trackOpened: true })}
             onCloseMobile={() => closeDeliverablesDrawer(true)}
             closeMobileRef={deliverablesCloseRef}
-          />
+          />}
         </aside>
       )}
 
@@ -2179,6 +2204,7 @@ function App() {
         <FilePreviewModal
           file={preview.file}
           list={preview.list}
+          sourceUrl={preview.sourceUrl}
           token={sessionSecret}
           fileRevision={state.fileRevision}
           onMarkOpened={preview.trackOpened ? markOpened : undefined}
