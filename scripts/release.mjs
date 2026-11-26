@@ -33,7 +33,7 @@ export function makeManifest({ version, notes, date, arch, installer, signature 
 }
 
 async function readJson(path) {
-  return JSON.parse(await readFile(join(root, path), "utf8"));
+  return JSON.parse(await readFile(resolve(root, path), "utf8"));
 }
 
 function run(program, args, env = process.env) {
@@ -178,6 +178,20 @@ async function build(version, arch, notes, files) {
   console.log(`Instalador, firma, latest.json y build-info.json listos en ${files.directory}`);
 }
 
+export async function verifyReleaseFiles({ version, arch, head, files, publicKey }) {
+  const manifest = await readJson(files.manifest);
+  const signature = await readFile(files.signature, "utf8");
+  const expected = makeManifest({
+    version, notes: manifest.notes, date: new Date(manifest.pub_date),
+    arch, installer: files.name, signature,
+  });
+  if (typeof manifest.notes !== "string" || JSON.stringify(manifest) !== JSON.stringify(expected))
+    throw new Error("Volvé a armar los archivos de esta versión antes de publicar.");
+  const sha256 = await verifyInstaller(files.installer, signature, publicKey, version);
+  verifyBuildInfo(await readJson(files.info), { version, head, sha256 });
+  return manifest.notes;
+}
+
 async function publish(version, arch, files) {
   const head = await releaseHead(root, version);
   const remote = git(root, "ls-remote", "https://github.com/" + repository + ".git", "refs/heads/main");
@@ -188,17 +202,8 @@ async function publish(version, arch, files) {
   });
   verifyReleaseVersion(version, JSON.parse(pages).flat());
   const config = await readJson(configPath);
-  const manifest = await readJson(files.manifest);
-  const signature = await readFile(files.signature, "utf8");
-  const expected = makeManifest({
-    version, notes: manifest.notes, date: new Date(manifest.pub_date),
-    arch, installer: files.name, signature,
-  });
-  if (typeof manifest.notes !== "string" || JSON.stringify(manifest) !== JSON.stringify(expected))
-    throw new Error("Volvé a armar los archivos de esta versión antes de publicar.");
-  const sha256 = await verifyInstaller(files.installer, signature, config.plugins.updater.pubkey, version);
-  verifyBuildInfo(await readJson(files.info), { version, head, sha256 });
-  await writeFile(files.notes, manifest.notes + "\n");
+  const notes = await verifyReleaseFiles({ version, arch, head, files, publicKey: config.plugins.updater.pubkey });
+  await writeFile(files.notes, notes + "\n");
   if (await releaseHead(root, version) !== head)
     throw new Error("El commit cambió mientras revisaba el instalador.");
   run("gh", ["release", "create", `v${version}`, files.installer, files.signature, files.manifest,

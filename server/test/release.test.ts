@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
-import { makeManifest, releaseHead, verifyBuildInfo, verifyInstaller, verifyReleaseVersion } from "../../scripts/release.mjs";
+import { makeManifest, releaseHead, verifyBuildInfo, verifyInstaller, verifyReleaseFiles, verifyReleaseVersion } from "../../scripts/release.mjs";
 
 test("latest.json points to the versioned setup and contains the signature for its architecture", () => {
   assert.deepEqual(makeManifest({
@@ -103,6 +103,23 @@ test("verifies a versioned installer signed by Tauri with a password-protected t
     );
     const sha256 = await verifyInstaller(installer, signature, pubkey.trim(), "0.2.1");
     assert.equal(sha256, createHash("sha256").update(artifact).digest("hex"));
+    const files = {
+      name: "fixture.exe",
+      installer,
+      manifest: join(root, "latest.json"),
+      signature: installer + ".sig",
+      info: join(root, "build-info.json"),
+    };
+    const head = "verified-commit";
+    const version = "0.2.1";
+    const notes = "Local release test";
+    await writeFile(files.manifest, JSON.stringify(makeManifest({
+      version, notes, date: new Date(), arch: "x64", installer: files.name, signature,
+    })));
+    await writeFile(files.info, JSON.stringify({ version, commit: head, sha256 }));
+    assert.equal(await verifyReleaseFiles({
+      version, arch: "x64", head, files, publicKey: pubkey.trim(),
+    }), notes);
     await assert.rejects(verifyInstaller(installer, signature, wrongKey.trim(), "0.2.1"), /clave pública/);
     await assert.rejects(verifyInstaller(installer, signature, pubkey.trim(), "0.2.2"), /firma no acredita/);
     const raw = Buffer.from(signature, "base64").toString("utf8");

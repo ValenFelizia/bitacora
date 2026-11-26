@@ -16,3 +16,10 @@ export function releaseHead(cwd: string, version: string): Promise<string>;
 export function verifyInstaller(installer: string, signature: string, publicKey: string, version: string): Promise<string>;
 export function verifyBuildInfo(info: unknown, expected: { version: string; head: string; sha256: string }): void;
 export function verifyReleaseVersion(version: string, releases: readonly { draft: boolean; tag_name: string }[]): void;
+export function verifyReleaseFiles(options: {
+  version: string;
+  arch: "x64" | "arm64";
+  head: string;
+  publicKey: string;
+  files: { name: string; installer: string; manifest: string; signature: string; info: string };
+}): Promise<string>;
