@@ -7,6 +7,16 @@ const moduleUrl = import.meta.resolve("pdfjs-dist/legacy/build/pdf.mjs");
 const packageRoot = join(dirname(fileURLToPath(moduleUrl)), "..", "..");
 const asset = (name: string) => join(packageRoot, name) + "/";
 export const PDF_PAGE_BATCH = 3;
+/** Stop walking a page after this many text items, even when they add no text. */
+export const PDF_TEXT_ITEMS = 2000;
+export const pdfDocumentOptions = {
+  useWorkerFetch: false,
+  useSystemFonts: false,
+  enableXfa: false,
+  maxImageSize: 16_000_000,
+  canvasMaxAreaInBytes: 64 * 1024 * 1024,
+  stopAtErrors: true,
+} as const;
 
 export async function inspectPdf(files: AgencyFiles, path: string, start: number, count: number) {
   if (extname(path).toLowerCase() !== ".pdf") throw new Error("Elegí un archivo PDF.");
@@ -21,19 +31,15 @@ export async function inspectPdf(files: AgencyFiles, path: string, start: number
     cMapPacked: true,
     standardFontDataUrl: asset("standard_fonts"),
     wasmUrl: asset("wasm"),
-    useWorkerFetch: false,
-    useSystemFonts: true,
-    enableXfa: false,
-    maxImageSize: 16_000_000,
-    canvasMaxAreaInBytes: 64 * 1024 * 1024,
-    stopAtErrors: true,
+    ...pdfDocumentOptions,
   });
   try {
     const doc = await task.promise;
     if (start > doc.numPages) throw new Error("Esa página no existe en el PDF.");
-    const end = Math.min(start + count - 1, doc.numPages);
+    const pagesToRead = Math.min(PDF_PAGE_BATCH, Math.max(1, Math.floor(count)));
+    const end = Math.min(start + pagesToRead - 1, doc.numPages);
     const pages = [];
-    for (let number = start; number <= end; number++) {
+    for (let number = start; number <= end && pages.length < PDF_PAGE_BATCH; number++) {
       const page = await doc.getPage(number);
       const size = page.getViewport({ scale: 96 / 72 });
       const scale = Math.min(2, 1600 / Math.max(size.width, size.height)) * 96 / 72;
@@ -47,8 +53,11 @@ export async function inspectPdf(files: AgencyFiles, path: string, start: number
         viewport,
       }).promise;
       let text = "";
-      for (const item of (await page.getTextContent()).items) {
-        if ("str" in item) text += item.str + (item.hasEOL ? "\n" : " ");
+      const items = (await page.getTextContent()).items;
+      const itemLimit = Math.min(items.length, PDF_TEXT_ITEMS);
+      for (let index = 0; index < itemLimit; index++) {
+        const item = items[index];
+        if (item && "str" in item) text += item.str + (item.hasEOL ? "\n" : " ");
         if (text.length >= 6000) break;
       }
       pages.push({

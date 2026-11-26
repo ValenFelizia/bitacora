@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { lstat } from "node:fs/promises";
+import { lstat, readdir, rename } from "node:fs/promises";
 import { basename, extname } from "node:path";
 import { z } from "zod";
 import type { Upload } from "./contracts";
@@ -56,20 +56,34 @@ export const templateMutation = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("add"), ...templateMetadata, file: z.object({ name: z.string(), data: z.string() }) }),
   z.object({ kind: z.literal("edit"), id, expected: expectedTemplate, ...templateMetadata, file: z.object({ name: z.string(), data: z.string() }).optional() }),
   z.object({ kind: z.literal("remove"), id, expected: expectedTemplate }),
+  z.object({ kind: z.literal("rebuild") }),
 ]);
 
 const missing = (error: unknown) => error instanceof Error && "code" in error && error.code === "ENOENT";
 export class TemplateProblem extends Error {}
+/** The catalogue file is present but cannot be trusted. The panel can set it aside and rebuild. */
+export class DamagedTemplates extends TemplateProblem {}
+export const recoveredTemplatePurpose = "Recuperada de la carpeta. Podés cambiar el nombre.";
 
 export class Templates {
   constructor(private readonly files: AgencyFiles) {}
 
-  async list(): Promise<Template[]> {
+  private async readIndex(): Promise<
+    { state: "missing" } | { state: "ok"; templates: Template[] } | { state: "damaged" }
+  > {
     let text: string;
     try { text = (await this.files.readBuffer(indexPath, 4 * 1024 * 1024)).toString("utf8"); }
-    catch (error) { if (missing(error)) return []; throw error; }
-    try { return index.parse(JSON.parse(text)).templates; }
-    catch { throw new TemplateProblem("No pude leer la lista de plantillas. Los archivos siguen en la carpeta."); }
+    catch (error) { if (missing(error)) return { state: "missing" }; throw error; }
+    try { return { state: "ok", templates: index.parse(JSON.parse(text)).templates }; }
+    catch { return { state: "damaged" }; }
+  }
+
+  async list(): Promise<Template[]> {
+    const read = await this.readIndex();
+    if (read.state === "missing") return [];
+    if (read.state === "damaged")
+      throw new DamagedTemplates("No pude leer la lista de plantillas. Los archivos siguen en la carpeta.");
+    return read.templates;
   }
 
   private location(template: Template) {
@@ -82,6 +96,18 @@ export class Templates {
       : this.location(template) + "/" + name;
   }
 
+  /** A recovered bundle keeps its folder even when only one file is inside. */
+  private async storedPath(template: Template, name: string) {
+    const nested = this.location(template) + "/" + name;
+    if (template.files.length === 1) {
+      try {
+        const stat = await lstat(await this.files.path(nested));
+        if (stat.isFile()) return nested;
+      } catch (error) { if (!missing(error)) throw error; }
+    }
+    return this.filePath(template, name);
+  }
+
   private find(templates: Template[], id: string, expected?: ExpectedTemplate) {
     const template = templates.find(item => item.id === id);
     if (!template) throw new TemplateProblem("Esa plantilla ya no está disponible.");
@@ -92,7 +118,7 @@ export class Templates {
 
   async describe(id: string) {
     const template = this.find(await this.list(), id);
-    return { ...template, paths: template.files.map(name => this.filePath(template, name)) };
+    return { ...template, paths: await Promise.all(template.files.map(name => this.storedPath(template, name))) };
   }
 
   async open(id: string, version: string, name: string) {
@@ -100,7 +126,7 @@ export class Templates {
     const mime = mimeFor(name);
     if (template.version !== version || !template.files.includes(name) || !mime)
       throw new TemplateProblem("Ese archivo ya no está disponible.");
-    const bytes = await this.files.readBuffer(this.filePath(template, name), MAX_FILE);
+    const bytes = await this.files.readBuffer(await this.storedPath(template, name), MAX_FILE);
     return { bytes, name, mime };
   }
 
@@ -108,14 +134,15 @@ export class Templates {
     const template = this.find(await this.list(), id);
     if (template.version !== version || !template.files.includes(name) || extname(name).toLowerCase() !== ".html")
       throw new TemplateProblem("Ese archivo ya no está disponible.");
-    const path = this.filePath(template, name);
+    const path = await this.storedPath(template, name);
+    const resources = path.endsWith("/" + name) ? this.location(template) : directory;
     return withPage(this.files, path, async page => {
       const piece = page.locator("[data-piece]").first();
       const box = await piece.count() ? await piece.boundingBox() : null;
       if (box && box.width > 0 && box.height > 0 && box.width <= 2000 && box.height <= 2400)
         return piece.screenshot({ timeout: 5000 });
       return page.screenshot({ timeout: 5000 });
-    }, template.files.length === 1 ? directory : this.location(template));
+    }, resources);
   }
 
   async fromPaths(paths: string[]) {
@@ -195,7 +222,7 @@ export class Templates {
       const template = { ...old, ...metadata };
       if (replacement?.kind === "bundle") return this.replace(templates, template, replacement.files, old);
       if (replacement?.kind === "primary") {
-        const paths = old.files.slice(1).map(name => this.filePath(old, name));
+        const paths = await Promise.all(old.files.slice(1).map(name => this.storedPath(old, name)));
         return this.replace(templates, template, [replacement.file, ...await this.fromPaths(paths)], old);
       }
       await this.save(templates.map(item => item.id === id ? template : item));
@@ -237,8 +264,129 @@ export class Templates {
   }
 
   private async clean(template: Template) {
-    for (const name of template.files)
-      await this.files.remove(this.filePath(template, name)).catch(() => {});
-    if (template.files.length > 1) await this.files.remove(this.location(template), true).catch(() => {});
+    let directoryLayout = template.files.length > 1;
+    for (const name of template.files) {
+      const path = await this.storedPath(template, name);
+      if (path.endsWith("/" + name)) directoryLayout = true;
+      await this.files.remove(path).catch(() => {});
+    }
+    if (directoryLayout) await this.files.remove(this.location(template), true).catch(() => {});
+  }
+
+  /**
+   * Set the unreadable catalogue aside (rename, never delete) and list again
+   * from the folders and files already on disk. Nothing else is removed.
+   */
+  async recover() {
+    return this.serialized(async () => {
+      const read = await this.readIndex();
+      if (read.state === "ok") return read.templates;
+      if (read.state === "missing") return [];
+      const aside = await this.asideIndex();
+      try {
+        const templates = await this.rebuildFromDisk();
+        await this.save(templates);
+        return templates;
+      } catch (error) {
+        await this.restoreAside(aside);
+        throw error;
+      }
+    });
+  }
+
+  private async asideIndex() {
+    const from = await this.files.path(indexPath);
+    const stamp = new Date().toISOString().replace(/[:.]/g, "");
+    for (let n = 1; n < 100; n++) {
+      const relative = directory + "/index-apartado-" + stamp + (n === 1 ? "" : "-" + n) + ".json";
+      try { await lstat(await this.files.path(relative)); }
+      catch (error) {
+        if (!missing(error)) throw error;
+        await rename(from, await this.files.path(relative));
+        return relative;
+      }
+    }
+    throw new TemplateProblem("No pude apartar la lista dañada. Los archivos siguen en la carpeta.");
+  }
+
+  private async restoreAside(relative: string) {
+    try { await lstat(await this.files.path(indexPath)); return; }
+    catch (error) { if (!missing(error)) return; }
+    await rename(await this.files.path(relative), await this.files.path(indexPath)).catch(() => {});
+  }
+
+  private async rebuildFromDisk() {
+    let entries;
+    try { entries = await readdir(await this.files.path(directory), { withFileTypes: true }); }
+    catch (error) { if (missing(error)) return []; throw error; }
+    const directories: string[] = [];
+    const loose: string[] = [];
+    for (const entry of entries) {
+      if (entry.isSymbolicLink()) continue;
+      const name = entry.name;
+      if (name === "index.json" || name.startsWith("index-apartado-") || name.startsWith(".")) continue;
+      if (entry.isDirectory()) directories.push(name);
+      else if (entry.isFile()) loose.push(name);
+    }
+    directories.sort((a, b) => a.localeCompare(b, "es"));
+    loose.sort((a, b) => a.localeCompare(b, "es"));
+    const templates: Template[] = [];
+    const versions = new Set<string>();
+    const claim = (version: string) => {
+      const key = version.toLowerCase();
+      if (versions.has(key)) return false;
+      versions.add(key);
+      return true;
+    };
+    for (const folder of directories) {
+      if (!z.uuid().safeParse(folder).success || !claim(folder)) continue;
+      const files = await this.folderFiles(directory + "/" + folder);
+      const template = this.recovered(folder, folder, files);
+      if (!template) { versions.delete(folder.toLowerCase()); continue; }
+      templates.push(template);
+      if (templates.length >= 500) return templates;
+    }
+    const single = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})-(.+)$/i;
+    for (const name of loose) {
+      if (templates.length >= 500) break;
+      const match = single.exec(name);
+      if (!match || !z.uuid().safeParse(match[1]).success || !claim(match[1])) continue;
+      const template = this.recovered(match[1], match[2], [match[2]]);
+      if (!template) { versions.delete(match[1].toLowerCase()); continue; }
+      templates.push(template);
+    }
+    return templates;
+  }
+
+  private async folderFiles(folder: string) {
+    let names: string[];
+    try { names = await readdir(await this.files.path(folder)); }
+    catch { return []; }
+    const seen = new Set<string>();
+    const files: string[] = [];
+    for (const name of names) {
+      if (!filename.safeParse(name).success) continue;
+      const key = name.normalize("NFC").toUpperCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      files.push(name);
+    }
+    files.sort((a, b) => Number(b.toLowerCase().endsWith(".html")) - Number(a.toLowerCase().endsWith(".html"))
+      || a.localeCompare(b, "es"));
+    return files.slice(0, 10);
+  }
+
+  private recovered(version: string, label: string, files: string[]) {
+    if (!files.length) return undefined;
+    const parsed = entry.safeParse({
+      id: randomUUID(),
+      version,
+      name: label.length <= 120 ? label : label.slice(0, 120),
+      purpose: recoveredTemplatePurpose,
+      files,
+      createdAt: new Date().toISOString(),
+      origin: "manual",
+    });
+    return parsed.success ? parsed.data : undefined;
   }
 }

@@ -40,6 +40,7 @@ export async function serve(
     recoveryDelayMs?: number;
   },
   codexHistory?: CodexHistory,
+  templatesFor?: (files: AgencyFiles) => Templates,
 ) {
   if (!isScreenSecret(screenSecret)) throw new Error("Invalid screen session");
   const expectedSecret = Buffer.from(screenSecret, "hex");
@@ -88,13 +89,20 @@ export async function serve(
           return;
         }
         const writing = req.method === "POST";
+        // A preview launches Edge against this folder. Count it so a folder
+        // change cannot start while that read is still open.
+        const previewing = req.method === "GET" && url.searchParams.has("preview") && url.searchParams.get("file") !== null;
         if (writing && (updating || commands || app.workspaceBusy || app.undoPending)) {
           templateReply(res, 409, { error: "Esperá a que termine lo que está en curso para cambiar las plantillas." });
           return;
         }
-        if (writing) { templateWriting = true; commands++; }
+        if (writing) templateWriting = true;
+        if (writing || previewing) commands++;
         try { await handleTemplates(req, res, url, templates, () => app.filesChanged()); }
-        finally { if (writing) { templateWriting = false; commands--; } }
+        finally {
+          if (writing) templateWriting = false;
+          if (writing || previewing) commands--;
+        }
         return;
       }
       const { app, files } = active;
@@ -144,7 +152,10 @@ export async function serve(
       key: choice.key,
       notice,
     }, codexHistory);
-    return { app, engine, files, choice, templates: workspace ? new Templates(new AgencyFiles(workspace)) : undefined };
+    return {
+      app, engine, files, choice,
+      templates: workspace ? (templatesFor ?? (agencyFiles => new Templates(agencyFiles)))(new AgencyFiles(workspace)) : undefined,
+    };
   }
 
   let active = runtime(engine, workspace, folders?.initial, folders?.notice);

@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { FileProblem, MAX_FILE } from "./workspace-files";
-import { Templates, TemplateProblem, templateMutation } from "./templates";
+import { DamagedTemplates, Templates, TemplateProblem, templateMutation } from "./templates";
 
 const MAX_BODY = Math.ceil(MAX_FILE / 3) * 4 + 4096;
 
@@ -55,6 +55,8 @@ export async function handleTemplates(req: IncomingMessage, res: ServerResponse,
       } else if (mutation.kind === "edit") {
         const { id, name, purpose, file, expected } = mutation;
         await templates.update(id, { name, purpose }, file && { kind: "primary", file: templates.fromUpload(file) }, expected);
+      } else if (mutation.kind === "rebuild") {
+        await templates.recover();
       } else {
         await templates.remove(mutation.id, mutation.expected);
       }
@@ -64,8 +66,12 @@ export async function handleTemplates(req: IncomingMessage, res: ServerResponse,
   } catch (error) {
     if (res.destroyed) return;
     if (!req.readableEnded && req.method === "POST") res.setHeader("Connection", "close");
-    const expected = error instanceof FileProblem || error instanceof TemplateProblem;
-    templateReply(res, expected ? 400 : 500, { error: expected ? error.message
-      : req.method === "POST" ? "No pude guardar el cambio. Volvé a intentarlo." : "No pude abrir las plantillas. Volvé a intentarlo." });
+    const damaged = error instanceof DamagedTemplates;
+    const expected = damaged || error instanceof FileProblem || error instanceof TemplateProblem;
+    templateReply(res, expected ? 400 : 500, {
+      error: expected ? error.message
+        : req.method === "POST" ? "No pude guardar el cambio. Volvé a intentarlo." : "No pude abrir las plantillas. Volvé a intentarlo.",
+      ...(damaged ? { damaged: true } : {}),
+    });
   }
 }

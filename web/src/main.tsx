@@ -1246,6 +1246,7 @@ function App() {
                     type="button"
                     aria-expanded={deliverablesOpen}
                     onClick={() => {
+                      setRightPanel("deliverables");
                       setFocusedMessageId(undefined);
                       setDeliverablesOpen(true);
                     }}

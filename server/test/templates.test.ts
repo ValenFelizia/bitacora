@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { Backups } from "../src/backups";
 import { AGENCY_DEVELOPER_INSTRUCTIONS } from "../src/agency-environment";
-import { Templates } from "../src/templates";
+import { recoveredTemplatePurpose, Templates } from "../src/templates";
 import { AgencyFiles } from "../src/tools/paths";
 
 async function fixture() {
@@ -101,12 +102,60 @@ test("template files are copied and undo restores the catalogue and its bundles 
 });
 
 test("the app and relevant kit skills require consulting templates before creating", async () => {
-  for (const policy of [AGENCY_DEVELOPER_INSTRUCTIONS, ...await Promise.all(
+  const agents = await readFile("kit/turismo/AGENTS.md", "utf8");
+  const skills = await Promise.all(
     ["entender-el-pedido", "entrevista"].map(skill =>
       readFile("kit/turismo/.agents/skills/" + skill + "/SKILL.md", "utf8"))
-  )]) {
+  );
+  for (const policy of [AGENCY_DEVELOPER_INSTRUCTIONS, agents, ...skills]) {
     assert.match(policy, /listar_plantillas[\s\S]*?leer_plantilla[\s\S]*?request_user_input/);
+    assert.match(policy, /Las plantillas\s+de\s+`plantillas\/`\s+se usan\s+solo si el catálogo no tiene ninguna que sirva/);
+    assert.match(policy, /No edites el índice a mano/);
+    assert.match(policy, /sumar_plantilla/);
+    assert.match(policy, /actualizar_plantilla/);
   }
   assert.match(AGENCY_DEVELOPER_INSTRUCTIONS, /Antes de crear[^.]+listar_plantillas/);
   assert.match(AGENCY_DEVELOPER_INSTRUCTIONS, /mirá el original con mirar_pdf[\s\S]*?Dibujalo con dibujar[\s\S]*?compará todas las páginas/);
+});
+
+test("a damaged catalogue can be set aside and rebuilt from the folders on disk", async () => {
+  const { files, templates, close } = await fixture();
+  try {
+    const folder = randomUUID();
+    const single = randomUUID();
+    await files.write(`.bitacora/plantillas/${folder}/modelo.html`, "<h1>Modelo</h1>");
+    await files.write(`.bitacora/plantillas/${folder}/notas.txt`, "sigue acá");
+    await files.write(`.bitacora/plantillas/${single}-nota.txt`, "suelta");
+    await files.write(".bitacora/plantillas/suelto.txt", "no es plantilla");
+    const indexPath = ".bitacora/plantillas/index.json";
+    const damaged = '{"version":1,"templates":[{"id":"../escape"}]}';
+    await files.write(indexPath, damaged, false);
+    await assert.rejects(templates.list(), /No pude leer la lista/);
+    await assert.rejects(templates.add(metadata, [templates.fromUpload(upload("otra.txt", "otra"))]), /No pude leer la lista/);
+    assert.equal(await files.read(indexPath), damaged);
+
+    const rebuilt = await templates.recover();
+    assert.equal(rebuilt.length, 2);
+    const bundle = rebuilt.find(item => item.version === folder);
+    const loose = rebuilt.find(item => item.version === single);
+    assert.ok(bundle && loose);
+    assert.equal(bundle.name, folder);
+    assert.equal(bundle.purpose, recoveredTemplatePurpose);
+    assert.deepEqual(bundle.files, ["modelo.html", "notas.txt"]);
+    assert.equal(loose.name, "nota.txt");
+    assert.equal((await templates.open(bundle.id, bundle.version, "modelo.html")).bytes.toString(), "<h1>Modelo</h1>");
+    assert.equal((await templates.open(loose.id, loose.version, "nota.txt")).bytes.toString(), "suelta");
+    assert.equal(await files.read(".bitacora/plantillas/suelto.txt"), "no es plantilla");
+    const aside = (await readdir(join(files.root, ".bitacora/plantillas"))).filter(name => name.startsWith("index-apartado-"));
+    assert.equal(aside.length, 1);
+    assert.equal(await files.read(".bitacora/plantillas/" + aside[0]), damaged);
+    assert.equal(JSON.parse(await files.read(indexPath)).templates.length, 2);
+    assert.doesNotMatch(await files.read(indexPath), /\.\.\//);
+
+    const again = await templates.recover();
+    assert.equal(again.length, 2);
+    assert.equal((await readdir(join(files.root, ".bitacora/plantillas"))).filter(name => name.startsWith("index-apartado-")).length, 1);
+    const added = await templates.add(metadata, [templates.fromUpload(upload("nueva.txt", "nueva"))]);
+    assert.equal((await templates.open(added.id, added.version, "nueva.txt")).bytes.toString(), "nueva");
+  } finally { await close(); }
 });

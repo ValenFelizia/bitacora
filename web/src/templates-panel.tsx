@@ -4,7 +4,7 @@ import { TEMPLATES_PATH, type FileRef, type Upload } from "../../server/src/cont
 import type { Template } from "../../server/src/templates";
 
 type Form = { kind: "add" } | { kind: "edit" | "remove"; template: Template };
-type Load = { kind: "loading" } | { kind: "ready"; templates: Template[] } | { kind: "error"; message: string };
+type Load = { kind: "loading" } | { kind: "ready"; templates: Template[] } | { kind: "error"; message: string; damaged?: boolean };
 const extensions = ".pdf,.png,.jpg,.jpeg,.webp,.html,.txt,.md,.csv,.json";
 const button = "inline-flex items-center gap-1.5 rounded-[6px] border border-line px-2.5 py-1.5 text-[13px] font-bold text-ink enabled:hover:bg-soft enabled:cursor-pointer disabled:opacity-45 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ink";
 const field = "w-full rounded-[6px] border border-line bg-paper p-2 text-ink";
@@ -27,9 +27,14 @@ function readUpload(file: File): Promise<Upload> {
 }
 
 async function responseBody(response: Response) {
-  const body: unknown = await response.json();
-  if (!response.ok) throw new Error(body && typeof body === "object" && "error" in body && typeof body.error === "string"
-    ? body.error : "No pude abrir las plantillas. Probá de nuevo.");
+  const body: unknown = await response.json().catch(() => undefined);
+  if (!response.ok) {
+    const message = body && typeof body === "object" && "error" in body && typeof body.error === "string"
+      ? body.error : "No pude abrir las plantillas. Probá de nuevo.";
+    const error = new Error(message) as Error & { damaged?: boolean };
+    if (body && typeof body === "object" && "damaged" in body && body.damaged === true) error.damaged = true;
+    throw error;
+  }
   return body;
 }
 
@@ -47,6 +52,7 @@ export function TemplatesPanel({
   const [form, setForm] = useState<Form>();
   const [saving, setSaving] = useState(false);
   const [problem, setProblem] = useState("");
+  const [confirmRebuild, setConfirmRebuild] = useState(false);
   const url = TEMPLATES_PATH + "?" + new URLSearchParams({ workspace: workspace || "" });
 
   useEffect(() => {
@@ -61,11 +67,34 @@ export function TemplatesPanel({
       })
       .catch(error => {
         if (!controller.signal.aborted) setLoad({
-          kind: "error", message: error instanceof Error ? error.message : "No pude abrir las plantillas.",
+          kind: "error",
+          message: error instanceof Error ? error.message : "No pude abrir las plantillas.",
+          damaged: error instanceof Error && "damaged" in error && error.damaged === true,
         });
       });
     return () => controller.abort();
   }, [workspace, token, url, revision, reload]);
+
+  useEffect(() => { setConfirmRebuild(false); }, [workspace]);
+
+  async function rebuild(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!token || busy || saving) return;
+    setSaving(true);
+    setProblem("");
+    try {
+      await responseBody(await fetch(url, {
+        method: "POST",
+        headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+        body: JSON.stringify({ kind: "rebuild" }),
+      }));
+      setConfirmRebuild(false);
+      setLoad({ kind: "loading" });
+      setReload(value => value + 1);
+    } catch (error) {
+      setProblem(error instanceof Error ? error.message : "No pude rearmar la lista. Probá de nuevo.");
+    } finally { setSaving(false); }
+  }
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -110,7 +139,24 @@ export function TemplatesPanel({
   if (load.kind === "error") return (
     <div className="space-y-3">
       <p role="alert" className="text-[14px] text-muted">{load.message}</p>
-      <button type="button" className={button} onClick={() => setReload(value => value + 1)}>Volver a intentar</button>
+      {load.damaged && !confirmRebuild && (
+        <button type="button" className={button} disabled={busy || saving} onClick={() => { setProblem(""); setConfirmRebuild(true); }}>
+          Rearmar la lista
+        </button>
+      )}
+      {load.damaged && confirmRebuild && (
+        <form onSubmit={rebuild} className="space-y-3">
+          <p>Voy a apartar la lista dañada y armarla de nuevo con las carpetas que hay. No se borra ningún archivo. Después podés cambiar los nombres.</p>
+          <div className="flex flex-wrap gap-2">
+            <button type="submit" className={button} disabled={busy || saving}>Apartar y rearmar</button>
+            <button type="button" className={button} disabled={saving} onClick={() => { setConfirmRebuild(false); setProblem(""); }}>Cancelar</button>
+          </div>
+          {saving && <p role="status" className="text-muted">Rearmando…</p>}
+          {problem && <p role="alert" className="text-ink">{problem}</p>}
+        </form>
+      )}
+      {busy && load.damaged && <p className="text-muted">Cuando termine el pedido podés rearmar la lista.</p>}
+      <button type="button" className={button} disabled={saving} onClick={() => setReload(value => value + 1)}>Volver a intentar</button>
     </div>
   );
 
