@@ -43,19 +43,26 @@ actualizaciones y requieren una instalación manual. La clave privada queda
 fuera del repositorio.
 
 ```powershell
-# Actualiza las versiones y deja el instalador, la firma y latest.json en .local/release/0.2.0.
-npm run release -- build 0.2.0 --notes-file notas.md
+# Actualiza la versión en los archivos del proyecto. Guardá el cambio en Git.
+npm run release -- version 0.2.1
+
+# Arma el instalador y los archivos de publicación desde el commit de la versión.
+npm run release -- build 0.2.1 --notes-file .local/notas.md
 
 # Publica los archivos ya armados desde el commit correspondiente en main.
-npm run release -- publish 0.2.0
+npm run release -- publish 0.2.1
 
 # Arma y publica desde main cuando el cambio de versión ya está integrado.
-npm run release -- release 0.2.0 --notes-file notas.md
+npm run release -- release 0.2.1 --notes-file .local/notas.md
 ```
 
 Podés omitir `--notes-file` para usar una nota breve predeterminada. Para una
 versión nueva, integrá primero el cambio de versión en `main` y armá los
-archivos desde ese commit. La publicación requiere haber iniciado sesión en
+archivos desde ese commit, con el árbol limpio. Si la clave tiene contraseña,
+ponela en la variable de entorno `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+La publicación verifica la firma y que el instalador coincida con el commit
+registrado en `build-info.json`. La versión tiene que ser más reciente que las
+ya publicadas. La publicación requiere haber iniciado sesión en
 `gh`. El instalador usa NSIS en modo por usuario y conserva los datos fuera
 de la carpeta de instalación.
 
