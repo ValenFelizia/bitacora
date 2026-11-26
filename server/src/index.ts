@@ -99,8 +99,18 @@ if (installed) {
     // This channel belongs to the desktop shell. Update shutdown is never
     // exposed over HTTP or WebSocket.
     createInterface({ input: process.stdin }).on("line", (line) => {
-      const id = /^BITACORA_UPDATE ([0-9]{1,20})$/.exec(line)?.[1];
-      if (!id || closing) return;
+      const command = /^BITACORA_UPDATE ([0-9]{1,20}) (BEGIN|CANCEL|INSTALL)$/.exec(line);
+      if (!command || closing) return;
+      const [, id, action] = command;
+      if (action === "BEGIN") {
+        console.log(`BITACORA_UPDATE ${id} ${server.beginUpdate() ? "READY" : "BUSY"}`);
+        return;
+      }
+      if (action === "CANCEL") {
+        server.cancelUpdate();
+        console.log(`BITACORA_UPDATE ${id} READY`);
+        return;
+      }
       const stopping = server.closeForUpdate();
       if (!stopping) {
         console.log(`BITACORA_UPDATE ${id} BUSY`);

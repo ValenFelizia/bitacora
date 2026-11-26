@@ -32,7 +32,7 @@ export type Snapshot = {
   hasBrand?: boolean;
   account: Account;
   works: Work[];
-  engine: { available: boolean; starting?: boolean; exhausted?: boolean; safety: ExecutionSafety };
+  engine: { available: boolean; starting?: boolean; updateReady?: boolean; exhausted?: boolean; safety: ExecutionSafety };
   notice?: string;
   undo?: import("./backups").UndoTarget;
   fileRevision?: number;

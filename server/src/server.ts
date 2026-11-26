@@ -18,6 +18,8 @@ import { DEV_SESSION_PATH, isScreenSecret, SCREEN_PROTOCOL } from "./screen-sess
 const SHUTDOWN_PROBLEM =
   "No pude cambiar de carpeta porque algo de lo que estaba haciendo acá sigue abierto. Lo sigo intentando cerrar. Cuando termine, elegí la carpeta de nuevo.";
 
+const UPDATING_PROBLEM = "Bitácora se está actualizando. Esperá a que termine para hacer cambios.";
+
 export async function serve(
   engine: Engine,
   data: string,
@@ -66,7 +68,11 @@ export async function serve(
         res.writeHead(403); res.end(); return;
       }
       if (url.pathname === DICTATION_PATH && req.method === "POST") {
-        if (closing) { res.writeHead(503); res.end(); return; }
+        if (closing || updating) {
+          res.writeHead(503, { "Content-Type": "text/plain; charset=utf-8" });
+          res.end(updating ? UPDATING_PROBLEM : undefined);
+          return;
+        }
         commands++;
         try { await handleDictation(req, res, active.engine); }
         finally { commands--; }
@@ -126,6 +132,7 @@ export async function serve(
   let commands = 0;
   let switching: Promise<void> | undefined;
   let closing = false;
+  let updating = false;
   // Set while something the current engine started could not be confirmed
   // stopped: no other engine may start until it is gone.
   let shutdownPending = false;
@@ -332,6 +339,7 @@ export async function serve(
           const stale = folders && command.workspace !== active.choice?.root;
           if (command.type === "chooseWorkspace") {
             try {
+              if (updating) throw new WorkspaceProblem(UPDATING_PROBLEM);
               if (stale) throw new WorkspaceProblem("La carpeta de trabajo cambió. Probá de nuevo.");
               await chooseWorkspace(command.path, (message) => send(ws, message));
             }
@@ -350,11 +358,12 @@ export async function serve(
             historyListing?.abort();
             return;
           }
-          if (closing || switching || stale) {
+          if (updating || closing || switching || stale) {
+            const text = updating ? UPDATING_PROBLEM : "La carpeta de trabajo está cambiando. Probá de nuevo en un momento.";
             if (command.type === "listCodexChats" || command.type === "importCodexChats")
-              send(ws, { type: "codexImportProblem", text: "La carpeta de trabajo está cambiando. Probá de nuevo en un momento." });
+              send(ws, { type: "codexImportProblem", text });
             else
-              send(ws, { type: "problem", text: "La carpeta de trabajo está cambiando. Probá de nuevo en un momento." });
+              send(ws, { type: "problem", text });
             return;
           }
           if (command.type === "listCodexChats") {
@@ -420,11 +429,16 @@ export async function serve(
     startEngine,
     port: boundPort(),
     close,
+    beginUpdate() {
+      // Reserve the server before downloading, in the same turn as the busy check.
+      if (closing || updating || switching || recovery || commands ||
+          active.app.workspaceBusy || !active.app.updateReady) return false;
+      updating = true;
+      return true;
+    },
+    cancelUpdate() { updating = false; },
     closeForUpdate() {
-      // Reserve shutdown in the same event-loop turn as the busy check.
-      // A WebSocket send can neither slip through this check nor be interrupted.
-      if (closing || switching || recovery || commands || active.app.workspaceBusy)
-        return undefined;
+      if (!updating || closing) return undefined;
       return close(true);
     },
   };

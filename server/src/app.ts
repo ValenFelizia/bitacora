@@ -96,6 +96,7 @@ export class App {
   private available = false;
   private failedStart = false;
   private starting = true;
+  private finishedStarting = false;
   private exhausted = false;
   private flushTimer?: NodeJS.Timeout;
   private dirty = false;
@@ -224,6 +225,10 @@ export class App {
     const key = this.workspaceOptions?.key;
     if (key) (this.settings.workspaceWelcome ??= {})[key] = status;
     else this.settings.welcome = status;
+  }
+
+  get updateReady() {
+    return this.finishedStarting && this.available && !this.starting;
   }
 
   get workspaceBusy() {
@@ -442,6 +447,7 @@ export class App {
     void this.refreshModels();
   }
   async startEngine(keepOpen = false) {
+    this.finishedStarting = false;
     const engine = this.engine;
     this.unsubscribe ??= engine.subscribe((event) => this.event(event));
     try {
@@ -474,6 +480,7 @@ export class App {
       if (engine !== this.engine || !this.unsubscribe) return;
       this.accountState ??= account;
     }
+    this.finishedStarting = true;
     this.publish({ type: "snapshot", state: this.snapshot() });
   }
   showShutdownProblem() {
@@ -552,6 +559,7 @@ export class App {
       engine: {
         available: !this.starting && this.available,
         starting: this.starting,
+        updateReady: this.updateReady,
         exhausted: this.exhausted || this.failedStart,
         safety: this.engine.executionSafety(),
       },

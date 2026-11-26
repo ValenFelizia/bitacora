@@ -32,10 +32,19 @@ const SAVE_GRACE: Duration = Duration::from_millis(2_500);
 const LOG_LIMIT: u64 = 1024 * 1024;
 
 pub struct Server {
-    process: Mutex<Option<Process>>,
+    lifecycle: Mutex<Lifecycle>,
+    closing: tokio::sync::watch::Sender<bool>,
     exiting: AtomicBool,
     started: Arc<AtomicBool>,
     log: Arc<Mutex<PathBuf>>,
+}
+
+#[derive(Default)]
+struct Lifecycle {
+    process: Option<Process>,
+    updating: bool,
+    draining_update: bool,
+    restart_after_update: bool,
 }
 
 struct Process {
@@ -43,7 +52,7 @@ struct Process {
     stdin: ChildStdin,
     // An unshared handle kills the whole tree even if the shell crashes.
     job: OwnedHandle,
-    update_replies: mpsc::Receiver<String>,
+    update_replies: Arc<Mutex<mpsc::Receiver<String>>>,
     update_id: u64,
 }
 
@@ -55,7 +64,8 @@ pub enum InstallError {
 impl Server {
     pub fn new(log_dir: PathBuf) -> Self {
         Self {
-            process: Mutex::new(None),
+            lifecycle: Mutex::new(Lifecycle::default()),
+            closing: tokio::sync::watch::channel(false).0,
             exiting: AtomicBool::new(false),
             started: Arc::new(AtomicBool::new(false)),
             log: Arc::new(Mutex::new(log_dir)),
@@ -67,7 +77,7 @@ impl Server {
         runtime: &Path,
         screen_secret: &str,
     ) -> io::Result<mpsc::Receiver<io::Result<u16>>> {
-        let mut active = self.process.lock().unwrap();
+        let mut lifecycle = self.lifecycle.lock().unwrap();
         if self.exiting() {
             return Err(io::ErrorKind::Interrupted.into());
         }
@@ -129,11 +139,11 @@ impl Server {
         });
         // Only now can Node start Codex and let it spawn its helpers.
         stdin.write_all(format!("{screen_secret}\n").as_bytes())?;
-        *active = Some(Process {
+        lifecycle.process = Some(Process {
             child,
             stdin,
             job,
-            update_replies,
+            update_replies: Arc::new(Mutex::new(update_replies)),
             update_id: 0,
         });
         Ok(ready)
@@ -149,67 +159,194 @@ impl Server {
     }
 
     pub fn running(&self) -> bool {
-        let mut active = self.process.lock().unwrap();
+        let mut lifecycle = self.lifecycle.lock().unwrap();
         !self.exiting()
-            && active
-                .as_mut()
-                .is_some_and(|process| matches!(process.child.try_wait(), Ok(None)))
+            && (lifecycle.updating || lifecycle.process.as_mut().is_some_and(Process::running))
+    }
+
+    pub fn take_update_restart(&self) -> bool {
+        std::mem::take(&mut self.lifecycle.lock().unwrap().restart_after_update)
     }
 
     pub fn stop(&self) {
-        // RunEvent::Exit owns the final shutdown, including the flush window.
-        let mut active = self.process.lock().unwrap();
-        if !self.exiting() {
-            active.take();
+        let process = {
+            let mut lifecycle = self.lifecycle.lock().unwrap();
+            // RunEvent::Exit owns the normal shutdown, including the flush window.
+            if self.exiting() || lifecycle.updating {
+                return;
+            }
+            lifecycle.process.take()
+        };
+        if let Some(process) = process {
+            self.drain_job(&process);
         }
     }
 
-    pub fn shutdown(&self) {
+    /// Returns true when the worker must finish draining the job before the window closes.
+    pub fn request_close(&self) -> bool {
+        let lifecycle = self.lifecycle.lock().unwrap();
         self.exiting.store(true, Ordering::Release);
+        self.closing.send_replace(true);
+        lifecycle.draining_update
+    }
+
+    pub fn close_signal(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.closing.subscribe()
+    }
+
+    pub fn shutdown(&self) {
+        self.request_close();
+        let process = self.lifecycle.lock().unwrap().process.take();
         if let Some(Process {
             mut child,
             stdin,
             job,
             ..
-        }) = self.process.lock().unwrap().take()
+        }) = process
         {
             drop(stdin);
             let deadline = Instant::now() + SAVE_GRACE;
             while Instant::now() < deadline && matches!(child.try_wait(), Ok(None)) {
                 thread::sleep(Duration::from_millis(20));
             }
-            // Never wait on the process after terminating its tree.
             drop(job);
         }
+    }
+
+    pub fn begin_update(&self) -> Result<(), InstallError> {
+        let request = {
+            let mut lifecycle = self.lifecycle.lock().unwrap();
+            if self.exiting() || lifecycle.updating {
+                return Err(InstallError::Failed);
+            }
+            let process = lifecycle.process.as_mut().ok_or(InstallError::Failed)?;
+            if !process.running() {
+                return Err(InstallError::Failed);
+            }
+            let request = process.send_update_command("BEGIN");
+            lifecycle.updating = true;
+            request
+        };
+        match request.and_then(UpdateRequest::reply) {
+            Ok(reply) if reply == "READY" => Ok(()),
+            Ok(reply) if reply == "BUSY" => {
+                self.lifecycle.lock().unwrap().updating = false;
+                Err(InstallError::Busy)
+            }
+            result => {
+                self.log(&format!("No se pudo preparar la descarga: {result:?}"));
+                self.cancel_update();
+                Err(InstallError::Failed)
+            }
+        }
+    }
+
+    pub fn download_server_running(&self) -> bool {
+        self.lifecycle
+            .lock()
+            .unwrap()
+            .process
+            .as_mut()
+            .is_some_and(Process::running)
+    }
+
+    pub fn cancel_update(&self) {
+        let request = {
+            let mut lifecycle = self.lifecycle.lock().unwrap();
+            if self.exiting() {
+                lifecycle.updating = false;
+                return;
+            }
+            lifecycle
+                .process
+                .as_mut()
+                .map(|process| process.send_update_command("CANCEL"))
+        };
+        if request.is_some_and(|request| {
+            request
+                .and_then(UpdateRequest::reply)
+                .is_ok_and(|reply| reply == "READY")
+        }) {
+            self.lifecycle.lock().unwrap().updating = false;
+        } else if let Ok(process) = self.take_for_update() {
+            self.drain_job(&process);
+            drop(process);
+            self.finish_update();
+        }
+    }
+
+    fn take_for_update(&self) -> Result<Process, InstallError> {
+        let mut lifecycle = self.lifecycle.lock().unwrap();
+        if self.exiting() {
+            lifecycle.updating = false;
+            return Err(InstallError::Failed);
+        }
+        let Some(process) = lifecycle.process.take() else {
+            lifecycle.updating = false;
+            return Err(InstallError::Failed);
+        };
+        lifecycle.draining_update = true;
+        Ok(process)
+    }
+
+    fn finish_update(&self) {
+        let mut lifecycle = self.lifecycle.lock().unwrap();
+        lifecycle.restart_after_update = !self.exiting();
+        lifecycle.updating = false;
+        lifecycle.draining_update = false;
     }
 
     pub fn install_update(
         &self,
         install: impl FnOnce() -> tauri_plugin_updater::Result<()>,
     ) -> Result<(), InstallError> {
-        // Keep supervision from launching another Node while the installer
-        // takes over. If launch fails, supervision can bring the app back.
-        let mut active = self.process.lock().unwrap();
-        if self.exiting() {
-            return Err(InstallError::Failed);
-        }
-        let process = active.as_mut().ok_or(InstallError::Failed)?;
-        match process.stop_for_update() {
-            Ok(true) => {}
-            Ok(false) => return Err(InstallError::Busy),
-            Err(error) => {
-                self.log(&format!("No se pudo preparar la actualización: {error}"));
-                return Err(InstallError::Failed);
+        // The worker owns the process during the wait. The window thread can
+        // request closure and the supervisor cannot start a second server.
+        let mut process = self.take_for_update()?;
+        let stopped = process.stop_for_update();
+        self.drain_job(&process);
+        drop(process);
+        let result = if let Err(error) = stopped {
+            self.log(&format!("No se pudo preparar la actualización: {error}"));
+            Err(InstallError::Failed)
+        } else if self.exiting() {
+            Err(InstallError::Failed)
+        } else {
+            install().map_err(|error| {
+                self.log(&format!("No se pudo iniciar el instalador: {error}"));
+                InstallError::Failed
+            })
+        };
+        self.finish_update();
+        result
+    }
+
+    fn drain_job(&self, process: &Process) {
+        // Keep ownership until Windows confirms every descendant is gone.
+        let mut reported = false;
+        let mut terminated = false;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match process.job_empty() {
+                Ok(true) => return,
+                Ok(false) => {}
+                Err(error) if !reported => {
+                    self.log(&format!(
+                        "No pude comprobar el cierre de los procesos: {error}"
+                    ));
+                    reported = true;
+                }
+                Err(_) => {}
             }
+            if !terminated {
+                terminated = unsafe { TerminateJobObject(process.job.as_raw_handle(), 1) } != 0;
+            }
+            if !reported && Instant::now() >= deadline {
+                self.log("Sigo esperando que Windows cierre los procesos anteriores.");
+                reported = true;
+            }
+            thread::sleep(Duration::from_millis(20));
         }
-        active.take();
-        if self.exiting() {
-            return Err(InstallError::Failed);
-        }
-        install().map_err(|error| {
-            self.log(&format!("No se pudo iniciar el instalador: {error}"));
-            InstallError::Failed
-        })
     }
 
     pub fn log(&self, message: &str) {
@@ -217,53 +354,61 @@ impl Server {
     }
 }
 
-impl Process {
-    fn stop_for_update(&mut self) -> io::Result<bool> {
-        self.update_id += 1;
-        writeln!(self.stdin, "BITACORA_UPDATE {}", self.update_id)?;
+struct UpdateRequest {
+    id: u64,
+    replies: Arc<Mutex<mpsc::Receiver<String>>>,
+}
+
+impl UpdateRequest {
+    fn reply(self) -> io::Result<String> {
         let deadline = Instant::now() + Duration::from_secs(5);
-        let prefix = format!("{} ", self.update_id);
+        let prefix = format!("{} ", self.id);
+        let replies = self.replies.lock().unwrap();
         loop {
-            let reply = self
-                .update_replies
+            let reply = replies
                 .recv_timeout(deadline.saturating_duration_since(Instant::now()))
                 .map_err(io::Error::other)?;
-            match reply.strip_prefix(&prefix) {
-                Some("BUSY") => return Ok(false),
-                Some("STOPPING") => break,
-                _ => {}
+            if let Some(reply) = reply.strip_prefix(&prefix) {
+                return Ok(reply.to_owned());
             }
+        }
+    }
+}
+
+impl Process {
+    fn running(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(None))
+    }
+
+    fn send_update_command(&mut self, command: &str) -> io::Result<UpdateRequest> {
+        self.update_id += 1;
+        writeln!(self.stdin, "BITACORA_UPDATE {} {command}", self.update_id)?;
+        Ok(UpdateRequest {
+            id: self.update_id,
+            replies: Arc::clone(&self.update_replies),
+        })
+    }
+
+    fn stop_for_update(&mut self) -> io::Result<()> {
+        if self.send_update_command("INSTALL")?.reply()? != "STOPPING" {
+            return Err(io::Error::other("Server did not accept update shutdown"));
         }
         let deadline = Instant::now() + Duration::from_secs(30);
         loop {
             if let Some(status) = self.child.try_wait()? {
-                if !status.success() {
-                    return Err(io::Error::other(
+                return if status.success() {
+                    Ok(())
+                } else {
+                    Err(io::Error::other(
                         "Server could not finish saving and closing",
-                    ));
-                }
-                break;
+                    ))
+                };
             }
             if Instant::now() >= deadline {
                 return Err(io::ErrorKind::TimedOut.into());
             }
             thread::sleep(Duration::from_millis(20));
         }
-        // Codex has shut down. Clean up any remaining helper in the outer job
-        // and wait for Windows to release its executable and file handles.
-        if !self.job_empty()? {
-            if unsafe { TerminateJobObject(self.job.as_raw_handle(), 1) } == 0 {
-                return Err(io::Error::last_os_error());
-            }
-            let deadline = Instant::now() + Duration::from_secs(5);
-            while !self.job_empty()? {
-                if Instant::now() >= deadline {
-                    return Err(io::ErrorKind::TimedOut.into());
-                }
-                thread::sleep(Duration::from_millis(20));
-            }
-        }
-        Ok(true)
     }
 
     fn job_empty(&self) -> io::Result<bool> {

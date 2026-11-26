@@ -232,12 +232,17 @@ fn supervise(
                 // Only a server that got Codex running counts as a connection to
                 // lose; before that, a failure is a failed start.
                 has_connected |= server.started();
-                if !server.exiting() {
-                    server.log("El servidor se cerró.");
+                if server.take_update_restart() {
+                    recovering = false;
+                    true
+                } else {
+                    if !server.exiting() {
+                        server.log("El servidor se cerró.");
+                    }
+                    let retry = !recovering;
+                    recovering = true;
+                    retry
                 }
-                let retry = !recovering;
-                recovering = true;
-                retry
             } else {
                 let error = result.unwrap_err();
                 server.log(&format!("No se pudo iniciar el servidor: {error}"));
@@ -328,6 +333,14 @@ fn run() -> tauri::Result<()> {
             };
             let server = Arc::new(server::Server::new(data.join("logs")));
             app.manage(Arc::clone(&server));
+            let closing_server = Arc::clone(&server);
+            window.on_window_event(move |event| {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    if closing_server.request_close() {
+                        api.prevent_close();
+                    }
+                }
+            });
             let worker_window = window.clone();
             window.with_webview(move |webview| {
                 if let Err(error) = restrict_webview(

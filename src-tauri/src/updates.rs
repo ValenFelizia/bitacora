@@ -11,6 +11,7 @@ use webview2_com::{
 };
 use windows_core::HSTRING;
 
+const CHECK_RETRY: Duration = Duration::from_secs(3 * 60);
 const CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 
 #[derive(Clone, Copy)]
@@ -77,7 +78,7 @@ impl Updates {
             }
         };
         while !self.server.exiting() {
-            if let Ok(available) = tauri::async_runtime::block_on(updater.check()) {
+            let delay = if let Ok(available) = tauri::async_runtime::block_on(updater.check()) {
                 let mut status = self.status.lock().unwrap();
                 if !matches!(*status, Status::Working) {
                     *status = available.map_or(Status::Idle, |update| {
@@ -86,14 +87,19 @@ impl Updates {
                 }
                 drop(status);
                 self.publish();
-            }
-            thread::sleep(CHECK_INTERVAL);
+                CHECK_INTERVAL
+            } else {
+                CHECK_RETRY
+            };
+            thread::sleep(delay);
         }
     }
 
     fn start_install(self: &Arc<Self>) {
         let mut status = self.status.lock().unwrap();
         if !matches!(*status, Status::Available(..)) {
+            drop(status);
+            self.publish();
             return;
         }
         let Status::Available(mut update, _) = std::mem::replace(&mut *status, Status::Working)
@@ -107,21 +113,50 @@ impl Updates {
         // take longer than the short metadata check.
         update.timeout = Some(Duration::from_secs(30 * 60));
         thread::spawn(move || {
-            let notice = match tauri::async_runtime::block_on(update.download(|_, _| {}, || {})) {
-                Ok(bytes) => match updates.server.install_update(|| update.install(bytes)) {
-                    Err(InstallError::Busy) => Notice::Busy,
-                    Err(InstallError::Failed) | Ok(()) => Notice::Failed,
-                },
-                Err(error) => {
-                    updates
-                        .server
-                        .log(&format!("No se pudo descargar la actualización: {error}"));
-                    Notice::Failed
-                }
-            };
+            let notice = updates.download_and_install(&update);
+            if updates.server.exiting() {
+                // A close request during the final drain was deferred until
+                // Windows confirmed the old job is empty.
+                let _ = updates.window.close();
+                return;
+            }
             *updates.status.lock().unwrap() = Status::Available(update, notice);
             updates.publish();
         });
+    }
+
+    fn download_and_install(&self, update: &Update) -> Notice {
+        match self.server.begin_update() {
+            Ok(()) => {}
+            Err(InstallError::Busy) => return Notice::Busy,
+            Err(InstallError::Failed) => return Notice::Failed,
+        }
+        let mut closing = self.server.close_signal();
+        let downloaded = tauri::async_runtime::block_on(async {
+            tokio::select! {
+                biased;
+                _ = closing.wait_for(|closing| *closing) => None,
+                _ = async {
+                    while self.server.download_server_running() {
+                        tokio::time::sleep(Duration::from_millis(250)).await;
+                    }
+                } => None,
+                result = update.download(|_, _| {}, || {}) => Some(result),
+            }
+        });
+        match downloaded {
+            Some(Ok(bytes)) => {
+                let _ = self.server.install_update(|| update.install(bytes));
+            }
+            other => {
+                if let Some(Err(error)) = other {
+                    self.server
+                        .log(&format!("No se pudo descargar la actualización: {error}"));
+                }
+                self.server.cancel_update();
+            }
+        }
+        Notice::Failed
     }
 }
 
