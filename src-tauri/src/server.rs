@@ -29,6 +29,7 @@ use windows_sys::Win32::System::{
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(90);
 const SAVE_GRACE: Duration = Duration::from_millis(2_500);
+const DRAIN_LIMIT: Duration = Duration::from_secs(15);
 const LOG_LIMIT: u64 = 1024 * 1024;
 
 pub struct Server {
@@ -304,12 +305,13 @@ impl Server {
         // request closure and the supervisor cannot start a second server.
         let mut process = self.take_for_update()?;
         let stopped = process.stop_for_update();
-        self.drain_job(&process);
+        let drained = self.drain_job(&process);
         drop(process);
         let result = if let Err(error) = stopped {
             self.log(&format!("No se pudo preparar la actualización: {error}"));
             Err(InstallError::Failed)
-        } else if self.exiting() {
+        } else if !drained || self.exiting() {
+            // A process that outlived the drain may still lock installed files.
             Err(InstallError::Failed)
         } else {
             install().map_err(|error| {
@@ -321,14 +323,21 @@ impl Server {
         result
     }
 
-    fn drain_job(&self, process: &Process) {
+    /// Returns false when Windows did not confirm an empty job in time. The
+    /// caller still drops the handle, and KILL_ON_JOB_CLOSE ends what is left.
+    fn drain_job(&self, process: &Process) -> bool {
         // Keep ownership until Windows confirms every descendant is gone.
         let mut reported = false;
         let mut terminated = false;
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let started = Instant::now();
+        let deadline = started + Duration::from_secs(5);
         loop {
+            if started.elapsed() >= DRAIN_LIMIT {
+                self.log("Windows no confirmó el cierre de los procesos anteriores; suelto el grupo.");
+                return false;
+            }
             match process.job_empty() {
-                Ok(true) => return,
+                Ok(true) => return true,
                 Ok(false) => {}
                 Err(error) if !reported => {
                     self.log(&format!(
