@@ -26,6 +26,8 @@ export type Work = {
   progress: string;
   problem?: string;
   question?: PendingQuestion;
+  /** The person marked it as done: it waits folded under «Listos» (issue #88). */
+  ready?: boolean;
 };
 export type Snapshot = {
   workspace?: string;
@@ -68,6 +70,8 @@ export type ClientCommand =
   | { type: "prepareProtection" }
   | { type: "send"; workId?: string; text: string; attachments?: Upload[] }
   | { type: "rename"; workId: string; title: string }
+  /** Marks a work as ready or brings it back to the list (issue #88). */
+  | { type: "setReady"; workId: string; ready: boolean }
   | { type: "interrupt"; workId: string }
   /** One answer per question id: the label of the chosen option or the written text. */
   | { type: "answer"; workId: string; questionId: string; answers: Record<string, string> }

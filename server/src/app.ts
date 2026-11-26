@@ -62,6 +62,17 @@ const isQuestion = (value: unknown) => {
 };
 const SHUTDOWN_PENDING = "Algo de lo que estaba haciendo en esta carpeta sigue abierto y puede cambiar archivos. Lo sigo intentando cerrar. También podés tocar Reintentar.";
 const WAITING_ANSWER = "Esperando tu respuesta…";
+/**
+ * Sidebar order: the most recent activity first, counting the last message,
+ * answer or result. The text is an ISO date, so it compares as written;
+ * identical instants keep the order they already had (a stable sort), and a
+ * work the person just writes to moves up because its `updatedAt` changes.
+ */
+const byActivity = (a: Pick<Work, "updatedAt" | "createdAt">, b: Pick<Work, "updatedAt" | "createdAt">) => {
+  if (a.updatedAt !== b.updatedAt) return a.updatedAt < b.updatedAt ? 1 : -1;
+  if (a.createdAt !== b.createdAt) return a.createdAt < b.createdAt ? 1 : -1;
+  return 0;
+};
 const isSavedWork = (value: unknown) => {
   const work = value as Partial<SavedWork> | null;
   return !!work && isText(work.id) && isText(work.conversationId) && isText(work.title) && isText(work.details) &&
@@ -73,6 +84,7 @@ const isSavedWork = (value: unknown) => {
       /^sessions[\\/]\d{4}[\\/]\d{2}[\\/]\d{2}[\\/](?:import-[a-zA-Z0-9]+[\\/])?rollout-[^\\/:]+\.jsonl$/.test(work.importedRollout))) &&
     (work.titlePending === undefined || typeof work.titlePending === "boolean") &&
     (work.renamedByUser === undefined || typeof work.renamedByUser === "boolean") &&
+    (work.ready === undefined || typeof work.ready === "boolean") &&
     Array.isArray(work.messages) && work.messages.every(isMessage) &&
     (work.pendingFiles === undefined || (!!work.pendingFiles && isText(work.pendingFiles.messageId)));
 };
@@ -572,7 +584,7 @@ export class App {
       welcome: this.workspace ? (this.welcomeStatus ?? "pending") : undefined,
       uses: this.workspace ? [...this.uses] : undefined,
       ...(this.codexImportOffer ? { codexImportOffer: true } : {}),
-      works: this.works.map(({ conversationId: _, pendingFiles: __, titlePending: ___, renamedByUser: ____, importedRollout: _____, ...work }) => work),
+      works: [...this.works].sort(byActivity).map(({ conversationId: _, pendingFiles: __, titlePending: ___, renamedByUser: ____, importedRollout: _____, ...work }) => work),
     };
   }
   private async renameWithRetry(source: string, target: string) {
@@ -639,6 +651,8 @@ export class App {
       // serve must not become a card the user cannot open.
       const tooBig = changed.filter(p => after.entries[p].size > MAX_RESULT).map(p => basename(p));
       if (message) message.results = changed.filter(p => after.entries[p].size <= MAX_RESULT).map(p => this.workspace!.result(p));
+      // A file that showed up is activity, the same as a message or an answer.
+      if (message?.results?.length) work.updatedAt = new Date().toISOString();
       if (tooBig.length) {
         const notice = tooBig.length === 1
           ? `Se generó ${tooBig[0]}, pero es demasiado grande para mostrarlo acá.`
@@ -1056,6 +1070,22 @@ export class App {
       }
       return;
     }
+    if (command.type === "setReady") {
+      const work = this.works.find((w) => w.id === command.workId);
+      if (!work) throw new Error("Unknown work");
+      if (command.ready) {
+        // A work still working on a request has nothing settled to keep.
+        if (work.busy) {
+          reply({ type: "problem", text: "Esperá a que termine el pedido de este chat para marcarlo como listo." });
+          return;
+        }
+        work.ready = true;
+      } else delete work.ready;
+      // Marking is not activity: the date stays, so returning to the list
+      // puts the work back where it was.
+      this.changed();
+      return;
+    }
     if (command.type === "chooseModel") {
       const choices = resolveModel(this.listOnHand(), this.settings.model).state.choices;
       if (!choices.some((choice) => choice.id === command.model)) {
@@ -1271,6 +1301,10 @@ export class App {
       });
       work.busy = true;
       work.problem = undefined;
+      // The message itself is activity, so the chat rises before the answer.
+      // Writing also brings a ready chat back to the main list (issue #88).
+      work.updatedAt = new Date().toISOString();
+      delete work.ready;
       // A question left unanswered stays on screen until the next request.
       work.question = undefined;
       this.queuedQuestions.delete(work.id);
