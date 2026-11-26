@@ -2,6 +2,7 @@
 
 mod folder_picker;
 mod server;
+mod updates;
 
 use std::{
     io,
@@ -43,6 +44,7 @@ fn restrict_webview(
     webview: tauri::webview::PlatformWebview,
     window: tauri::WebviewWindow,
     endpoint: Arc<Mutex<Option<Url>>>,
+    server: Arc<server::Server>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let frame_endpoint = Arc::clone(&endpoint);
     let permission_endpoint = Arc::clone(&endpoint);
@@ -69,7 +71,8 @@ fn restrict_webview(
     unsafe {
         let env = webview.environment();
         let core = webview.controller().CoreWebView2()?;
-        folder_picker::install(&core, window, Arc::clone(&endpoint))?;
+        folder_picker::install(&core, window.clone(), Arc::clone(&endpoint))?;
+        updates::install(&core, window, Arc::clone(&endpoint), server)?;
         core.add_FrameNavigationStarting(&handler, &mut 0)?;
         core.add_PermissionRequested(
             &PermissionRequestedEventHandler::create(Box::new(move |_, args| {
@@ -207,12 +210,7 @@ fn supervise(
                 let secret = server::screen_secret()?;
                 let port = server::ready_port(server.start(&runtime, &secret)?)?;
                 let url = Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap();
-                install_screen_script(
-                    &window,
-                    &url,
-                    &secret,
-                    Arc::clone(&screen_script),
-                )?;
+                install_screen_script(&window, &url, &secret, Arc::clone(&screen_script))?;
                 Ok::<_, io::Error>(url)
             })();
             if server.exiting() {
@@ -273,6 +271,8 @@ fn supervise(
 }
 
 fn run() -> tauri::Result<()> {
+    let mut context = tauri::generate_context!();
+    updates::configure(context.config_mut());
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _, _| {
             if let Some(window) = app.get_webview_window("main") {
@@ -284,6 +284,7 @@ fn run() -> tauri::Result<()> {
             }
         }))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             let endpoint = Arc::new(Mutex::new(None::<Url>));
             let navigation_endpoint = Arc::clone(&endpoint);
@@ -329,9 +330,12 @@ fn run() -> tauri::Result<()> {
             app.manage(Arc::clone(&server));
             let worker_window = window.clone();
             window.with_webview(move |webview| {
-                if let Err(error) =
-                    restrict_webview(webview, worker_window.clone(), Arc::clone(&endpoint))
-                {
+                if let Err(error) = restrict_webview(
+                    webview,
+                    worker_window.clone(),
+                    Arc::clone(&endpoint),
+                    Arc::clone(&server),
+                ) {
                     server.log(&format!("No se pudo proteger el visor: {error}"));
                     let _ = worker_window.navigate(Url::parse(VIEWER_ERROR).unwrap());
                     return;
@@ -342,7 +346,7 @@ fn run() -> tauri::Result<()> {
             })?;
             Ok(())
         })
-        .build(tauri::generate_context!())?;
+        .build(context)?;
     app.run(|app, event| {
         if matches!(event, RunEvent::Exit) {
             if let Some(server) = app.try_state::<Arc<server::Server>>() {

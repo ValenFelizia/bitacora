@@ -66,7 +66,10 @@ export async function serve(
         res.writeHead(403); res.end(); return;
       }
       if (url.pathname === DICTATION_PATH && req.method === "POST") {
-        await handleDictation(req, res, active.engine);
+        if (closing) { res.writeHead(503); res.end(); return; }
+        commands++;
+        try { await handleDictation(req, res, active.engine); }
+        finally { commands--; }
         return;
       }
       const { app, files } = active;
@@ -400,21 +403,29 @@ export async function serve(
     await active.app.close();
     throw error;
   }
+  async function close(requireStop = false) {
+    closing = true;
+    clearTimeout(recoveryTimer);
+    for (const ws of sockets.clients) ws.terminate();
+    await new Promise<void>((resolve) => sockets.close(() => resolve()));
+    http.closeAllConnections?.();
+    await new Promise<void>((resolve) => http.close(() => resolve()));
+    await switching?.catch(() => {});
+    await recovery?.catch(() => {});
+    await active.app.close(requireStop);
+  }
   return {
     // Local lifecycle handle; never serialized or exposed over HTTP/WebSocket.
     get app() { return active.app; },
     startEngine,
     port: boundPort(),
-    async close() {
-      closing = true;
-      clearTimeout(recoveryTimer);
-      for (const ws of sockets.clients) ws.terminate();
-      await new Promise<void>((resolve) => sockets.close(() => resolve()));
-      http.closeAllConnections?.();
-      await new Promise<void>((resolve) => http.close(() => resolve()));
-      await switching?.catch(() => {});
-      await recovery?.catch(() => {});
-      await active.app.close();
+    close,
+    closeForUpdate() {
+      // Reserve shutdown in the same event-loop turn as the busy check.
+      // A WebSocket send can neither slip through this check nor be interrupted.
+      if (closing || switching || recovery || commands || active.app.workspaceBusy)
+        return undefined;
+      return close(true);
     },
   };
 }

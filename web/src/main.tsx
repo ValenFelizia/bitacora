@@ -167,7 +167,23 @@ function CopyMessageButton({ text }: { text: string }) {
   );
 }
 
+type UpdateNotice = "idle" | "available" | "busy" | "failed" | "working";
+
 function App() {
+  const [updateNotice, setUpdateNotice] = useState<UpdateNotice>("idle");
+  useEffect(() => {
+    const webview = window.chrome?.webview;
+    if (!isDesktop() || !webview) return;
+    const receive = ({ data }: MessageEvent<unknown>) => {
+      if (typeof data !== "string" || !data.startsWith("bitacora:update:")) return;
+      const notice = data.slice("bitacora:update:".length);
+      if (notice === "idle" || notice === "available" || notice === "busy" ||
+          notice === "failed" || notice === "working") setUpdateNotice(notice);
+    };
+    webview.addEventListener("message", receive);
+    webview.postMessage("bitacora:update:status");
+    return () => webview.removeEventListener("message", receive);
+  }, []);
   const [state, setState] = useState<Snapshot>({
     account: { connected: false },
     works: [],
@@ -266,6 +282,9 @@ function App() {
     },
   });
   const busy = state.works.some((w) => w.busy);
+  const updating = updateNotice === "working";
+  const updateBlocked = busy || pending || readingFiles || dictation.active();
+  const hasDraft = !!text.trim() || attachments.length > 0;
   const hasGalleryResults = state.works.some((w) =>
     w.messages.some((m) => m.results?.length),
   );
@@ -556,6 +575,7 @@ function App() {
 
   // One send path: the draft and the attachments always travel together.
   function submitRequest(opening?: string) {
+    if (updating) return;
     const typed = text.trim();
     if (
       (!typed && !attachments.length && !opening) ||
@@ -1227,6 +1247,32 @@ function App() {
           )}
         </header>
 
+        {updateNotice !== "idle" && (
+          <section aria-label="Actualización de Bitácora" className="shrink-0 px-5 min-[960px]:px-7 py-2 border-b border-line bg-surface text-[13px] flex flex-wrap items-center justify-between gap-2">
+            <div role="status">
+              <p className="font-bold text-ink">{updating ? "Actualizando Bitácora…" : "Hay una versión nueva de Bitácora"}</p>
+              <p className="text-muted">
+                {updating ? "Se va a volver a abrir cuando termine."
+                  : updateBlocked ? "Podés actualizar cuando termine el pedido actual."
+                  : hasDraft ? "Terminá el borrador antes de actualizar."
+                  : updateNotice === "busy" ? "Había algo en curso. Probá de nuevo en un momento."
+                  : updateNotice === "failed" ? "No pude actualizar ahora. Podés seguir usando Bitácora."
+                  : null}
+              </p>
+            </div>
+            {!updating && (
+              <button
+                type="button"
+                className={buttonBordered}
+                disabled={!online || updateBlocked || hasDraft}
+                onClick={() => window.chrome?.webview?.postMessage("bitacora:update:install")}
+              >
+                Actualizar
+              </button>
+            )}
+          </section>
+        )}
+
         {((state.undo && !busy) || state.notice || codexImportOffer) && (
           <section
             aria-label="Deshacer el último pedido"
@@ -1868,7 +1914,7 @@ function App() {
 
         {/* Composer */}
         {!gallery && (
-          <div className="shrink-0 px-5 min-[960px]:px-7 pb-5">
+          <div inert={updating} className="shrink-0 px-5 min-[960px]:px-7 pb-5">
             <form
               className="relative mx-auto w-full max-w-[720px] bg-surface border border-line focus-within:border-ink rounded-[6px] px-3 py-2.5 flex flex-col gap-2"
               onSubmit={(e) => {

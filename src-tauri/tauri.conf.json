@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Bitácora",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "com.valenfelizia.bitacora",
   "build": {
     "beforeBuildCommand": "npm run prepare:installer",
@@ -15,14 +15,37 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
-    "icon": ["icons/icon.ico"],
-    "resources": { "payload/runtime/": "runtime/" },
+    "targets": [
+      "nsis"
+    ],
+    "icon": [
+      "icons/icon.ico"
+    ],
+    "resources": {
+      "payload/runtime/": "runtime/"
+    },
     "windows": {
-      "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true },
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
       "nsis": {
-        "languages": ["Spanish"],
+        "languages": [
+          "Spanish"
+        ],
         "installMode": "currentUser"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/ValenFelizia/bitacora/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDIxQjc3QzRGNTcxMjVBQjUKUldTMVdoSlhUM3kzSWMraWd4ZzBtNnh5TnJrVEFabGN5V3JCWjEwNUdzb2w3V0xwcVVKcXpOQWcK",
+      "requireSignedVersion": true,
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

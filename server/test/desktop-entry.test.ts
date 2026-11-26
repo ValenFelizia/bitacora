@@ -18,6 +18,13 @@ async function fixture() {
   return mkdtemp(resolve(".local/desktop-entry-"));
 }
 
+async function updateReply(stdout: ReturnType<typeof createInterface>, id: number) {
+  const lines = on(stdout, "line", { signal: AbortSignal.timeout(5_000) });
+  for await (const [line] of lines) {
+    if (line.startsWith(`BITACORA_UPDATE ${id} `)) return line;
+  }
+}
+
 test("registers the installed MCP entry with the current Node executable", async () => {
   const home = await fixture();
   try {
@@ -38,7 +45,7 @@ test("registers the installed MCP entry with the current Node executable", async
   }
 });
 
-test("desktop entry waits for stdin, announces its port, and closes on EOF", {
+test("desktop entry waits for stdin, announces its port, and closes for an update when idle", {
   skip: process.platform !== "win32",
 }, async () => {
   const root = await fixture();
@@ -92,7 +99,9 @@ test("desktop entry waits for stdin, announces its port, and closes on EOF", {
       } finally {
         socket.terminate();
       }
-      child.stdin.end();
+      const stopping = updateReply(stdout, 1);
+      child.stdin.write("BITACORA_UPDATE 1\n");
+      assert.equal(await stopping, "BITACORA_UPDATE 1 STOPPING");
       assert.deepEqual(await closed, [0, null], stderr);
       assert.ok(!lines.some((line) => line.includes(screenSecret)));
       assert.ok(!stderr.includes(screenSecret));
@@ -205,6 +214,13 @@ test("desktop serves while Codex prepares, then saves buffered changes on stdin 
         const before = JSON.parse(await readFile(works, "utf8"));
         assert.equal(before.works[0].busy, true);
         assert.deepEqual(before.works[0].messages.map((message: { text: string }) => message.text), ["Pedido de prueba"]);
+
+        const busy = updateReply(stdout, 2);
+        stdin.write("BITACORA_UPDATE 2\n");
+        assert.equal(await busy, "BITACORA_UPDATE 2 BUSY");
+        assert.equal(child.exitCode, null);
+        assert.equal(JSON.parse(await readFile(works, "utf8")).works[0].busy, true);
+        assert.equal((await fetch(origin)).status, 200);
 
         const engineClosed = once(child, "message", { signal: AbortSignal.timeout(2_500) }).then(([message]) => message);
         const exitWithinGrace = once(child, "close", { signal: AbortSignal.timeout(2_500) });

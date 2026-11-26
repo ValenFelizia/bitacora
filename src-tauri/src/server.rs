@@ -19,9 +19,10 @@ use windows_sys::Win32::Security::Cryptography::{
 };
 use windows_sys::Win32::System::{
     JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectBasicAccountingInformation,
+        JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject,
+        TerminateJobObject, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     },
     Threading::CREATE_NO_WINDOW,
 };
@@ -42,6 +43,13 @@ struct Process {
     stdin: ChildStdin,
     // An unshared handle kills the whole tree even if the shell crashes.
     job: OwnedHandle,
+    update_replies: mpsc::Receiver<String>,
+    update_id: u64,
+}
+
+pub enum InstallError {
+    Busy,
+    Failed,
 }
 
 impl Server {
@@ -66,7 +74,10 @@ impl Server {
         let job = create_job()?;
         let executable = std::env::current_exe()?;
         let mut child = Command::new(runtime.join("node.exe"))
-            .env("BITACORA_INSTALL_DIR", executable.parent().unwrap_or(runtime))
+            .env(
+                "BITACORA_INSTALL_DIR",
+                executable.parent().unwrap_or(runtime),
+            )
             // Windows may return the resource directory in verbatim form.
             // Node resolves the entry relative to the working directory.
             .arg("server/index.mjs")
@@ -89,6 +100,7 @@ impl Server {
         let stdout = child.stdout.take().unwrap();
         let mut stderr = child.stderr.take().unwrap();
         let (notify, ready) = mpsc::channel();
+        let (update_reply, update_replies) = mpsc::channel();
         self.started.store(false, Ordering::Release);
         let started = Arc::clone(&self.started);
         thread::spawn(move || {
@@ -100,6 +112,10 @@ impl Server {
             while matches!(output.read_until(b'\n', &mut line), Ok(1..)) {
                 if is_started(&line) {
                     started.store(true, Ordering::Release);
+                } else if let Ok(message) = std::str::from_utf8(&line) {
+                    if let Some(reply) = message.trim_end().strip_prefix("BITACORA_UPDATE ") {
+                        let _ = update_reply.send(reply.to_owned());
+                    }
                 }
                 line.clear();
             }
@@ -113,7 +129,13 @@ impl Server {
         });
         // Only now can Node start Codex and let it spawn its helpers.
         stdin.write_all(format!("{screen_secret}\n").as_bytes())?;
-        *active = Some(Process { child, stdin, job });
+        *active = Some(Process {
+            child,
+            stdin,
+            job,
+            update_replies,
+            update_id: 0,
+        });
         Ok(ready)
     }
 
@@ -148,6 +170,7 @@ impl Server {
             mut child,
             stdin,
             job,
+            ..
         }) = self.process.lock().unwrap().take()
         {
             drop(stdin);
@@ -160,8 +183,104 @@ impl Server {
         }
     }
 
+    pub fn install_update(
+        &self,
+        install: impl FnOnce() -> tauri_plugin_updater::Result<()>,
+    ) -> Result<(), InstallError> {
+        // Keep supervision from launching another Node while the installer
+        // takes over. If launch fails, supervision can bring the app back.
+        let mut active = self.process.lock().unwrap();
+        if self.exiting() {
+            return Err(InstallError::Failed);
+        }
+        let process = active.as_mut().ok_or(InstallError::Failed)?;
+        match process.stop_for_update() {
+            Ok(true) => {}
+            Ok(false) => return Err(InstallError::Busy),
+            Err(error) => {
+                self.log(&format!("No se pudo preparar la actualización: {error}"));
+                return Err(InstallError::Failed);
+            }
+        }
+        active.take();
+        if self.exiting() {
+            return Err(InstallError::Failed);
+        }
+        install().map_err(|error| {
+            self.log(&format!("No se pudo iniciar el instalador: {error}"));
+            InstallError::Failed
+        })
+    }
+
     pub fn log(&self, message: &str) {
         append_log(&self.log, format!("{message}\n").as_bytes());
+    }
+}
+
+impl Process {
+    fn stop_for_update(&mut self) -> io::Result<bool> {
+        self.update_id += 1;
+        writeln!(self.stdin, "BITACORA_UPDATE {}", self.update_id)?;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let prefix = format!("{} ", self.update_id);
+        loop {
+            let reply = self
+                .update_replies
+                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                .map_err(io::Error::other)?;
+            match reply.strip_prefix(&prefix) {
+                Some("BUSY") => return Ok(false),
+                Some("STOPPING") => break,
+                _ => {}
+            }
+        }
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            if let Some(status) = self.child.try_wait()? {
+                if !status.success() {
+                    return Err(io::Error::other(
+                        "Server could not finish saving and closing",
+                    ));
+                }
+                break;
+            }
+            if Instant::now() >= deadline {
+                return Err(io::ErrorKind::TimedOut.into());
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        // Codex has shut down. Clean up any remaining helper in the outer job
+        // and wait for Windows to release its executable and file handles.
+        if !self.job_empty()? {
+            if unsafe { TerminateJobObject(self.job.as_raw_handle(), 1) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !self.job_empty()? {
+                if Instant::now() >= deadline {
+                    return Err(io::ErrorKind::TimedOut.into());
+                }
+                thread::sleep(Duration::from_millis(20));
+            }
+        }
+        Ok(true)
+    }
+
+    fn job_empty(&self) -> io::Result<bool> {
+        let mut info = JOBOBJECT_BASIC_ACCOUNTING_INFORMATION::default();
+        if unsafe {
+            QueryInformationJobObject(
+                self.job.as_raw_handle(),
+                JobObjectBasicAccountingInformation,
+                (&mut info as *mut JOBOBJECT_BASIC_ACCOUNTING_INFORMATION).cast(),
+                std::mem::size_of_val(&info) as u32,
+                std::ptr::null_mut(),
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(info.ActiveProcesses == 0)
     }
 }
 
