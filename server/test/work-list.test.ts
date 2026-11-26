@@ -109,6 +109,161 @@ test("a chat marked as ready waits in Listos, is saved with the folder, and come
   }
 });
 
+test("chats sort by the instant of the date, including timezones and dates that do not parse", async () => {
+  // The three June rows are the same instant written three ways. August is only
+  // on the creation date: the activity date does not parse. The last row has
+  // neither date.
+  const f = await fixture([
+    savedWork("viejo", "2020-03-01T10:00:00.000Z"),
+    savedWork("mismo-ms", "2020-06-01T10:00:00.000Z"),
+    savedWork("mismo-texto", "2020-06-01T10:00:00Z"),
+    savedWork("mismo-huso", "2020-06-01T12:00:00+02:00"),
+    savedWork("tarde", "2020-06-01T15:00:00-03:00"),
+    savedWork("respaldo", "", "2020-08-01T00:00:00.000Z"),
+    savedWork("roto", "no-es-fecha", "tampoco"),
+    savedWork("nuevo", "2020-12-01T00:00:00Z"),
+  ]);
+  try {
+    assert.deepEqual(ids(f.app), [
+      "nuevo",
+      "respaldo",
+      "tarde",
+      "mismo-ms",
+      "mismo-texto",
+      "mismo-huso",
+      "viejo",
+      "roto",
+    ]);
+  } finally {
+    await f.app.close();
+    await rm(f.dir, { recursive: true, force: true });
+  }
+});
+
+test("a title, a detail or a progress line does not move a chat, and renaming it does not either", async () => {
+  const f = await fixture([
+    savedWork("quieto", "2020-01-01T10:00:00.000Z"),
+    savedWork("nuevo", "2020-09-01T10:00:00.000Z"),
+  ]);
+  try {
+    const before = f.app.snapshot().works.find((work) => work.id === "quieto")!.updatedAt;
+    f.engine.emit({ type: "title", conversationId: "conversation-quieto", title: "Otro nombre" });
+    f.engine.emit({ type: "detail", conversationId: "conversation-quieto", text: "Una nota." });
+    f.engine.emit({ type: "progress", conversationId: "conversation-quieto", activity: "reading" });
+    const quiet = f.app.snapshot().works.find((work) => work.id === "quieto")!;
+    assert.equal(quiet.title, "Otro nombre");
+    assert.equal(quiet.updatedAt, before);
+    assert.deepEqual(ids(f.app), ["nuevo", "quieto"]);
+
+    await f.app.command({ type: "rename", workId: "quieto", title: "Elegido por mí" }, f.reply);
+    assert.equal(f.app.snapshot().works.find((work) => work.id === "quieto")!.updatedAt, before);
+    assert.equal(f.app.snapshot().works.find((work) => work.id === "quieto")!.title, "Elegido por mí");
+    assert.deepEqual(ids(f.app), ["nuevo", "quieto"]);
+
+    f.engine.emit({ type: "message", conversationId: "conversation-quieto", id: "m", text: "Listo.", delta: false });
+    assert.notEqual(f.app.snapshot().works.find((work) => work.id === "quieto")!.updatedAt, before);
+    assert.equal(ids(f.app)[0], "quieto");
+  } finally {
+    await f.app.close();
+    await rm(f.dir, { recursive: true, force: true });
+  }
+});
+
+async function until(check: () => boolean) {
+  const deadline = Date.now() + 5000;
+  while (!check()) {
+    if (Date.now() > deadline) throw new Error("timed out");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+test("a file that shows up moves the chat, and a progress or title afterwards does not", async () => {
+  await mkdir(".local", { recursive: true });
+  const root = await mkdtemp(resolve(".local/work-list-result-"));
+  const data = join(root, "data");
+  const workspace = new WorkspaceFiles(join(root, "Agencia"));
+  await workspace.initialize();
+  await mkdir(data, { recursive: true });
+  await writeFile(join(data, "works.json"), JSON.stringify({
+    version: 1,
+    works: [
+      savedWork("quieto", "2020-01-01T10:00:00.000Z"),
+      savedWork("nuevo", "2020-09-01T10:00:00.000Z"),
+    ],
+  }), "utf8");
+  const engine = new FakeEngine();
+  const app = new App(engine, data, () => {}, undefined, workspace);
+  try {
+    await app.start();
+    await app.command({ type: "send", workId: "quieto", text: "Seguimos" }, () => {});
+    const sentAt = app.snapshot().works.find((work) => work.id === "quieto")!.updatedAt;
+    assert.equal(ids(app)[0], "quieto");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await writeFile(join(workspace.root, "plano.pdf"), "%PDF-1.4");
+    engine.emit({ type: "finished", conversationId: "conversation-quieto", status: "completed" });
+    await until(() => app.snapshot().works.find((work) => work.id === "quieto")!.busy === false);
+    const withFile = app.snapshot().works.find((work) => work.id === "quieto")!;
+    assert.equal(withFile.messages[0].results?.length, 1);
+    assert.notEqual(withFile.updatedAt, sentAt);
+    const atFile = withFile.updatedAt;
+    engine.emit({ type: "progress", conversationId: "conversation-quieto", activity: "writing" });
+    engine.emit({ type: "title", conversationId: "conversation-quieto", title: "Plano" });
+    engine.emit({ type: "detail", conversationId: "conversation-quieto", text: "nota" });
+    assert.equal(app.snapshot().works.find((work) => work.id === "quieto")!.updatedAt, atFile);
+    assert.equal(ids(app)[0], "quieto");
+  } finally {
+    await app.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a chat cannot be marked ready while its message is still being sent", async () => {
+  const f = await fixture([
+    savedWork("uno", "2020-01-01T10:00:00.000Z"),
+    savedWork("otro", "2020-05-01T10:00:00.000Z"),
+  ]);
+  let release = () => {};
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const account = f.engine.account.bind(f.engine);
+  f.engine.account = () => held.then(() => account());
+  const sending = f.app.command({ type: "send", workId: "uno", text: "Sigo" }, f.reply);
+  try {
+    f.messages.length = 0;
+    await f.app.command({ type: "setReady", workId: "uno", ready: true }, f.reply);
+    assert.equal(f.app.snapshot().works.find((work) => work.id === "uno")!.ready, undefined);
+    const problem = f.messages.find((message) => message.type === "problem");
+    assert.match(problem && problem.type === "problem" ? problem.text : "", /termine el pedido/);
+    // Another chat is not the one being sent, so it can still be marked.
+    await f.app.command({ type: "setReady", workId: "otro", ready: true }, f.reply);
+    assert.equal(f.app.snapshot().works.find((work) => work.id === "otro")!.ready, true);
+
+    release();
+    await sending;
+    const sent = f.app.snapshot().works.find((work) => work.id === "uno")!;
+    assert.equal(sent.busy, true);
+    assert.equal(sent.ready, undefined);
+  } finally {
+    release();
+    await sending.catch(() => {});
+    await f.app.close();
+    await rm(f.dir, { recursive: true, force: true });
+  }
+});
+
+test("marking a chat ready only accepts true or false", async () => {
+  const f = await fixture([savedWork("uno", "2020-01-01T10:00:00.000Z")]);
+  try {
+    await assert.rejects(
+      () => f.app.command({ type: "setReady", workId: "uno", ready: "si" as unknown as boolean }, f.reply),
+      /Invalid ready/,
+    );
+    assert.equal(f.app.snapshot().works[0].ready, undefined);
+  } finally {
+    await f.app.close();
+    await rm(f.dir, { recursive: true, force: true });
+  }
+});
+
 test("a chat with a request in progress cannot be marked as ready", async () => {
   const f = await fixture([savedWork("uno", "2020-01-01T10:00:00.000Z")]);
   try {

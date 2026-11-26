@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import ReactMarkdown from "react-markdown";
 import {
@@ -169,16 +169,21 @@ function CopyMessageButton({ text }: { text: string }) {
 
 type UpdateNotice = "idle" | "available" | "busy" | "failed" | "working";
 
+const OFFLINE_READY = "Sin conexión. Probá de nuevo en un momento";
+const BUSY_READY = "Esperá a que termine el pedido de este chat";
+
 /**
  * One chat in the sidebar. The mark-as-ready action stays out of the way until
  * the pointer or the keyboard reaches the row, and «Listos» brings it back
- * (issue #88).
+ * (issue #88). A blocked action stays in the tab order and says why.
  */
 function WorkRow({
   work,
   active,
   ready,
   online,
+  sending,
+  actionRef,
   onOpen,
   onToggleReady,
 }: {
@@ -186,11 +191,15 @@ function WorkRow({
   active: boolean;
   ready: boolean;
   online: boolean;
+  sending: boolean;
+  actionRef?: React.Ref<HTMLButtonElement>;
   onOpen: () => void;
   onToggleReady: () => void;
 }) {
   const action = ready ? "Volver a la lista" : "Marcar como listo";
-  const blocked = !online || (!ready && work.busy);
+  const reason = !online ? OFFLINE_READY : !ready && (work.busy || sending) ? BUSY_READY : undefined;
+  const blocked = reason !== undefined;
+  const reasonId = `ready-reason-${work.id}`;
   return (
     <li className="border-b border-line py-[3px]">
       <div
@@ -233,18 +242,16 @@ function WorkRow({
         </button>
         <span className="relative grid w-[34px] shrink-0 place-items-center">
           <button
+            ref={actionRef}
             type="button"
-            title={
-              !online
-                ? "Sin conexión. Probá de nuevo en un momento"
-                : !ready && work.busy
-                  ? "Esperá a que termine el pedido de este chat"
-                  : action
-            }
-            aria-label={action}
-            disabled={blocked}
-            onClick={onToggleReady}
-            className={`absolute inset-0 grid place-items-center rounded-[6px] text-muted cursor-pointer transition-opacity duration-150 hover:text-ink focus-visible:opacity-100 disabled:cursor-default disabled:hover:text-muted ${
+            title={reason ?? action}
+            aria-label={`${action}: ${work.title}`}
+            aria-disabled={blocked || undefined}
+            aria-describedby={blocked ? reasonId : undefined}
+            onClick={() => {
+              if (!blocked) onToggleReady();
+            }}
+            className={`absolute inset-0 grid place-items-center rounded-[6px] text-muted cursor-pointer transition-opacity duration-150 hover:text-ink focus-visible:opacity-100 aria-disabled:cursor-default ${
               blocked
                 ? "opacity-0 group-hover:opacity-40 group-focus-within:opacity-40 max-[959px]:opacity-40"
                 : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 max-[959px]:opacity-100"
@@ -256,6 +263,11 @@ function WorkRow({
               <Check size={16} strokeWidth={1.75} aria-hidden="true" />
             )}
           </button>
+          {blocked && (
+            <span id={reasonId} className="sr-only">
+              {reason}
+            </span>
+          )}
         </span>
       </div>
     </li>
@@ -290,6 +302,10 @@ function App() {
   const [gallery, setGallery] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [readyOpen, setReadyOpen] = useState(false);
+  const [readyNotice, setReadyNotice] = useState<string>();
+  const [placeFocus, setPlaceFocus] = useState<{ id: string; ready: boolean }>();
+  const placedRef = useRef<HTMLButtonElement>(null);
+  const listosToggleRef = useRef<HTMLButtonElement>(null);
   const [deliverablesOpen, setDeliverablesOpen] = useState(false);
   const [focusedMessageId, setFocusedMessageId] = useState<string>();
   const [preview, setPreview] = useState<{ file: FileRef; list: FileRef[]; trackOpened?: boolean }>();
@@ -357,6 +373,23 @@ function App() {
   // activity order the server sends (issue #88).
   const readyWorks = state.works.filter((w) => w.ready);
   const activeWorks = state.works.filter((w) => !w.ready);
+  // The open chat lives in «Listos», so that section stays open. Marking a
+  // chat also opens it, until the folder changes or the person folds it.
+  const listosOpen = readyOpen || (!gallery && !!work?.ready);
+  const sendingId = pending ? selected : undefined;
+  useEffect(() => {
+    if (!readyNotice) return;
+    const timer = window.setTimeout(() => setReadyNotice(undefined), 4000);
+    return () => window.clearTimeout(timer);
+  }, [readyNotice]);
+  useLayoutEffect(() => {
+    if (!placeFocus) return;
+    const target = state.works.find((item) => item.id === placeFocus.id);
+    if (!target || !!target.ready !== placeFocus.ready) return;
+    const button = placedRef.current ?? listosToggleRef.current;
+    button?.focus();
+    setPlaceFocus(undefined);
+  }, [placeFocus, state.works]);
   const dictationToken =
     online && state.account.connected && state.engine.available && !gallery ? sessionSecret : undefined;
   const dictation = useDictation({
@@ -443,6 +476,9 @@ function App() {
             setProblem(undefined);
             setFolderProblem(undefined);
             setCodexImportMessage(undefined);
+            setReadyOpen(false);
+            setReadyNotice(undefined);
+            setPlaceFocus(undefined);
           }
           displayedWorkspace.current = message.state.workspace;
           setState(message.state);
@@ -497,6 +533,7 @@ function App() {
         }
         if (message.type === "problem") {
           setProblem(message);
+          setPlaceFocus(undefined);
           setPending(false);
           answeringRef.current = undefined;
           setAnswering(undefined);
@@ -647,6 +684,15 @@ function App() {
     if (updateInProgress.current || socket.current?.readyState !== WebSocket.OPEN) return;
     setProblem(undefined);
     socket.current.send(JSON.stringify({ ...command, workspace: state.workspace }));
+  }
+
+  function placeReady(workId: string, ready: boolean) {
+    setPlaceFocus({ id: workId, ready });
+    if (ready) {
+      setReadyOpen(true);
+      setReadyNotice("Pasó a Listos");
+    }
+    send({ type: "setReady", workId, ready });
   }
 
   /** For preferences: a problem on screen stays, it is not about them. */
@@ -1112,6 +1158,8 @@ function App() {
                   active={active}
                   ready={false}
                   online={online}
+                  sending={sendingId === w.id}
+                  actionRef={placeFocus?.id === w.id && !placeFocus.ready ? placedRef : undefined}
                   onOpen={() => {
                     setGallery(false);
                     setRenaming(false);
@@ -1120,7 +1168,7 @@ function App() {
                     setSelected(w.id);
                     setProblem(undefined);
                   }}
-                  onToggleReady={() => send({ type: "setReady", workId: w.id, ready: true })}
+                  onToggleReady={() => placeReady(w.id, true)}
                 />
               );
             })}
@@ -1130,24 +1178,36 @@ function App() {
               Acá van a aparecer tus trabajos.
             </p>
           )}
+          {!activeWorks.length && readyWorks.length > 0 && (
+            <p className="px-[10px] py-2 text-[13px] text-muted leading-relaxed">
+              Todos están en Listos.
+            </p>
+          )}
+          <p role="status" className={readyNotice ? "px-[10px] pt-2 text-[13px] text-muted" : "sr-only"}>
+            {readyNotice ?? ""}
+          </p>
           {readyWorks.length > 0 && (
             <div className="mt-3 border-t border-line">
               <button
+                ref={listosToggleRef}
                 type="button"
-                aria-expanded={readyOpen}
+                aria-expanded={listosOpen}
                 className={`flex w-full items-center gap-2 rounded-[6px] px-[10px] py-[8px] text-left text-[13px] text-muted hover:bg-soft hover:text-ink cursor-pointer transition-colors duration-150 ${focusRing}`}
-                onClick={() => setReadyOpen((open) => !open)}
+                onClick={() => {
+                  if (!gallery && work?.ready) return;
+                  setReadyOpen((open) => !open);
+                }}
               >
                 <ChevronRight
                   size={14}
                   strokeWidth={1.75}
-                  className={`shrink-0 transition-transform duration-150 ${readyOpen ? "rotate-90" : ""}`}
+                  className={`shrink-0 transition-transform duration-150 ${listosOpen ? "rotate-90" : ""}`}
                   aria-hidden="true"
                 />
                 <span>Listos</span>
                 <span className="tabular-nums">{readyWorks.length}</span>
               </button>
-              {readyOpen && (
+              {listosOpen && (
                 <ul className="flex flex-col border-t border-line">
                   {readyWorks.map((w) => {
                     const active = !gallery && selected === w.id;
@@ -1158,6 +1218,8 @@ function App() {
                         active={active}
                         ready
                         online={online}
+                        sending={false}
+                        actionRef={placeFocus?.id === w.id && placeFocus.ready ? placedRef : undefined}
                         onOpen={() => {
                           setGallery(false);
                           setRenaming(false);
@@ -1166,7 +1228,7 @@ function App() {
                           setSelected(w.id);
                           setProblem(undefined);
                         }}
-                        onToggleReady={() => send({ type: "setReady", workId: w.id, ready: false })}
+                        onToggleReady={() => placeReady(w.id, false)}
                       />
                     );
                   })}
@@ -1354,16 +1416,24 @@ function App() {
                 {!gallery && work?.ready && (
                   <button
                     type="button"
-                    className={buttonQuiet}
-                    title="Volver a la lista"
-                    aria-label="Volver a la lista"
-                    onClick={() =>
-                      send({ type: "setReady", workId: work.id, ready: false })
-                    }
+                    className={`${buttonQuiet} aria-disabled:opacity-40 aria-disabled:cursor-default aria-disabled:hover:bg-surface`}
+                    title={online ? "Volver a la lista" : OFFLINE_READY}
+                    aria-label={`Volver a la lista: ${work.title}`}
+                    aria-disabled={!online || undefined}
+                    aria-describedby={online ? undefined : `return-reason-${work.id}`}
+                    onClick={() => {
+                      if (!online) return;
+                      placeReady(work.id, false);
+                    }}
                   >
                     <ArrowLeft size={16} strokeWidth={1.75} aria-hidden="true" />
                     <span className="max-[720px]:hidden">Volver a la lista</span>
                   </button>
+                )}
+                {!gallery && work?.ready && !online && (
+                  <span id={`return-reason-${work.id}`} className="sr-only">
+                    {OFFLINE_READY}
+                  </span>
                 )}
                 {!gallery && (
                   <button

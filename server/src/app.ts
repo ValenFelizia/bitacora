@@ -63,15 +63,29 @@ const isQuestion = (value: unknown) => {
 const SHUTDOWN_PENDING = "Algo de lo que estaba haciendo en esta carpeta sigue abierto y puede cambiar archivos. Lo sigo intentando cerrar. También podés tocar Reintentar.";
 const WAITING_ANSWER = "Esperando tu respuesta…";
 /**
- * Sidebar order: the most recent activity first, counting the last message,
- * answer or result. The text is an ISO date, so it compares as written;
- * identical instants keep the order they already had (a stable sort), and a
- * work the person just writes to moves up because its `updatedAt` changes.
+ * Milliseconds of the last activity. A date without milliseconds or with a
+ * timezone offset is the same instant either way. When the activity date does
+ * not parse, the creation date is used; when that does not parse either, the
+ * work has no instant and sorts last.
+ */
+const activityMs = (work: Pick<Work, "updatedAt" | "createdAt">) => {
+  const updated = Date.parse(work.updatedAt);
+  if (!Number.isNaN(updated)) return updated;
+  const created = Date.parse(work.createdAt);
+  return Number.isNaN(created) ? undefined : created;
+};
+/**
+ * Sidebar order: the most recent activity first. Equal instants keep the
+ * order they already had (the sort is stable), and a work the person just
+ * writes to moves up because its `updatedAt` changes.
  */
 const byActivity = (a: Pick<Work, "updatedAt" | "createdAt">, b: Pick<Work, "updatedAt" | "createdAt">) => {
-  if (a.updatedAt !== b.updatedAt) return a.updatedAt < b.updatedAt ? 1 : -1;
-  if (a.createdAt !== b.createdAt) return a.createdAt < b.createdAt ? 1 : -1;
-  return 0;
+  const left = activityMs(a);
+  const right = activityMs(b);
+  if (left === right) return 0;
+  if (left === undefined) return 1;
+  if (right === undefined) return -1;
+  return right - left;
 };
 const isSavedWork = (value: unknown) => {
   const work = value as Partial<SavedWork> | null;
@@ -122,6 +136,9 @@ export class App {
   // Work ids whose saved request has not reached the engine yet, and pauses
   // requested during that window: they are delivered once the turn starts.
   private unsent = new Set<string>();
+  // Work ids whose send has started but has not marked the work busy yet.
+  // That wait is several awaits long; the chat cannot be filed as ready in it.
+  private sending = new Set<string>();
   private pauseRequested = new Set<string>();
   // Works created in this session whose first request has not been titled yet,
   // and works the user named by hand: a chosen name is never replaced.
@@ -867,7 +884,11 @@ export class App {
         }
         break;
     }
-    work.updatedAt = new Date().toISOString();
+    // A reply is activity. A title (including the one a rename asks the engine
+    // for), a detail or a progress line is not, so none of those move the chat.
+    // A message the person sent and a file that showed up are counted where
+    // they happen, not here.
+    if (event.type === "message") work.updatedAt = new Date().toISOString();
     if (
       (event.type === "message" && event.delta) ||
       event.type === "detail" ||
@@ -1071,11 +1092,13 @@ export class App {
       return;
     }
     if (command.type === "setReady") {
+      if (typeof command.ready !== "boolean") throw new Error("Invalid ready");
       const work = this.works.find((w) => w.id === command.workId);
       if (!work) throw new Error("Unknown work");
       if (command.ready) {
-        // A work still working on a request has nothing settled to keep.
-        if (work.busy) {
+        // A request still on its way, or already running, has nothing settled
+        // to keep. `busy` is set only after several awaits inside send.
+        if (work.busy || this.sending.has(work.id)) {
           reply({ type: "problem", text: "Esperá a que termine el pedido de este chat para marcarlo como listo." });
           return;
         }
@@ -1207,17 +1230,29 @@ export class App {
     }
     const uploads = this.workspace?.validate(command.attachments);
     if (command.attachments?.length && !this.workspace) throw new Error("Attachments unavailable");
+    // From here until `busy` is set, send awaits the kit, the account and the
+    // files. The chat is already being sent, so it cannot be marked ready.
+    const sendingId = typeof command.workId === "string" ? command.workId : undefined;
+    if (sendingId) this.sending.add(sendingId);
+    const stopSending = () => { if (sendingId) this.sending.delete(sendingId); };
     // The kit carries the agency rules, so a request does not run without it.
     // The copy is tried again here: the file that failed may be free by now,
     // and the notice stays until it works.
-    if (this.kitProblem && !(await this.prepareKit())) {
-      this.notice = this.kitProblem;
-      reply({ type: "problem", text: this.kitProblem, detail: this.kitDetail });
-      return;
+    let kitReady = true;
+    try {
+      if (this.kitProblem && !(await this.prepareKit())) {
+        kitReady = false;
+        this.notice = this.kitProblem;
+        reply({ type: "problem", text: this.kitProblem, detail: this.kitDetail });
+      }
+    } catch (error) {
+      stopSending();
+      throw error;
     }
+    if (!kitReady) { stopSending(); return; }
     // The wait above may have been long enough for another request to start:
     // only one request at a time may touch the backups and the pending files.
-    if (this.refuseWhileBusy(reply)) return;
+    if (this.refuseWhileBusy(reply)) { stopSending(); return; }
     this.submitting = true;
     let work: SavedWork | undefined;
     let attachments: FileRef[] = [];
@@ -1362,6 +1397,7 @@ export class App {
       }
       throw error;
     } finally {
+      stopSending();
       this.submitting = false;
       this.publish({ type: "snapshot", state: this.snapshot() });
     }
