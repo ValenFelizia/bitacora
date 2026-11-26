@@ -441,3 +441,9 @@ y `BITACORA_PORT` cambia el servidor y el destino de ambos proxies. Se conservan
 
 Evidencia y límites actuales: [tercera ronda](docs/verification/issue4/round3.md).
 Mediciones históricas: [segunda ronda](docs/verification/issue4/rework.md).
+
+## Licencia
+
+Bitácora es software libre bajo la [GNU Affero General Public License v3.0](LICENSE) o posterior.
+Quien la modifique y la distribuya, o la ofrezca como servicio, tiene que publicar
+sus cambios con la misma licencia. Codex, Node y las fuentes incluidas conservan sus propias licencias.
