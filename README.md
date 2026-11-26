@@ -20,6 +20,10 @@ donde tenías el cursor. Revisalo y mandalo con Enter. Cada grabación dura
 hasta un minuto y puede pesar hasta 2 MB.
 Si ya tenés Bitácora abierta, abrir el ícono de nuevo vuelve a esa ventana
 y reintenta la conexión si se cortó.
+Bitácora busca versiones nuevas al abrir y cada seis horas. Cuando aparezca
+**Hay una versión nueva de Bitácora**, tocá **Actualizar** cuando termines el
+pedido que está en curso. La app guarda los cambios, se actualiza y vuelve a
+abrirse. Conserva tus trabajos, tu cuenta, tu carpeta y tus ajustes.
 Si desinstalás la app, se conservan tus trabajos, tu cuenta y la carpeta de la agencia.
 
 Para **generar el instalador** en Windows, instalá Rust con el destino MSVC
@@ -29,6 +33,45 @@ El instalador queda en `src-tauri/target/release/bundle/nsis/`. El armado
 descarga las dependencias y verifica el ejecutable de Node contra el
 SHA-256 de su versión oficial. La instalación es por usuario. Ver
 [DEC-013](docs/DEC-013-windows-installer.md).
+
+### Publicar una versión
+
+El instalador que se distribuye se firma con la clave privada de Tauri en
+`%USERPROFILE%\.tauri\bitacora-updater.key`. Guardá una copia segura de la clave.
+Si se pierde, las instalaciones existentes dejan de poder recibir
+actualizaciones y requieren una instalación manual. La clave privada queda
+fuera del repositorio.
+
+```powershell
+# Actualiza la versión en los archivos del proyecto. Guardá el cambio en Git.
+npm run release -- version 0.2.1
+
+# Arma el instalador y los archivos de publicación desde el commit de la versión.
+npm run release -- build 0.2.1 --notes-file .local/notas.md
+
+# Publica los archivos ya armados desde el commit correspondiente en main.
+npm run release -- publish 0.2.1
+
+# Arma y publica desde main cuando el cambio de versión ya está integrado.
+npm run release -- release 0.2.1 --notes-file .local/notas.md
+```
+
+Podés omitir `--notes-file` para usar una nota breve predeterminada. Para una
+versión nueva, integrá primero el cambio de versión en `main` y armá los
+archivos desde ese commit, con el árbol limpio. Si la clave tiene contraseña,
+ponela en la variable de entorno `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`.
+La publicación verifica la firma y que el instalador coincida con el commit
+registrado en `build-info.json`. La versión tiene que ser más reciente que las
+ya publicadas. La publicación requiere haber iniciado sesión en
+`gh`. El instalador usa NSIS en modo por usuario y conserva los datos fuera
+de la carpeta de instalación.
+
+Para probar una actualización sin publicar, serví `latest.json` y el
+instalador firmado desde un servidor local. Cambiá la URL del instalador
+dentro de una copia de `latest.json` y abrí Bitácora con
+`BITACORA_UPDATE_ENDPOINT` apuntando a ese archivo. Se acepta HTTP sólo para
+la dirección local. El instalador debe tener la firma de la versión que
+anuncia el archivo.
 
 ## Desarrollo
 

@@ -167,7 +167,27 @@ function CopyMessageButton({ text }: { text: string }) {
   );
 }
 
+type UpdateNotice = "idle" | "available" | "busy" | "failed" | "working";
+
 function App() {
+  const [updateNotice, setUpdateNotice] = useState<UpdateNotice>("idle");
+  const updateInProgress = useRef(false);
+  useEffect(() => {
+    const webview = window.chrome?.webview;
+    if (!isDesktop() || !webview) return;
+    const receive = ({ data }: MessageEvent<unknown>) => {
+      if (typeof data !== "string" || !data.startsWith("bitacora:update:")) return;
+      const notice = data.slice("bitacora:update:".length);
+      if (notice === "idle" || notice === "available" || notice === "busy" ||
+          notice === "failed" || notice === "working") {
+        updateInProgress.current = notice === "working";
+        setUpdateNotice(notice);
+      }
+    };
+    webview.addEventListener("message", receive);
+    webview.postMessage("bitacora:update:status");
+    return () => webview.removeEventListener("message", receive);
+  }, []);
   const [state, setState] = useState<Snapshot>({
     account: { connected: false },
     works: [],
@@ -266,6 +286,11 @@ function App() {
     },
   });
   const busy = state.works.some((w) => w.busy);
+  const updating = updateNotice === "working";
+  const updateReady = state.engine.updateReady === true;
+  const updateBlocked = busy || pending || readingFiles || dictation.active() ||
+    !!folderAction || renaming || resizingPanel;
+  const hasDraft = !!text.trim() || attachments.length > 0;
   const hasGalleryResults = state.works.some((w) =>
     w.messages.some((m) => m.results?.length),
   );
@@ -521,14 +546,15 @@ function App() {
   }, [savingName, work?.title]);
 
   function send(command: ClientCommand) {
-    if (socket.current?.readyState !== WebSocket.OPEN) return;
+    if (updateInProgress.current || socket.current?.readyState !== WebSocket.OPEN) return;
     setProblem(undefined);
     socket.current.send(JSON.stringify({ ...command, workspace: state.workspace }));
   }
 
   /** For preferences: a problem on screen stays, it is not about them. */
   function sendQuietly(command: ClientCommand) {
-    if (socket.current?.readyState === WebSocket.OPEN) socket.current.send(JSON.stringify({ ...command, workspace: state.workspace }));
+    if (!updateInProgress.current && socket.current?.readyState === WebSocket.OPEN)
+      socket.current.send(JSON.stringify({ ...command, workspace: state.workspace }));
   }
 
   function resizePanel(width: number) {
@@ -556,6 +582,7 @@ function App() {
 
   // One send path: the draft and the attachments always travel together.
   function submitRequest(opening?: string) {
+    if (updateInProgress.current) return;
     const typed = text.trim();
     if (
       (!typed && !attachments.length && !opening) ||
@@ -590,6 +617,7 @@ function App() {
   }
 
   async function addFiles(files: File[]) {
+    if (updateInProgress.current) return;
     if (readingFiles || pending) return;
     const generation = draftGeneration.current;
     setReadingFiles(true);
@@ -644,7 +672,7 @@ function App() {
     };
     const drop = (event: DragEvent) => {
       event.preventDefault();
-      if (event.dataTransfer?.files.length) {
+      if (!updateInProgress.current && event.dataTransfer?.files.length) {
         setGallery(false);
         void addFiles(Array.from(event.dataTransfer.files));
       }
@@ -795,7 +823,7 @@ function App() {
   }
 
   async function chooseWorkspace() {
-    if (!state.workspace || folderAction || socket.current?.readyState !== WebSocket.OPEN) return;
+    if (updateInProgress.current || !state.workspace || folderAction || socket.current?.readyState !== WebSocket.OPEN) return;
     setFolderProblem(undefined);
     setFolderAction("picking");
     try {
@@ -812,7 +840,7 @@ function App() {
   }
 
   function changeWorkspace(path: string) {
-    if (socket.current?.readyState !== WebSocket.OPEN) return false;
+    if (updateInProgress.current || socket.current?.readyState !== WebSocket.OPEN) return false;
     setFolderProblem(undefined);
     setFolderAction("changing");
     sendQuietly({ type: "chooseWorkspace", path });
@@ -847,7 +875,7 @@ function App() {
   }
 
   function openCodexImport() {
-    if (!online) return;
+    if (updateInProgress.current || !online) return;
     setNavOpen(false);
     setCodexImportOpen((n) => n + 1);
     if (state.codexImportOffer) sendQuietly({ type: "dismissCodexImportOffer" });
@@ -901,6 +929,7 @@ function App() {
 
       {/* Left sidebar: brand, new work, works list, account */}
       <aside
+        inert={updating}
         className={`${
           navOpen
             ? "fixed inset-y-0 left-0 z-40 w-[240px] flex"
@@ -1081,7 +1110,7 @@ function App() {
 
       {/* Center column: header, notices, conversation/gallery, composer */}
       <main tabIndex={-1} className="flex flex-col min-w-0 min-h-0 bg-paper outline-none">
-        <header className="px-5 min-[960px]:px-7 py-[18px] border-b border-line flex items-center justify-between gap-4">
+        <header inert={updating} className="px-5 min-[960px]:px-7 py-[18px] border-b border-line flex items-center justify-between gap-4">
           {renaming && work ? (
             <form
               className="flex flex-1 min-w-0 items-center gap-2"
@@ -1227,8 +1256,42 @@ function App() {
           )}
         </header>
 
+        {updateNotice !== "idle" && (
+          <section aria-label="Actualización de Bitácora" className="shrink-0 px-5 min-[960px]:px-7 py-2 border-b border-line bg-surface text-[13px] flex flex-wrap items-center justify-between gap-2">
+            <div role="status">
+              <p className="font-bold text-ink">{updating ? "Actualizando Bitácora…" : "Hay una versión nueva de Bitácora"}</p>
+              <p className="text-muted">
+                {updating ? "Se va a volver a abrir cuando termine."
+                  : !updateReady ? "Podés actualizar cuando Bitácora esté lista."
+                  : updateBlocked ? "Terminá lo que está en curso antes de actualizar."
+                  : hasDraft ? "Terminá el borrador antes de actualizar."
+                  : updateNotice === "busy" ? "Había algo en curso. Probá de nuevo en un momento."
+                  : updateNotice === "failed" ? "No pude actualizar ahora. Podés seguir usando Bitácora."
+                  : null}
+              </p>
+            </div>
+            {!updating && updateReady && (
+              <button
+                type="button"
+                className={buttonBordered}
+                disabled={!online || updateBlocked || hasDraft}
+                onClick={() => {
+                  const webview = window.chrome?.webview;
+                  if (!webview || updateInProgress.current) return;
+                  updateInProgress.current = true;
+                  setUpdateNotice("working");
+                  webview.postMessage("bitacora:update:install");
+                }}
+              >
+                Actualizar
+              </button>
+            )}
+          </section>
+        )}
+
         {((state.undo && !busy) || state.notice || codexImportOffer) && (
           <section
+            inert={updating}
             aria-label="Deshacer el último pedido"
             className="shrink-0 px-5 min-[960px]:px-7 py-2 border-b border-line bg-surface text-[13px] flex flex-col gap-2"
           >
@@ -1323,7 +1386,7 @@ function App() {
           </section>
         )}
 
-        <div className="flex-1 min-h-0 overflow-y-auto px-5 min-[960px]:px-7 py-6">
+        <div inert={updating} className="flex-1 min-h-0 overflow-y-auto px-5 min-[960px]:px-7 py-6">
             <div
               className={`mx-auto w-full flex flex-col gap-[18px] ${
                 gallery ? "max-w-[880px]" : "max-w-[720px]"
@@ -1868,7 +1931,7 @@ function App() {
 
         {/* Composer */}
         {!gallery && (
-          <div className="shrink-0 px-5 min-[960px]:px-7 pb-5">
+          <div inert={updating} className="shrink-0 px-5 min-[960px]:px-7 pb-5">
             <form
               className="relative mx-auto w-full max-w-[720px] bg-surface border border-line focus-within:border-ink rounded-[6px] px-3 py-2.5 flex flex-col gap-2"
               onSubmit={(e) => {
@@ -2039,6 +2102,7 @@ function App() {
       {/* Right sidebar: Deliverables */}
       {!gallery && (
         <aside
+          inert={updating}
           className={`${
             deliverablesOpen
               ? "fixed inset-y-0 right-0 z-40 w-[min(320px,90vw)] flex"
@@ -2125,7 +2189,7 @@ function App() {
         </div>
       )}
       <CodexImport
-        online={online}
+        online={online && !updating}
         workspace={state.workspace}
         openRequest={codexImportOpen}
         hideTrigger

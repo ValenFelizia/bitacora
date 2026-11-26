@@ -18,6 +18,13 @@ async function fixture() {
   return mkdtemp(resolve(".local/desktop-entry-"));
 }
 
+async function updateReply(stdout: ReturnType<typeof createInterface>, id: number) {
+  const lines = on(stdout, "line", { signal: AbortSignal.timeout(5_000) });
+  for await (const [line] of lines) {
+    if (line.startsWith(`BITACORA_UPDATE ${id} `)) return line;
+  }
+}
+
 test("registers the installed MCP entry with the current Node executable", async () => {
   const home = await fixture();
   try {
@@ -38,7 +45,7 @@ test("registers the installed MCP entry with the current Node executable", async
   }
 });
 
-test("desktop entry waits for stdin, announces its port, and closes on EOF", {
+test("desktop entry waits for stdin, announces its port, and closes for an update when idle", {
   skip: process.platform !== "win32",
 }, async () => {
   const root = await fixture();
@@ -87,12 +94,17 @@ test("desktop entry waits for stdin, announces its port, and closes on EOF", {
       try {
         for await (const [raw] of on(socket, "message", { signal: AbortSignal.timeout(45_000) })) {
           const message = JSON.parse(String(raw));
-          if (message.type === "snapshot" && message.state.engine.available) break;
+          if (message.type === "snapshot" && message.state.engine.updateReady) break;
         }
       } finally {
         socket.terminate();
       }
-      child.stdin.end();
+      const reserved = updateReply(stdout, 1);
+      child.stdin.write("BITACORA_UPDATE 1 BEGIN\n");
+      assert.equal(await reserved, "BITACORA_UPDATE 1 READY");
+      const stopping = updateReply(stdout, 2);
+      child.stdin.write("BITACORA_UPDATE 2 INSTALL\n");
+      assert.equal(await stopping, "BITACORA_UPDATE 2 STOPPING");
       assert.deepEqual(await closed, [0, null], stderr);
       assert.ok(!lines.some((line) => line.includes(screenSecret)));
       assert.ok(!stderr.includes(screenSecret));
@@ -181,7 +193,7 @@ test("desktop serves while Codex prepares, then saves buffered changes on stdin 
       assert.equal(await (await fetch(origin)).text(), "<title>Bitácora</title>");
       const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`, screenProtocols, { origin });
       const messages = on(socket, "message", { signal: AbortSignal.timeout(10_000) });
-      async function next(type: string, accept = (_message: { state?: { engine: { available: boolean } } }) => true) {
+      async function next(type: string, accept = (_message: { state?: { engine: { updateReady?: boolean } } }) => true) {
         for (;;) {
           const result = await messages.next();
           assert.ok(!result.done);
@@ -189,22 +201,57 @@ test("desktop serves while Codex prepares, then saves buffered changes on stdin 
           if (message.type === type && accept(message)) return message;
         }
       }
-      const send = (text: string) => socket.send(JSON.stringify({ type: "send", text, workspace }));
+      const command = (message: object) => socket.send(JSON.stringify({ ...message, workspace }));
+      const send = (text: string) => command({ type: "send", text });
+      const update = async (id: number, action: string, status: string) => {
+        const reply = updateReply(stdout, id);
+        stdin.write("BITACORA_UPDATE " + id + " " + action + "\n");
+        assert.equal(await reply, "BITACORA_UPDATE " + id + " " + status);
+      };
       try {
         const initial = await next("snapshot");
         assert.ok(!JSON.stringify(initial).includes(screenSecret));
         assert.equal(initial.state.engine.available, false);
         assert.equal(initial.state.engine.starting, true);
+        await update(1, "BEGIN", "BUSY");
+        await update(2, "INSTALL", "BUSY");
         send("Pedido antes de que esté lista");
         assert.match((await next("problem")).text, /termine de prepararse/);
         child.send("finish startup");
-        const ready = await next("snapshot", (message) => message.state?.engine.available === true);
+        const ready = await next("snapshot", (message) => message.state?.engine.updateReady === true);
         assert.deepEqual(ready.state.works, []);
+        await update(3, "BEGIN", "READY");
+        for (const message of [
+          { type: "send", text: "Pedido bloqueado" },
+          { type: "retry" },
+          { type: "undo", id: "test" },
+          { type: "panelWidth", width: 380 },
+        ]) {
+          command(message);
+          assert.match((await next("problem")).text, /se está actualizando/);
+        }
+        command({ type: "importCodexChats", ids: ["test"] });
+        assert.match((await next("codexImportProblem")).text, /se está actualizando/);
+        command({ type: "chooseWorkspace", path: workspace });
+        assert.match((await next("workspaceChoice")).problem, /se está actualizando/);
+        const dictation = await fetch(origin + "/dictation", {
+          method: "POST",
+          headers: { Authorization: "Bearer " + screenSecret },
+        });
+        assert.equal(dictation.status, 503);
+        assert.match(await dictation.text(), /se está actualizando/);
+        assert.equal((await fetch(origin)).status, 200);
+        await update(4, "CANCEL", "READY");
         send("Pedido de prueba");
         assert.equal((await next("message")).text, "Respuesta parcial");
         const before = JSON.parse(await readFile(works, "utf8"));
         assert.equal(before.works[0].busy, true);
         assert.deepEqual(before.works[0].messages.map((message: { text: string }) => message.text), ["Pedido de prueba"]);
+
+        await update(5, "BEGIN", "BUSY");
+        assert.equal(child.exitCode, null);
+        assert.equal(JSON.parse(await readFile(works, "utf8")).works[0].busy, true);
+        assert.equal((await fetch(origin)).status, 200);
 
         const engineClosed = once(child, "message", { signal: AbortSignal.timeout(2_500) }).then(([message]) => message);
         const exitWithinGrace = once(child, "close", { signal: AbortSignal.timeout(2_500) });

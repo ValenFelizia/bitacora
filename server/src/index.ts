@@ -7,6 +7,7 @@ import { WorkspaceSelection, type WorkspaceChoice } from "./workspace-selection"
 import { isScreenSecret } from "./screen-session";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
+import { createInterface } from "node:readline";
 import { protectedWorkspaceFolders } from "./protected-folders";
 import { fileURLToPath } from "node:url";
 
@@ -80,7 +81,10 @@ let closing = false;
 function close(code = 0) {
   if (closing) return;
   closing = true;
-  void server.close().then(() => process.exit(code), (error) => {
+  finishClose(server.close(), code);
+}
+function finishClose(stopping: Promise<void>, code: number) {
+  void stopping.then(() => process.exit(code), (error) => {
     console.error(error);
     process.exit(1);
   });
@@ -92,6 +96,29 @@ if (installed) {
   if (process.stdin.readableEnded) {
     close();
   } else {
+    // This channel belongs to the desktop shell. Update shutdown is never
+    // exposed over HTTP or WebSocket.
+    createInterface({ input: process.stdin }).on("line", (line) => {
+      const command = /^BITACORA_UPDATE ([0-9]{1,20}) (BEGIN|CANCEL|INSTALL)$/.exec(line);
+      if (!command || closing) return;
+      const [, id, action] = command;
+      if (action === "BEGIN") {
+        console.log(`BITACORA_UPDATE ${id} ${server.beginUpdate() ? "READY" : "BUSY"}`);
+        return;
+      }
+      if (action === "CANCEL") {
+        server.cancelUpdate();
+        console.log(`BITACORA_UPDATE ${id} READY`);
+        return;
+      }
+      const stopping = server.closeForUpdate();
+      if (!stopping) {
+        console.log(`BITACORA_UPDATE ${id} BUSY`);
+        return;
+      }
+      closing = true;
+      process.stdout.write(`BITACORA_UPDATE ${id} STOPPING\n`, () => finishClose(stopping, 0));
+    });
     console.log(`BITACORA_READY ${server.port}`);
     try {
       await server.startEngine();
