@@ -80,3 +80,58 @@ test("a template preview counts as work in progress and blocks a folder change",
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("a template preview waits while a request or an update is in progress", async () => {
+  await mkdir(".local", { recursive: true });
+  const dir = await realpath(await mkdtemp(resolve(".local/preview-busy-")));
+  const home = join(dir, "default");
+  const data = join(dir, "datos");
+  await Promise.all([home, data].map(path => mkdir(path)));
+  const selection = new WorkspaceSelection(home, data);
+  const initial = selection.defaultChoice;
+  const engine = new FakeEngine();
+  const server = await serve(
+    engine, data, 0, origin, home, undefined, screenSecret,
+    { selection, initial, engineFor: () => engine },
+  );
+  const socket = new WebSocket(`ws://127.0.0.1:${server.port}/ws`, screenProtocols, { origin });
+  const messages = on(socket, "message", { signal: AbortSignal.timeout(20_000) });
+  const preview = () => fetch(
+    `http://127.0.0.1:${server.port}/templates?` + new URLSearchParams({
+      workspace: home, id: "x", version: "y", file: "modelo.html", preview: "1",
+    }),
+    { headers: screenHeaders },
+  );
+  async function snapshot(accept: (state: Extract<ServerMessage, { type: "snapshot" }>["state"]) => boolean) {
+    for (;;) {
+      const result = await messages.next();
+      assert.ok(!result.done);
+      const message = JSON.parse(String(result.value[0])) as ServerMessage;
+      if (message.type === "snapshot" && accept(message.state)) return message.state;
+    }
+  }
+  try {
+    await once(socket, "open");
+    assert.equal(server.beginUpdate(), true);
+    const updating = await preview();
+    assert.equal(updating.status, 409);
+    const updatingBody = await updating.json() as { error: string };
+    assert.match(updatingBody.error, /termine lo que está en curso para ver la plantilla/);
+    server.cancelUpdate();
+    socket.send(JSON.stringify({ type: "send", text: "Armá una pieza", workspace: home }));
+    const state = await snapshot(item => item.works.some(work => work.busy));
+    const busy = await preview();
+    assert.equal(busy.status, 409);
+    const busyBody = await busy.json() as { error: string };
+    assert.match(busyBody.error, /termine lo que está en curso para ver la plantilla/);
+    socket.send(JSON.stringify({ type: "interrupt", workId: state.works.find(work => work.busy)?.id, workspace: home }));
+    await snapshot(item => !item.works.some(work => work.busy));
+  } finally {
+    const disconnected = once(socket, "close");
+    socket.terminate();
+    await disconnected;
+    await messages.return?.();
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});

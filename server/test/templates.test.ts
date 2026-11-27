@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
-import { Backups } from "../src/backups";
+import { BACKUP_LIMITS, Backups } from "../src/backups";
 import { AGENCY_DEVELOPER_INSTRUCTIONS } from "../src/agency-environment";
-import { recoveredTemplatePurpose, Templates } from "../src/templates";
+import { handleTemplates } from "../src/templates-http";
+import { DamagedTemplates, recoveredTemplatePurpose, TemplateProblem, Templates, type Template } from "../src/templates";
 import { AgencyFiles } from "../src/tools/paths";
+import { lockForWriting } from "./locks";
 
 async function fixture() {
   await mkdir(".local", { recursive: true });
@@ -125,6 +128,7 @@ test("a damaged catalogue can be set aside and rebuilt from the folders on disk"
     const single = randomUUID();
     await files.write(`.bitacora/plantillas/${folder}/modelo.html`, "<h1>Modelo</h1>");
     await files.write(`.bitacora/plantillas/${folder}/notas.txt`, "sigue acá");
+    await mkdir(join(files.root, ".bitacora", "plantillas", folder, "foto.png"));
     await files.write(`.bitacora/plantillas/${single}-nota.txt`, "suelta");
     await files.write(".bitacora/plantillas/suelto.txt", "no es plantilla");
     const indexPath = ".bitacora/plantillas/index.json";
@@ -139,10 +143,10 @@ test("a damaged catalogue can be set aside and rebuilt from the folders on disk"
     const bundle = rebuilt.find(item => item.version === folder);
     const loose = rebuilt.find(item => item.version === single);
     assert.ok(bundle && loose);
-    assert.equal(bundle.name, folder);
+    assert.equal(bundle.name, "modelo");
     assert.equal(bundle.purpose, recoveredTemplatePurpose);
     assert.deepEqual(bundle.files, ["modelo.html", "notas.txt"]);
-    assert.equal(loose.name, "nota.txt");
+    assert.equal(loose.name, "nota");
     assert.equal((await templates.open(bundle.id, bundle.version, "modelo.html")).bytes.toString(), "<h1>Modelo</h1>");
     assert.equal((await templates.open(loose.id, loose.version, "nota.txt")).bytes.toString(), "suelta");
     assert.equal(await files.read(".bitacora/plantillas/suelto.txt"), "no es plantilla");
@@ -157,5 +161,159 @@ test("a damaged catalogue can be set aside and rebuilt from the folders on disk"
     assert.equal((await readdir(join(files.root, ".bitacora/plantillas"))).filter(name => name.startsWith("index-apartado-")).length, 1);
     const added = await templates.add(metadata, [templates.fromUpload(upload("nueva.txt", "nueva"))]);
     assert.equal((await templates.open(added.id, added.version, "nueva.txt")).bytes.toString(), "nueva");
+  } finally { await close(); }
+});
+
+test("a new file inside a template folder keeps the whole catalogue", async () => {
+  const { files, templates, backups, close } = await fixture();
+  try {
+    await backups.initialize();
+    const request = { workId: "work", title: "Cotización", request: "Sumar plantilla" };
+    assert.equal(await backups.before(request), true);
+    const bundle = await templates.add(metadata, [
+      templates.fromUpload(upload("modelo.html", "<h1>Modelo</h1>")),
+      templates.fromUpload(upload("notas.txt", "notas")),
+    ]);
+    assert.equal(await backups.finish(), true);
+    const folder = join(files.root, ".bitacora", "plantillas", bundle.version);
+    await writeFile(join(folder, "desktop.ini"), "[.ShellClassInfo]");
+    const undo = await backups.undo(backups.target!.id);
+    assert.ok(undo.skipped.includes("index.json"));
+    assert.equal((await templates.list()).some(item => item.id === bundle.id), true);
+    assert.equal(await files.read(`.bitacora/plantillas/${bundle.version}/modelo.html`), "<h1>Modelo</h1>");
+    assert.equal(await files.read(`.bitacora/plantillas/${bundle.version}/notas.txt`), "notas");
+    assert.equal((await lstat(folder)).isDirectory(), true);
+    assert.equal(await readFile(join(folder, "desktop.ini"), "utf8"), "[.ShellClassInfo]");
+  } finally { await close(); }
+});
+
+test("undo stops the catalogue when a path is skipped halfway", async () => {
+  const { files, templates, close } = await fixture();
+  let notes = "";
+  let once = false;
+  const backups = new Backups(files.root, join(files.root, "..", "mitad"), BACKUP_LIMITS, undefined, {
+    rename,
+    afterStep: async () => {
+      if (once || !notes) return;
+      once = true;
+      await writeFile(join(files.root, notes), "tocado");
+    },
+  });
+  try {
+    await backups.initialize();
+    const request = { workId: "work", title: "Cotización", request: "Sumar plantilla" };
+    assert.equal(await backups.before(request), true);
+    const bundle = await templates.add(metadata, [
+      templates.fromUpload(upload("modelo.html", "<h1>Modelo</h1>")),
+      templates.fromUpload(upload("notas.txt", "notas")),
+    ]);
+    assert.equal(await backups.finish(), true);
+    const described = await templates.describe(bundle.id);
+    notes = described.paths.find(path => path.endsWith("notas.txt")) ?? "";
+    const model = described.paths.find(path => path.endsWith("modelo.html")) ?? "";
+    const undo = await backups.undo(backups.target!.id);
+    assert.ok(undo.skipped.includes("index.json"));
+    assert.equal(await files.read(notes), "tocado");
+    await assert.rejects(files.read(model), { code: "ENOENT" });
+    assert.equal((await templates.list()).some(item => item.id === bundle.id), true);
+    assert.equal((await lstat(join(files.root, ".bitacora", "plantillas", bundle.version))).isDirectory(), true);
+  } finally { await close(); }
+});
+
+test("undo restores templates after .bitacora was removed and keeps that folder when undoing an add", async () => {
+  const { files, templates, backups, close } = await fixture();
+  const request = { workId: "work", title: "Cotización", request: "Sumar plantilla" };
+  const root = join(files.root, ".bitacora");
+  try {
+    await backups.initialize();
+    assert.equal(await backups.before(request), true);
+    await templates.add(metadata, [templates.fromUpload(upload("modelo.txt", "modelo"))]);
+    assert.equal(await backups.finish(), true);
+    await backups.undo(backups.target!.id);
+    assert.deepEqual(await templates.list(), []);
+    assert.equal((await lstat(root)).isDirectory(), true);
+
+    assert.equal(await backups.before(request), true);
+    const saved = await templates.add(metadata, [templates.fromUpload(upload("modelo.txt", "modelo"))]);
+    assert.equal(await backups.finish(), true);
+    assert.equal(await backups.before(request), true);
+    await rm(root, { recursive: true, force: true });
+    assert.equal(await backups.finish(), true);
+    await backups.undo(backups.target!.id);
+    assert.equal((await templates.open(saved.id, saved.version, "modelo.txt")).bytes.toString(), "modelo");
+    assert.equal((await lstat(root)).isDirectory(), true);
+  } finally { await close(); }
+});
+
+test("an index larger than 4 MB is damaged and can be rebuilt", async () => {
+  const { files, templates, close } = await fixture();
+  try {
+    const folder = randomUUID();
+    await files.write(`.bitacora/plantillas/${folder}/modelo.html`, "<h1>Modelo</h1>");
+    await files.write(".bitacora/plantillas/index.json", "x".repeat(4 * 1024 * 1024 + 1), false);
+    await assert.rejects(templates.list(), (error: unknown) => error instanceof DamagedTemplates);
+    const rebuilt = await templates.recover();
+    assert.equal(rebuilt.length, 1);
+    assert.equal(rebuilt[0]?.name, "modelo");
+    assert.deepEqual(rebuilt[0]?.files, ["modelo.html"]);
+  } finally { await close(); }
+});
+
+test("the agent cannot register files inside .bitacora", async () => {
+  const { templates, close } = await fixture();
+  try {
+    await assert.rejects(templates.fromPaths([".bitacora/plantillas/index.json"]), /carpeta interna/);
+    await assert.rejects(templates.fromPaths(["notas.txt", ".bitacora\\privado.txt"]), /carpeta interna/);
+  } finally { await close(); }
+});
+
+test("a busy catalogue lock answers 409 after a short wait", async () => {
+  const { files, templates, close } = await fixture();
+  let unlock: (() => Promise<void>) | undefined;
+  try {
+    await templates.add(metadata, [templates.fromUpload(upload("modelo.txt", "modelo"))]);
+    unlock = await lockForWriting(join(files.root, ".bitacora", ".plantillas.lock"), "None");
+    const started = Date.now();
+    await assert.rejects(
+      templates.add(metadata, [templates.fromUpload(upload("otra.txt", "otra"))]),
+      (error: unknown) => {
+        assert.ok(error instanceof TemplateProblem);
+        assert.equal(error.status, 409);
+        assert.match(error.message, /otro cambio/);
+        return true;
+      },
+    );
+    assert.ok(Date.now() - started >= 1500);
+  } finally {
+    await unlock?.();
+    await close();
+  }
+});
+
+test("a catalogue conflict is a 409, not a generic failure", async () => {
+  const { files, close } = await fixture();
+  try {
+    class Busy extends Templates {
+      override async list(): Promise<Template[]> {
+        throw new TemplateProblem("Hay otro cambio en las plantillas. Probá de nuevo en un momento.", 409);
+      }
+    }
+    let status = 0;
+    let body = "";
+    const res = {
+      destroyed: false,
+      writeHead(code: number) { status = code; return this; },
+      end(payload?: string) { body = payload ?? ""; },
+    };
+    await handleTemplates(
+      { method: "GET", readableEnded: true } as IncomingMessage,
+      res as unknown as ServerResponse,
+      new URL("http://127.0.0.1/templates"),
+      new Busy(files),
+      () => {},
+    );
+    assert.equal(status, 409);
+    assert.match(body, /otro cambio/);
+    assert.doesNotMatch(body, /No pude abrir las plantillas/);
   } finally { await close(); }
 });

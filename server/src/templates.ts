@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { lstat, readdir, rename } from "node:fs/promises";
-import { basename, extname } from "node:path";
+import { basename, dirname, extname, join, relative } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import type { Upload } from "./contracts";
 import { MAX_FILE, MAX_REQUEST, WorkspaceFiles } from "./workspace-files";
 import { AgencyFiles } from "./tools/paths";
 import { withPage } from "./tools/page";
-import { lockExclusiveFile } from "./tools/directory-lock";
+import { DirectoryBusy, lockDirectory, lockExclusiveFile } from "./tools/directory-lock";
 
 const directory = ".bitacora/plantillas";
 const indexPath = directory + "/index.json";
@@ -60,7 +61,9 @@ export const templateMutation = z.discriminatedUnion("kind", [
 ]);
 
 const missing = (error: unknown) => error instanceof Error && "code" in error && error.code === "ENOENT";
-export class TemplateProblem extends Error {}
+export class TemplateProblem extends Error {
+  constructor(message: string, readonly status = 400) { super(message); }
+}
 /** The catalogue file is present but cannot be trusted. The panel can set it aside and rebuild. */
 export class DamagedTemplates extends TemplateProblem {}
 export const recoveredTemplatePurpose = "Recuperada de la carpeta. Podés cambiar el nombre.";
@@ -73,7 +76,11 @@ export class Templates {
   > {
     let text: string;
     try { text = (await this.files.readBuffer(indexPath, 4 * 1024 * 1024)).toString("utf8"); }
-    catch (error) { if (missing(error)) return { state: "missing" }; throw error; }
+    catch (error) {
+      if (missing(error)) return { state: "missing" };
+      if (error instanceof Error && error.message === "El archivo es demasiado grande.") return { state: "damaged" };
+      throw error;
+    }
     try { return { state: "ok", templates: index.parse(JSON.parse(text)).templates }; }
     catch { return { state: "damaged" }; }
   }
@@ -135,7 +142,7 @@ export class Templates {
     if (template.version !== version || !template.files.includes(name) || extname(name).toLowerCase() !== ".html")
       throw new TemplateProblem("Ese archivo ya no está disponible.");
     const path = await this.storedPath(template, name);
-    const resources = path.endsWith("/" + name) ? this.location(template) : directory;
+    const resources = path.endsWith("/" + name) ? this.location(template) : path;
     return withPage(this.files, path, async page => {
       const piece = page.locator("[data-piece]").first();
       const box = await piece.count() ? await piece.boundingBox() : null;
@@ -146,6 +153,12 @@ export class Templates {
   }
 
   async fromPaths(paths: string[]) {
+    if (paths.some(path => path.split(/[\\/]/).some(part => part.toLowerCase() === ".bitacora")))
+      throw new TemplateProblem("No puedo registrar archivos de la carpeta interna de Bitácora.");
+    return this.readBundle(paths);
+  }
+
+  private async readBundle(paths: string[]) {
     const bundle: TemplateFile[] = [];
     let remaining = MAX_REQUEST;
     for (const path of paths) {
@@ -199,11 +212,21 @@ export class Templates {
         if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
       }
     }
-    const release = lockExclusiveFile(path);
-    try {
-      await this.files.path(lockPath);
-      return await run();
-    } finally { release(); }
+    const deadline = Date.now() + 2000;
+    for (;;) {
+      let release: (() => void) | undefined;
+      try {
+        release = lockExclusiveFile(path);
+        await this.files.path(lockPath);
+        return await run();
+      } catch (error) {
+        if (!(error instanceof DirectoryBusy) || Date.now() >= deadline)
+          throw error instanceof DirectoryBusy
+            ? new TemplateProblem("Hay otro cambio en las plantillas. Probá de nuevo en un momento.", 409)
+            : error;
+      } finally { release?.(); }
+      await delay(50);
+    }
   }
 
   async add(metadata: Pick<Template, "name" | "purpose" | "origin">, files: TemplateFile[]) {
@@ -223,7 +246,7 @@ export class Templates {
       if (replacement?.kind === "bundle") return this.replace(templates, template, replacement.files, old);
       if (replacement?.kind === "primary") {
         const paths = await Promise.all(old.files.slice(1).map(name => this.storedPath(old, name)));
-        return this.replace(templates, template, [replacement.file, ...await this.fromPaths(paths)], old);
+        return this.replace(templates, template, [replacement.file, ...await this.readBundle(paths)], old);
       }
       await this.save(templates.map(item => item.id === id ? template : item));
       return template;
@@ -302,7 +325,7 @@ export class Templates {
       try { await lstat(await this.files.path(relative)); }
       catch (error) {
         if (!missing(error)) throw error;
-        await rename(from, await this.files.path(relative));
+        await this.renameUnderLock(from, await this.files.path(relative));
         return relative;
       }
     }
@@ -312,7 +335,24 @@ export class Templates {
   private async restoreAside(relative: string) {
     try { await lstat(await this.files.path(indexPath)); return; }
     catch (error) { if (!missing(error)) return; }
-    await rename(await this.files.path(relative), await this.files.path(indexPath)).catch(() => {});
+    await this.renameUnderLock(await this.files.path(relative), await this.files.path(indexPath)).catch(() => {});
+  }
+
+  /** Rename the catalogue while the folder cannot be replaced underneath us. */
+  private async renameUnderLock(from: string, to: string) {
+    const root = await this.files.path(".");
+    const releases: Array<() => void> = [];
+    try {
+      let current = root;
+      releases.push(lockDirectory(current));
+      for (const part of relative(root, dirname(from)).split(/[\\/]/).filter(Boolean)) {
+        current = join(current, part);
+        releases.push(lockDirectory(current));
+      }
+      await rename(from, to);
+    } finally {
+      for (const release of releases.reverse()) release();
+    }
   }
 
   private async rebuildFromDisk() {
@@ -341,7 +381,7 @@ export class Templates {
     for (const folder of directories) {
       if (!z.uuid().safeParse(folder).success || !claim(folder)) continue;
       const files = await this.folderFiles(directory + "/" + folder);
-      const template = this.recovered(folder, folder, files);
+      const template = this.recovered(folder, files[0] ?? folder, files);
       if (!template) { versions.delete(folder.toLowerCase()); continue; }
       templates.push(template);
       if (templates.length >= 500) return templates;
@@ -359,12 +399,14 @@ export class Templates {
   }
 
   private async folderFiles(folder: string) {
-    let names: string[];
-    try { names = await readdir(await this.files.path(folder)); }
+    let entries;
+    try { entries = await readdir(await this.files.path(folder), { withFileTypes: true }); }
     catch { return []; }
     const seen = new Set<string>();
     const files: string[] = [];
-    for (const name of names) {
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      const name = entry.name;
       if (!filename.safeParse(name).success) continue;
       const key = name.normalize("NFC").toUpperCase();
       if (seen.has(key)) continue;
@@ -378,10 +420,12 @@ export class Templates {
 
   private recovered(version: string, label: string, files: string[]) {
     if (!files.length) return undefined;
+    const stem = basename(label, extname(label)).trim();
+    const name = (stem || label).slice(0, 120);
     const parsed = entry.safeParse({
       id: randomUUID(),
       version,
-      name: label.length <= 120 ? label : label.slice(0, 120),
+      name,
       purpose: recoveredTemplatePurpose,
       files,
       createdAt: new Date().toISOString(),

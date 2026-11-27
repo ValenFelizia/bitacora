@@ -51,10 +51,15 @@ export function lockDirectory(path: string) {
   // WRITE sharing is necessary for our own rename/link publication operations.
   return () => { try { file!(); unlinkSync(sentinel); } finally { directory!(); } };
 }
+export class DirectoryBusy extends Error {}
+
 export function lockExclusiveFile(path: string): () => void {
   const handle = create(path, 0x80000000, 0, null, 3, 0x00200000, null);
-  if (!handle || koffi.address(handle) === 0xffffffffffffffffn)
-    throw new Error("Hay otro cambio en las plantillas. Probá de nuevo.");
+  if (!handle || koffi.address(handle) === 0xffffffffffffffffn) {
+    const code = lastError();
+    if (code === 32 || code === 33) throw new DirectoryBusy("Hay otro cambio en las plantillas. Probá de nuevo.");
+    throw new Error(`No pude proteger las plantillas (Windows ${code}). Volvé a intentarlo.`);
+  }
   return () => { close(handle); };
 }
 

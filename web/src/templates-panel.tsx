@@ -148,7 +148,7 @@ export function TemplatesPanel({
         <form onSubmit={rebuild} className="space-y-3">
           <p>Voy a apartar la lista dañada y armarla de nuevo con las carpetas que hay. No se borra ningún archivo. Después podés cambiar los nombres.</p>
           <div className="flex flex-wrap gap-2">
-            <button type="submit" className={button} disabled={busy || saving}>Apartar y rearmar</button>
+            <button type="submit" className={button} disabled={busy || saving}>Rearmar la lista</button>
             <button type="button" className={button} disabled={saving} onClick={() => { setConfirmRebuild(false); setProblem(""); }}>Cancelar</button>
           </div>
           {saving && <p role="status" className="text-muted">Rearmando…</p>}
@@ -178,7 +178,7 @@ export function TemplatesPanel({
               {form.kind === "add" ? "Sumar plantilla" : form.kind === "edit" ? "Editar plantilla" : "Quitar plantilla"}
             </legend>
             {form.kind === "remove" ? (
-              <p>¿Querés quitar «{form.template.name}» de las plantillas de esta carpeta?</p>
+              <p>¿Querés quitar «{form.template.name}» de las plantillas de esta carpeta? No se puede deshacer.</p>
             ) : (
               <>
                 <label className="block space-y-1">
@@ -194,6 +194,7 @@ export function TemplatesPanel({
                   <input name="file" type="file" className={field} accept={extensions} required={!editing} />
                 </label>
                 {editing && <p className="break-words text-muted">Actual: {editing.files.join(", ")}</p>}
+                {editing && <p>No se puede deshacer.</p>}
               </>
             )}
             <div className="flex flex-wrap gap-2">

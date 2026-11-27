@@ -67,9 +67,12 @@ export async function handleTemplates(req: IncomingMessage, res: ServerResponse,
     if (res.destroyed) return;
     if (!req.readableEnded && req.method === "POST") res.setHeader("Connection", "close");
     const damaged = error instanceof DamagedTemplates;
-    const expected = damaged || error instanceof FileProblem || error instanceof TemplateProblem;
-    templateReply(res, expected ? 400 : 500, {
-      error: expected ? error.message
+    const status = error instanceof TemplateProblem ? error.status
+      : error instanceof FileProblem ? 400
+      : 500;
+    const message = error instanceof Error ? error.message : "";
+    templateReply(res, status, {
+      error: status < 500 ? message
         : req.method === "POST" ? "No pude guardar el cambio. Volvé a intentarlo." : "No pude abrir las plantillas. Volvé a intentarlo.",
       ...(damaged ? { damaged: true } : {}),
     });

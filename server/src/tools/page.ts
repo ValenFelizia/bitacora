@@ -25,7 +25,11 @@ export async function withPage<T>(files: AgencyFiles, html: string, run: (page: 
         const url = new URL(route.request().url());
         if (url.protocol !== 'file:') throw new Error('Recurso externo');
         const local = fileURLToPath(url);
-        if (assets && !local.toLowerCase().startsWith(assets.toLowerCase() + sep)) throw new Error('Recurso fuera de la plantilla');
+        if (assets) {
+          const root = assets.toLowerCase();
+          const here = local.toLowerCase();
+          if (here !== root && !here.startsWith(root + sep)) throw new Error('Recurso fuera de la plantilla');
+        }
         const safe = await files.path(relative(await files.path('.'), local));
         if (safe.toLowerCase() !== local.toLowerCase()) throw new Error('Ruta no válida');
         const body = await files.readBuffer(relative(await files.path('.'), safe));
