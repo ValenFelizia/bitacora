@@ -309,6 +309,9 @@ function App() {
   const [readyOpen, setReadyOpen] = useState(false);
   const [readyNotice, setReadyNotice] = useState<{ seq: number; text: string }>();
   const readyNoticeSeq = useRef(0);
+  // True while a «Listo» change waits for the server: a problem then belongs
+  // to that change and must not release a send in flight on another chat.
+  const readyRequest = useRef(false);
   const [placeFocus, setPlaceFocus] = useState<{ id: string; ready: boolean }>();
   const placedRef = useRef<HTMLButtonElement>(null);
   const listosToggleRef = useRef<HTMLButtonElement>(null);
@@ -406,10 +409,11 @@ function App() {
       setReadyOpen(true);
       return;
     }
+    readyRequest.current = false;
     if (placeFocus.ready) {
       readyNoticeSeq.current += 1;
       setReadyNotice({ seq: readyNoticeSeq.current, text: "Pasó a Listos" });
-    }
+    } else setReadyNotice(undefined);
     const destination = placedRef.current ?? listosToggleRef.current;
     if (isOnScreen(destination)) destination.focus();
     else if (isOnScreen(navToggleRef.current)) navToggleRef.current.focus();
@@ -563,8 +567,11 @@ function App() {
           setProblem(message);
           setReadyNotice(undefined);
           setPlaceFocus(undefined);
-          setPending(false);
-          setPendingWorkId(undefined);
+          if (readyRequest.current) readyRequest.current = false;
+          else {
+            setPending(false);
+            setPendingWorkId(undefined);
+          }
           answeringRef.current = undefined;
           setAnswering(undefined);
           // A rename that was refused keeps its form open with the message.
@@ -586,6 +593,7 @@ function App() {
         setPendingWorkId(undefined);
         setReadyNotice(undefined);
         setPlaceFocus(undefined);
+        readyRequest.current = false;
         setWelcomeSending(false);
         // An answer in flight may never arrive: the card can send it again.
         answeringRef.current = undefined;
@@ -723,6 +731,7 @@ function App() {
     // The notice and the open section wait until a snapshot shows this chat
     // as ready. A rejection must not announce a move that did not happen.
     setPlaceFocus({ id: workId, ready });
+    readyRequest.current = true;
     send({ type: "setReady", workId, ready });
   }
 
@@ -1215,12 +1224,14 @@ function App() {
               Todos están en Listos.
             </p>
           )}
+          {/* The live region stays mounted: screen readers skip a region that
+              appears with its text already in it. A new inner node per notice
+              makes a repeated «Pasó a Listos» speak again. */}
           <p
-            key={readyNotice?.seq}
             role="status"
             className={readyNotice ? "px-[10px] pt-2 text-[13px] text-muted" : "sr-only"}
           >
-            {readyNotice?.text ?? ""}
+            {readyNotice && <span key={readyNotice.seq}>{readyNotice.text}</span>}
           </p>
           {readyWorks.length > 0 && (
             <div className="mt-3 border-t border-line">
