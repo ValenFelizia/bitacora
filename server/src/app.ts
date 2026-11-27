@@ -136,9 +136,10 @@ export class App {
   // Work ids whose saved request has not reached the engine yet, and pauses
   // requested during that window: they are delivered once the turn starts.
   private unsent = new Set<string>();
-  // Work ids whose send has started but has not marked the work busy yet.
-  // That wait is several awaits long; the chat cannot be filed as ready in it.
-  private sending = new Set<string>();
+  // How many sends of each chat have started and not yet marked it busy.
+  // A count, not a set: two windows can send the same chat during the kit
+  // retry, and the one that is refused must not clear the one that continues.
+  private sending = new Map<string, number>();
   private pauseRequested = new Set<string>();
   // Works created in this session whose first request has not been titled yet,
   // and works the user named by hand: a chosen name is never replaced.
@@ -1233,8 +1234,15 @@ export class App {
     // From here until `busy` is set, send awaits the kit, the account and the
     // files. The chat is already being sent, so it cannot be marked ready.
     const sendingId = typeof command.workId === "string" ? command.workId : undefined;
-    if (sendingId) this.sending.add(sendingId);
-    const stopSending = () => { if (sendingId) this.sending.delete(sendingId); };
+    if (sendingId) this.sending.set(sendingId, (this.sending.get(sendingId) ?? 0) + 1);
+    let releasedSending = false;
+    const stopSending = () => {
+      if (!sendingId || releasedSending) return;
+      releasedSending = true;
+      const left = (this.sending.get(sendingId) ?? 1) - 1;
+      if (left > 0) this.sending.set(sendingId, left);
+      else this.sending.delete(sendingId);
+    };
     // The kit carries the agency rules, so a request does not run without it.
     // The copy is tried again here: the file that failed may be free by now,
     // and the notice stays until it works.

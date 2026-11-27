@@ -172,6 +172,11 @@ type UpdateNotice = "idle" | "available" | "busy" | "failed" | "working";
 const OFFLINE_READY = "Sin conexión. Probá de nuevo en un momento";
 const BUSY_READY = "Esperá a que termine el pedido de este chat";
 
+/** A control inside a closed drawer has no box, so focusing it lands on the page. */
+function isOnScreen(element: HTMLElement | null): element is HTMLElement {
+  return !!element && element.getClientRects().length > 0;
+}
+
 /**
  * One chat in the sidebar. The mark-as-ready action stays out of the way until
  * the pointer or the keyboard reaches the row, and «Listos» brings it back
@@ -251,10 +256,10 @@ function WorkRow({
             onClick={() => {
               if (!blocked) onToggleReady();
             }}
-            className={`absolute inset-0 grid place-items-center rounded-[6px] text-muted cursor-pointer transition-opacity duration-150 hover:text-ink focus-visible:opacity-100 aria-disabled:cursor-default ${
+            className={`absolute inset-0 grid place-items-center rounded-[6px] text-muted cursor-pointer transition-opacity duration-150 aria-disabled:cursor-default ${
               blocked
                 ? "opacity-0 group-hover:opacity-40 group-focus-within:opacity-40 max-[959px]:opacity-40"
-                : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 max-[959px]:opacity-100"
+                : "opacity-0 hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 max-[959px]:opacity-100"
             } ${focusRing}`}
           >
             {ready ? (
@@ -302,7 +307,8 @@ function App() {
   const [gallery, setGallery] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
   const [readyOpen, setReadyOpen] = useState(false);
-  const [readyNotice, setReadyNotice] = useState<string>();
+  const [readyNotice, setReadyNotice] = useState<{ seq: number; text: string }>();
+  const readyNoticeSeq = useRef(0);
   const [placeFocus, setPlaceFocus] = useState<{ id: string; ready: boolean }>();
   const placedRef = useRef<HTMLButtonElement>(null);
   const listosToggleRef = useRef<HTMLButtonElement>(null);
@@ -321,6 +327,7 @@ function App() {
   const fileInput = useRef<HTMLInputElement>(null);
   const composerInput = useRef<HTMLTextAreaElement>(null);
   const navToggleRef = useRef<HTMLButtonElement>(null);
+  const mainRef = useRef<HTMLElement>(null);
   const navCloseRef = useRef<HTMLButtonElement>(null);
   const deliverablesToggleRef = useRef<HTMLButtonElement>(null);
   const deliverablesCloseRef = useRef<HTMLButtonElement>(null);
@@ -335,6 +342,9 @@ function App() {
   const [online, setOnline] = useState(false);
   const [sessionSecret, setSessionSecret] = useState<string>();
   const [pending, setPending] = useState(false);
+  // The chat the send left from. It stays blocked if another chat is opened
+  // before the snapshot, instead of following the selection.
+  const [pendingWorkId, setPendingWorkId] = useState<string>();
   // The question whose answer was sent and not yet confirmed by a snapshot. The
   // ref stops a second click before the state updates.
   const [answering, setAnswering] = useState<string>();
@@ -373,10 +383,14 @@ function App() {
   // activity order the server sends (issue #88).
   const readyWorks = state.works.filter((w) => w.ready);
   const activeWorks = state.works.filter((w) => !w.ready);
-  // The open chat lives in «Listos», so that section stays open. Marking a
-  // chat also opens it, until the folder changes or the person folds it.
-  const listosOpen = readyOpen || (!gallery && !!work?.ready);
-  const sendingId = pending ? selected : undefined;
+  // Entering a ready chat opens «Listos». After that the person can fold it;
+  // the click is not ignored while that chat stays open (issue #88).
+  const listosOpen = readyOpen;
+  // Block the chat that was sent, not whichever one is open now.
+  const sendingId = pending ? pendingWorkId : undefined;
+  useLayoutEffect(() => {
+    if (!gallery && work?.ready) setReadyOpen(true);
+  }, [gallery, selected, work?.ready]);
   useEffect(() => {
     if (!readyNotice) return;
     const timer = window.setTimeout(() => setReadyNotice(undefined), 4000);
@@ -386,10 +400,22 @@ function App() {
     if (!placeFocus) return;
     const target = state.works.find((item) => item.id === placeFocus.id);
     if (!target || !!target.ready !== placeFocus.ready) return;
-    const button = placedRef.current ?? listosToggleRef.current;
-    button?.focus();
+    // The row is inside «Listos». Open that section before focusing, and
+    // announce only once the snapshot shows the chat there.
+    if (placeFocus.ready && !readyOpen) {
+      setReadyOpen(true);
+      return;
+    }
+    if (placeFocus.ready) {
+      readyNoticeSeq.current += 1;
+      setReadyNotice({ seq: readyNoticeSeq.current, text: "Pasó a Listos" });
+    }
+    const destination = placedRef.current ?? listosToggleRef.current;
+    if (isOnScreen(destination)) destination.focus();
+    else if (isOnScreen(navToggleRef.current)) navToggleRef.current.focus();
+    else mainRef.current?.focus();
     setPlaceFocus(undefined);
-  }, [placeFocus, state.works]);
+  }, [placeFocus, state.works, readyOpen]);
   const dictationToken =
     online && state.account.connected && state.engine.available && !gallery ? sessionSecret : undefined;
   const dictation = useDictation({
@@ -467,6 +493,7 @@ function App() {
             setRenaming(false);
             setSavingName(undefined);
             setPending(false);
+            setPendingWorkId(undefined);
             answeringRef.current = undefined;
             setAnswering(undefined);
             setGallery(false);
@@ -530,11 +557,14 @@ function App() {
             );
           } else setSelected(message.workId);
           setPending(false);
+          setPendingWorkId(undefined);
         }
         if (message.type === "problem") {
           setProblem(message);
+          setReadyNotice(undefined);
           setPlaceFocus(undefined);
           setPending(false);
+          setPendingWorkId(undefined);
           answeringRef.current = undefined;
           setAnswering(undefined);
           // A rename that was refused keeps its form open with the message.
@@ -553,6 +583,9 @@ function App() {
         setSessionSecret(undefined);
         setFolderAction((action) => action === "changing" ? undefined : action);
         setPending(false);
+        setPendingWorkId(undefined);
+        setReadyNotice(undefined);
+        setPlaceFocus(undefined);
         setWelcomeSending(false);
         // An answer in flight may never arrive: the card can send it again.
         answeringRef.current = undefined;
@@ -687,11 +720,9 @@ function App() {
   }
 
   function placeReady(workId: string, ready: boolean) {
+    // The notice and the open section wait until a snapshot shows this chat
+    // as ready. A rejection must not announce a move that did not happen.
     setPlaceFocus({ id: workId, ready });
-    if (ready) {
-      setReadyOpen(true);
-      setReadyNotice("Pasó a Listos");
-    }
     send({ type: "setReady", workId, ready });
   }
 
@@ -751,6 +782,7 @@ function App() {
       return;
     }
     setPending(true);
+    setPendingWorkId(selected);
     sentDraft.current = {
       workId: selected,
       text,
@@ -1183,8 +1215,12 @@ function App() {
               Todos están en Listos.
             </p>
           )}
-          <p role="status" className={readyNotice ? "px-[10px] pt-2 text-[13px] text-muted" : "sr-only"}>
-            {readyNotice ?? ""}
+          <p
+            key={readyNotice?.seq}
+            role="status"
+            className={readyNotice ? "px-[10px] pt-2 text-[13px] text-muted" : "sr-only"}
+          >
+            {readyNotice?.text ?? ""}
           </p>
           {readyWorks.length > 0 && (
             <div className="mt-3 border-t border-line">
@@ -1193,10 +1229,7 @@ function App() {
                 type="button"
                 aria-expanded={listosOpen}
                 className={`flex w-full items-center gap-2 rounded-[6px] px-[10px] py-[8px] text-left text-[13px] text-muted hover:bg-soft hover:text-ink cursor-pointer transition-colors duration-150 ${focusRing}`}
-                onClick={() => {
-                  if (!gallery && work?.ready) return;
-                  setReadyOpen((open) => !open);
-                }}
+                onClick={() => setReadyOpen((open) => !open)}
               >
                 <ChevronRight
                   size={14}
@@ -1292,7 +1325,7 @@ function App() {
       </aside>
 
       {/* Center column: header, notices, conversation/gallery, composer */}
-      <main tabIndex={-1} className="flex flex-col min-w-0 min-h-0 bg-paper outline-none">
+      <main ref={mainRef} tabIndex={-1} className="flex flex-col min-w-0 min-h-0 bg-paper outline-none">
         <header inert={updating} className="px-5 min-[960px]:px-7 py-[18px] border-b border-line flex items-center justify-between gap-4">
           {renaming && work ? (
             <form

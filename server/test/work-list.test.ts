@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, rmdir, symlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { App } from "../src/app";
@@ -247,6 +247,68 @@ test("a chat cannot be marked ready while its message is still being sent", asyn
     await sending.catch(() => {});
     await f.app.close();
     await rm(f.dir, { recursive: true, force: true });
+  }
+});
+
+test("a refused second send does not clear the first send, so the chat still cannot be marked ready", async () => {
+  await mkdir(".local", { recursive: true });
+  const root = await mkdtemp(resolve(".local/work-list-sending-"));
+  const data = join(root, "data");
+  const workspace = join(root, "Agencia");
+  const kit = join(root, "kit");
+  await mkdir(data, { recursive: true });
+  await mkdir(workspace, { recursive: true });
+  await mkdir(kit, { recursive: true });
+  await writeFile(join(data, "works.json"), JSON.stringify({
+    version: 1,
+    works: [savedWork("uno", "2020-01-01T10:00:00.000Z"), savedWork("otro", "2020-05-01T10:00:00.000Z")],
+  }), "utf8");
+  // A junction in the kit makes the first copy fail, so the next send retries
+  // it. Two sends can overlap in that wait.
+  await writeFile(join(kit, "AGENTS.md"), "Instrucciones del kit");
+  await symlink(data, join(kit, "ejemplo"), "junction");
+  const engine = new FakeEngine();
+  const problems: ServerMessage[] = [];
+  const reply = (message: ServerMessage) => {
+    if (message.type === "problem") problems.push(message);
+  };
+  const app = new App(engine, data, () => {}, undefined, new WorkspaceFiles(workspace), kit);
+  let release = () => {};
+  const held = new Promise<void>((resolveHeld) => { release = resolveHeld; });
+  let first: Promise<unknown> = Promise.resolve();
+  let second: Promise<unknown> = Promise.resolve();
+  try {
+    await app.start();
+    const marker = (await readdir(data)).find((name) => name.startsWith("kit-initialized-"));
+    assert.match(marker ? await readFile(join(data, marker), "utf8") : "", /"status":"copying"/);
+    await rmdir(join(kit, "ejemplo"));
+    await mkdir(join(kit, "ejemplo"));
+    await writeFile(join(kit, "ejemplo", "pieza.html"), "Ejemplo");
+    const account = engine.account.bind(engine);
+    engine.account = () => held.then(() => account());
+
+    first = app.command({ type: "send", workId: "uno", text: "Primero" }, reply);
+    second = app.command({ type: "send", workId: "uno", text: "Segundo" }, reply);
+    await second;
+    const refused = problems.at(-1);
+    assert.match(refused && refused.type === "problem" ? refused.text : "", /pedido actual/);
+    // The first send has not reached `busy` yet. Only its marker can block the mark.
+    assert.equal(app.snapshot().works.find((work) => work.id === "uno")!.busy, false);
+    problems.length = 0;
+    await app.command({ type: "setReady", workId: "uno", ready: true }, reply);
+    assert.equal(app.snapshot().works.find((work) => work.id === "uno")!.ready, undefined);
+    const blocked = problems.at(-1);
+    assert.match(blocked && blocked.type === "problem" ? blocked.text : "", /termine el pedido/);
+    // The other chat was not the one being sent.
+    await app.command({ type: "setReady", workId: "otro", ready: true }, reply);
+    assert.equal(app.snapshot().works.find((work) => work.id === "otro")!.ready, true);
+  } finally {
+    release();
+    await first.catch(() => {});
+    await second.catch(() => {});
+    await app.close();
+    await rmdir(join(kit, "ejemplo")).catch(() => {});
+    await rm(root, { recursive: true, force: true });
   }
 });
 
