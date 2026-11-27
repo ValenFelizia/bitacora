@@ -135,3 +135,64 @@ test("a template preview waits while a request or an update is in progress", asy
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+class SlowAdd extends Templates {
+  static entered: (() => void) | undefined;
+  static release: (() => void) | undefined;
+  override async add(...args: Parameters<Templates["add"]>) {
+    SlowAdd.entered?.();
+    await new Promise<void>(resolve => { SlowAdd.release = resolve; });
+    return super.add(...args);
+  }
+}
+
+test("a template preview waits while the catalogue is being written", async () => {
+  await mkdir(".local", { recursive: true });
+  const dir = await realpath(await mkdtemp(resolve(".local/preview-write-")));
+  const home = join(dir, "default");
+  const data = join(dir, "datos");
+  await Promise.all([home, data].map(path => mkdir(path)));
+  const selection = new WorkspaceSelection(home, data);
+  const initial = selection.defaultChoice;
+  const engine = new FakeEngine();
+  const server = await serve(
+    engine, data, 0, origin, home, undefined, screenSecret,
+    { selection, initial, engineFor: () => engine }, undefined, files => new SlowAdd(files),
+  );
+  const entered = new Promise<void>(resolve => { SlowAdd.entered = resolve; });
+  const write = fetch(
+    `http://127.0.0.1:${server.port}/templates?` + new URLSearchParams({ workspace: home }),
+    {
+      method: "POST",
+      headers: { ...screenHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        kind: "add",
+        name: "Cotización",
+        purpose: "Viajes",
+        file: { name: "modelo.txt", data: Buffer.from("hola").toString("base64") },
+      }),
+    },
+  );
+  try {
+    await entered;
+    const preview = await fetch(
+      `http://127.0.0.1:${server.port}/templates?` + new URLSearchParams({
+        workspace: home, id: "x", version: "y", file: "modelo.html", preview: "1",
+      }),
+      { headers: screenHeaders },
+    );
+    assert.equal(preview.status, 409);
+    const body = await preview.json() as { error: string };
+    assert.match(body.error, /termine lo que está en curso para ver la plantilla/);
+    SlowAdd.release?.();
+    const saved = await write;
+    assert.equal(saved.status, 200);
+  } finally {
+    SlowAdd.release?.();
+    SlowAdd.entered = undefined;
+    SlowAdd.release = undefined;
+    await write.catch(() => undefined);
+    await server.close();
+    await rm(dir, { recursive: true, force: true });
+  }
+});

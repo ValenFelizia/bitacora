@@ -96,7 +96,7 @@ export async function serve(
           templateReply(res, 409, { error: "Esperá a que termine lo que está en curso para cambiar las plantillas." });
           return;
         }
-        if (previewing && (updating || app.workspaceBusy)) {
+        if (previewing && (updating || app.workspaceBusy || templateWriting)) {
           templateReply(res, 409, { error: "Esperá a que termine lo que está en curso para ver la plantilla." });
           return;
         }

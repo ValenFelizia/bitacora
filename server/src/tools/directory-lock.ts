@@ -11,9 +11,16 @@ const info = kernel.func('int __stdcall GetFileInformationByHandleEx(void *, int
 const close = kernel.func('int __stdcall CloseHandle(void *)');
 const lastError = kernel.func('uint32 __stdcall GetLastError()');
 
+export class DirectoryBusy extends Error {}
+
 function lockPath(path: string, directory: boolean, share = directory ? 1 : 3): () => void {
   const handle = create(path, 0x80000000, share, null, 3, 0x02200000, null);
-  if (!handle || koffi.address(handle) === 0xffffffffffffffffn) throw new Error(`No pude proteger la carpeta durante la escritura (Windows ${lastError()}). Volvé a intentarlo.`);
+  if (!handle || koffi.address(handle) === 0xffffffffffffffffn) {
+    const code = lastError();
+    // Sharing and lock violations are the same "someone else is writing" the file lock reports.
+    if (code === 32 || code === 33) throw new DirectoryBusy("Hay otro cambio en las plantillas. Probá de nuevo.");
+    throw new Error(`No pude proteger la carpeta durante la escritura (Windows ${code}). Volvé a intentarlo.`);
+  }
   const attributes = Buffer.alloc(8);
   if (!info(handle, 9, attributes, attributes.length) || !!(attributes.readUInt32LE(0) & 0x10) !== directory || (attributes.readUInt32LE(0) & 0x400)) {
     close(handle);
@@ -51,8 +58,6 @@ export function lockDirectory(path: string) {
   // WRITE sharing is necessary for our own rename/link publication operations.
   return () => { try { file!(); unlinkSync(sentinel); } finally { directory!(); } };
 }
-export class DirectoryBusy extends Error {}
-
 export function lockExclusiveFile(path: string): () => void {
   const handle = create(path, 0x80000000, 0, null, 3, 0x00200000, null);
   if (!handle || koffi.address(handle) === 0xffffffffffffffffn) {

@@ -5,6 +5,10 @@ import { lockDirectory, lockTemporaryFile } from './directory-lock';
 
 type WriteStage = 'beforeDirectoryCreate' | 'beforeTempOpen' | 'afterTempOpen' | 'afterTempWrite';
 
+export class FileTooLarge extends Error {
+  constructor() { super("El archivo es demasiado grande."); }
+}
+
 // Reject links, junctions and Windows alternate streams, including existing ancestors.
 export class AgencyFiles {
   private canonicalRoot?: Promise<string>;
@@ -120,7 +124,7 @@ export class AgencyFiles {
       await this.verifyOpen(input, handle);
       if (maxBytes !== undefined) {
         const { size } = await handle.stat();
-        if (size > maxBytes) throw new Error("El archivo es demasiado grande.");
+        if (size > maxBytes) throw new FileTooLarge();
         const data = Buffer.alloc(size + 1);
         let offset = 0;
         while (offset < data.length) {

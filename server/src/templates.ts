@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { lstat, readdir, rename } from "node:fs/promises";
+import { lstat, readdir, realpath, rename } from "node:fs/promises";
 import { basename, dirname, extname, join, relative } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import type { Upload } from "./contracts";
 import { MAX_FILE, MAX_REQUEST, WorkspaceFiles } from "./workspace-files";
-import { AgencyFiles } from "./tools/paths";
+import { AgencyFiles, FileTooLarge } from "./tools/paths";
 import { withPage } from "./tools/page";
 import { DirectoryBusy, lockDirectory, lockExclusiveFile } from "./tools/directory-lock";
 
@@ -78,7 +78,7 @@ export class Templates {
     try { text = (await this.files.readBuffer(indexPath, 4 * 1024 * 1024)).toString("utf8"); }
     catch (error) {
       if (missing(error)) return { state: "missing" };
-      if (error instanceof Error && error.message === "El archivo es demasiado grande.") return { state: "damaged" };
+      if (error instanceof FileTooLarge) return { state: "damaged" };
       throw error;
     }
     try { return { state: "ok", templates: index.parse(JSON.parse(text)).templates }; }
@@ -153,8 +153,15 @@ export class Templates {
   }
 
   async fromPaths(paths: string[]) {
-    if (paths.some(path => path.split(/[\\/]/).some(part => part.toLowerCase() === ".bitacora")))
+    const internal = (path: string) => path.split(/[\\/]/).some(part => part.toLowerCase() === ".bitacora");
+    if (paths.some(internal))
       throw new TemplateProblem("No puedo registrar archivos de la carpeta interna de Bitácora.");
+    // A short 8.3 name such as BITACO~1 is not the text ".bitacora" until the filesystem resolves it.
+    const root = await realpath(await this.files.path("."));
+    for (const path of paths) {
+      if (internal(relative(root, await realpath(await this.files.path(path)))))
+        throw new TemplateProblem("No puedo registrar archivos de la carpeta interna de Bitácora.");
+    }
     return this.readBundle(paths);
   }
 
@@ -318,15 +325,18 @@ export class Templates {
   }
 
   private async asideIndex() {
-    const from = await this.files.path(indexPath);
     const stamp = new Date().toISOString().replace(/[:.]/g, "");
     for (let n = 1; n < 100; n++) {
-      const relative = directory + "/index-apartado-" + stamp + (n === 1 ? "" : "-" + n) + ".json";
-      try { await lstat(await this.files.path(relative)); }
+      const to = directory + "/index-apartado-" + stamp + (n === 1 ? "" : "-" + n) + ".json";
+      try { await lstat(await this.files.path(to)); }
       catch (error) {
         if (!missing(error)) throw error;
-        await this.renameUnderLock(from, await this.files.path(relative));
-        return relative;
+        const moved = await this.renameUnderLock(indexPath, to, async () => {
+          try { await lstat(await this.files.path(to)); }
+          catch (again) { if (missing(again)) return true; throw again; }
+          return false;
+        });
+        if (moved) return to;
       }
     }
     throw new TemplateProblem("No pude apartar la lista dañada. Los archivos siguen en la carpeta.");
@@ -335,13 +345,16 @@ export class Templates {
   private async restoreAside(relative: string) {
     try { await lstat(await this.files.path(indexPath)); return; }
     catch (error) { if (!missing(error)) return; }
-    await this.renameUnderLock(await this.files.path(relative), await this.files.path(indexPath)).catch(() => {});
+    await this.renameUnderLock(relative, indexPath).catch(() => {});
   }
 
   /** Rename the catalogue while the folder cannot be replaced underneath us. */
-  private async renameUnderLock(from: string, to: string) {
+  private async renameUnderLock(fromRelative: string, toRelative: string, accept?: () => Promise<boolean>) {
     const root = await this.files.path(".");
+    const from = await this.files.path(fromRelative);
     const releases: Array<() => void> = [];
+    let failure: unknown;
+    let declined = false;
     try {
       let current = root;
       releases.push(lockDirectory(current));
@@ -349,10 +362,20 @@ export class Templates {
         current = join(current, part);
         releases.push(lockDirectory(current));
       }
-      await rename(from, to);
+      const checkedFrom = await this.files.path(fromRelative);
+      const checkedTo = await this.files.path(toRelative);
+      if (accept && !await accept()) declined = true;
+      else await rename(checkedFrom, checkedTo);
+    } catch (error) {
+      failure = error;
     } finally {
-      for (const release of releases.reverse()) release();
+      for (const release of releases.reverse()) {
+        try { release(); }
+        catch (error) { failure ??= error; }
+      }
     }
+    if (failure) throw failure;
+    return !declined;
   }
 
   private async rebuildFromDisk() {

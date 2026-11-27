@@ -31,6 +31,7 @@ type FetchedFile = {
   url?: string;
   missing: boolean;
   loading: boolean;
+  problem?: string;
 };
 
 function useFetchedFile(file: FileRef | undefined, token?: string, fileRevision?: number, sourceUrl?: string): FetchedFile {
@@ -57,7 +58,16 @@ function useFetchedFile(file: FileRef | undefined, token?: string, fileRevision?
     let objectUrl: string | undefined;
     void fetch(sourceUrl || fileUrl(file), { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal })
       .then(async (response) => {
-        if (!response.ok) throw new Error("unavailable");
+        if (!response.ok) {
+          let problem: string | undefined;
+          const text = await response.text();
+          try {
+            const body = JSON.parse(text) as { error?: unknown };
+            if (typeof body.error === "string" && body.error) problem = body.error;
+          } catch { /* a missing file has no message */ }
+          if (!controller.signal.aborted) setState({ missing: !problem, loading: false, problem });
+          return;
+        }
         const blob = await response.blob();
         if (controller.signal.aborted) return;
         objectUrl = URL.createObjectURL(blob);
@@ -1302,6 +1312,7 @@ export function FilePreviewModal({
   const pdf = fetched.blob?.type === "application/pdf";
   const plainText = fetched.blob?.type === "text/plain";
   const index = list.findIndex((f) => f.id === file.id);
+  const previewProblem = drawn.problem || fetched.problem;
 
   useEffect(() => {
     setNotice("");
@@ -1394,9 +1405,9 @@ export function FilePreviewModal({
             />
           ) : (
             <p className="text-[14px] text-muted">
-              {fetched.missing ? "Ya no está disponible."
+              {fetched.missing && !previewProblem ? "Ya no está disponible."
                  : fetched.loading || drawn.loading ? "Cargando…"
-                : "Descargalo para verlo."}
+                : previewProblem || "Descargalo para verlo."}
             </p>
           )}
         </div>
