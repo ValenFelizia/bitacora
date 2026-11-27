@@ -62,6 +62,31 @@ const isQuestion = (value: unknown) => {
 };
 const SHUTDOWN_PENDING = "Algo de lo que estaba haciendo en esta carpeta sigue abierto y puede cambiar archivos. Lo sigo intentando cerrar. También podés tocar Reintentar.";
 const WAITING_ANSWER = "Esperando tu respuesta…";
+/**
+ * Milliseconds of the last activity. A date without milliseconds or with a
+ * timezone offset is the same instant either way. When the activity date does
+ * not parse, the creation date is used; when that does not parse either, the
+ * work has no instant and sorts last.
+ */
+const activityMs = (work: Pick<Work, "updatedAt" | "createdAt">) => {
+  const updated = Date.parse(work.updatedAt);
+  if (!Number.isNaN(updated)) return updated;
+  const created = Date.parse(work.createdAt);
+  return Number.isNaN(created) ? undefined : created;
+};
+/**
+ * Sidebar order: the most recent activity first. Equal instants keep the
+ * order they already had (the sort is stable), and a work the person just
+ * writes to moves up because its `updatedAt` changes.
+ */
+const byActivity = (a: Pick<Work, "updatedAt" | "createdAt">, b: Pick<Work, "updatedAt" | "createdAt">) => {
+  const left = activityMs(a);
+  const right = activityMs(b);
+  if (left === right) return 0;
+  if (left === undefined) return 1;
+  if (right === undefined) return -1;
+  return right - left;
+};
 const isSavedWork = (value: unknown) => {
   const work = value as Partial<SavedWork> | null;
   return !!work && isText(work.id) && isText(work.conversationId) && isText(work.title) && isText(work.details) &&
@@ -73,6 +98,7 @@ const isSavedWork = (value: unknown) => {
       /^sessions[\\/]\d{4}[\\/]\d{2}[\\/]\d{2}[\\/](?:import-[a-zA-Z0-9]+[\\/])?rollout-[^\\/:]+\.jsonl$/.test(work.importedRollout))) &&
     (work.titlePending === undefined || typeof work.titlePending === "boolean") &&
     (work.renamedByUser === undefined || typeof work.renamedByUser === "boolean") &&
+    (work.ready === undefined || typeof work.ready === "boolean") &&
     Array.isArray(work.messages) && work.messages.every(isMessage) &&
     (work.pendingFiles === undefined || (!!work.pendingFiles && isText(work.pendingFiles.messageId)));
 };
@@ -110,6 +136,10 @@ export class App {
   // Work ids whose saved request has not reached the engine yet, and pauses
   // requested during that window: they are delivered once the turn starts.
   private unsent = new Set<string>();
+  // How many sends of each chat have started and not yet marked it busy.
+  // A count, not a set: two windows can send the same chat during the kit
+  // retry, and the one that is refused must not clear the one that continues.
+  private sending = new Map<string, number>();
   private pauseRequested = new Set<string>();
   // Works created in this session whose first request has not been titled yet,
   // and works the user named by hand: a chosen name is never replaced.
@@ -572,7 +602,7 @@ export class App {
       welcome: this.workspace ? (this.welcomeStatus ?? "pending") : undefined,
       uses: this.workspace ? [...this.uses] : undefined,
       ...(this.codexImportOffer ? { codexImportOffer: true } : {}),
-      works: this.works.map(({ conversationId: _, pendingFiles: __, titlePending: ___, renamedByUser: ____, importedRollout: _____, ...work }) => work),
+      works: [...this.works].sort(byActivity).map(({ conversationId: _, pendingFiles: __, titlePending: ___, renamedByUser: ____, importedRollout: _____, ...work }) => work),
     };
   }
   private async renameWithRetry(source: string, target: string) {
@@ -639,6 +669,8 @@ export class App {
       // serve must not become a card the user cannot open.
       const tooBig = changed.filter(p => after.entries[p].size > MAX_RESULT).map(p => basename(p));
       if (message) message.results = changed.filter(p => after.entries[p].size <= MAX_RESULT).map(p => this.workspace!.result(p));
+      // A file that showed up is activity, the same as a message or an answer.
+      if (message?.results?.length) work.updatedAt = new Date().toISOString();
       if (tooBig.length) {
         const notice = tooBig.length === 1
           ? `Se generó ${tooBig[0]}, pero es demasiado grande para mostrarlo acá.`
@@ -853,7 +885,11 @@ export class App {
         }
         break;
     }
-    work.updatedAt = new Date().toISOString();
+    // A reply is activity. A title (including the one a rename asks the engine
+    // for), a detail or a progress line is not, so none of those move the chat.
+    // A message the person sent and a file that showed up are counted where
+    // they happen, not here.
+    if (event.type === "message") work.updatedAt = new Date().toISOString();
     if (
       (event.type === "message" && event.delta) ||
       event.type === "detail" ||
@@ -1056,6 +1092,24 @@ export class App {
       }
       return;
     }
+    if (command.type === "setReady") {
+      if (typeof command.ready !== "boolean") throw new Error("Invalid ready");
+      const work = this.works.find((w) => w.id === command.workId);
+      if (!work) throw new Error("Unknown work");
+      if (command.ready) {
+        // A request still on its way, or already running, has nothing settled
+        // to keep. `busy` is set only after several awaits inside send.
+        if (work.busy || this.sending.has(work.id)) {
+          reply({ type: "problem", text: "Esperá a que termine el pedido de este chat para marcarlo como listo." });
+          return;
+        }
+        work.ready = true;
+      } else delete work.ready;
+      // Marking is not activity: the date stays, so returning to the list
+      // puts the work back where it was.
+      this.changed();
+      return;
+    }
     if (command.type === "chooseModel") {
       const choices = resolveModel(this.listOnHand(), this.settings.model).state.choices;
       if (!choices.some((choice) => choice.id === command.model)) {
@@ -1177,17 +1231,36 @@ export class App {
     }
     const uploads = this.workspace?.validate(command.attachments);
     if (command.attachments?.length && !this.workspace) throw new Error("Attachments unavailable");
+    // From here until `busy` is set, send awaits the kit, the account and the
+    // files. The chat is already being sent, so it cannot be marked ready.
+    const sendingId = typeof command.workId === "string" ? command.workId : undefined;
+    if (sendingId) this.sending.set(sendingId, (this.sending.get(sendingId) ?? 0) + 1);
+    let releasedSending = false;
+    const stopSending = () => {
+      if (!sendingId || releasedSending) return;
+      releasedSending = true;
+      const left = (this.sending.get(sendingId) ?? 1) - 1;
+      if (left > 0) this.sending.set(sendingId, left);
+      else this.sending.delete(sendingId);
+    };
     // The kit carries the agency rules, so a request does not run without it.
     // The copy is tried again here: the file that failed may be free by now,
     // and the notice stays until it works.
-    if (this.kitProblem && !(await this.prepareKit())) {
-      this.notice = this.kitProblem;
-      reply({ type: "problem", text: this.kitProblem, detail: this.kitDetail });
-      return;
+    let kitReady = true;
+    try {
+      if (this.kitProblem && !(await this.prepareKit())) {
+        kitReady = false;
+        this.notice = this.kitProblem;
+        reply({ type: "problem", text: this.kitProblem, detail: this.kitDetail });
+      }
+    } catch (error) {
+      stopSending();
+      throw error;
     }
+    if (!kitReady) { stopSending(); return; }
     // The wait above may have been long enough for another request to start:
     // only one request at a time may touch the backups and the pending files.
-    if (this.refuseWhileBusy(reply)) return;
+    if (this.refuseWhileBusy(reply)) { stopSending(); return; }
     this.submitting = true;
     let work: SavedWork | undefined;
     let attachments: FileRef[] = [];
@@ -1271,6 +1344,10 @@ export class App {
       });
       work.busy = true;
       work.problem = undefined;
+      // The message itself is activity, so the chat rises before the answer.
+      // Writing also brings a ready chat back to the main list (issue #88).
+      work.updatedAt = new Date().toISOString();
+      delete work.ready;
       // A question left unanswered stays on screen until the next request.
       work.question = undefined;
       this.queuedQuestions.delete(work.id);
@@ -1328,6 +1405,7 @@ export class App {
       }
       throw error;
     } finally {
+      stopSending();
       this.submitting = false;
       this.publish({ type: "snapshot", state: this.snapshot() });
     }

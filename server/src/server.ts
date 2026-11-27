@@ -329,7 +329,7 @@ export async function serve(
             !command ||
             ![
               "chooseWorkspace", "discardUndo", "undo", "connect", "retry",
-              "prepareProtection", "send", "rename", "interrupt", "answer",
+              "prepareProtection", "send", "rename", "setReady", "interrupt", "answer",
               "skipQuestion", "chooseModel", "refreshModels", "panelWidth",
               "welcome", "skipWelcome", "markOpened",
               "listCodexChats", "cancelCodexChatList", "importCodexChats", "dismissCodexImportOffer",

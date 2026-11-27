@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import ReactMarkdown from "react-markdown";
 import {
@@ -169,6 +169,116 @@ function CopyMessageButton({ text }: { text: string }) {
 
 type UpdateNotice = "idle" | "available" | "busy" | "failed" | "working";
 
+const OFFLINE_READY = "Sin conexión. Probá de nuevo en un momento";
+const BUSY_READY = "Esperá a que termine el pedido de este chat";
+
+/** A control inside a closed drawer has no box, so focusing it lands on the page. */
+function isOnScreen(element: HTMLElement | null): element is HTMLElement {
+  return !!element && element.getClientRects().length > 0;
+}
+
+/**
+ * One chat in the sidebar. The mark-as-ready action stays out of the way until
+ * the pointer or the keyboard reaches the row, and «Listos» brings it back
+ * (issue #88). A blocked action stays in the tab order and says why.
+ */
+function WorkRow({
+  work,
+  active,
+  ready,
+  online,
+  sending,
+  actionRef,
+  onOpen,
+  onToggleReady,
+}: {
+  work: Work;
+  active: boolean;
+  ready: boolean;
+  online: boolean;
+  sending: boolean;
+  actionRef?: React.Ref<HTMLButtonElement>;
+  onOpen: () => void;
+  onToggleReady: () => void;
+}) {
+  const action = ready ? "Volver a la lista" : "Marcar como listo";
+  const reason = !online ? OFFLINE_READY : !ready && (work.busy || sending) ? BUSY_READY : undefined;
+  const blocked = reason !== undefined;
+  const reasonId = `ready-reason-${work.id}`;
+  return (
+    <li className="border-b border-line py-[3px]">
+      <div
+        className={`group flex items-stretch border-l-2 transition-colors duration-150 ${
+          active
+            ? "bg-surface border-accent rounded-r-[6px] rounded-l-none"
+            : "border-transparent rounded-[6px] hover:bg-soft"
+        }`}
+      >
+        <button
+          type="button"
+          className={`grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_16px] items-center gap-2 px-[10px] py-[7px] text-left text-ink cursor-pointer ${focusRing} ${
+            active ? "font-bold" : ""
+          }`}
+          aria-current={active ? "page" : undefined}
+          onClick={onOpen}
+        >
+          <span className="min-w-0 flex flex-col items-start gap-0.5">
+            <span className="w-full truncate text-[15px]">{work.title}</span>
+            <span className="flex items-center gap-1.5 text-[13px] font-normal tabular-nums text-muted">
+              {work.busy && (
+                <PenLine
+                  size={13}
+                  strokeWidth={1.75}
+                  className="text-accent-ink shrink-0"
+                  aria-hidden="true"
+                />
+              )}
+              {formatWorkDate(work.updatedAt)}
+            </span>
+          </span>
+          {!active && (
+            <ChevronRight
+              size={16}
+              strokeWidth={1.75}
+              className="text-muted transition-opacity duration-150 group-hover:opacity-0 group-focus-within:opacity-0 max-[959px]:hidden"
+              aria-hidden="true"
+            />
+          )}
+        </button>
+        <span className="relative grid w-[34px] shrink-0 place-items-center">
+          <button
+            ref={actionRef}
+            type="button"
+            title={reason ?? action}
+            aria-label={`${action}: ${work.title}`}
+            aria-disabled={blocked || undefined}
+            aria-describedby={blocked ? reasonId : undefined}
+            onClick={() => {
+              if (!blocked) onToggleReady();
+            }}
+            className={`absolute inset-0 grid place-items-center rounded-[6px] text-muted cursor-pointer transition-opacity duration-150 aria-disabled:cursor-default ${
+              blocked
+                ? "opacity-0 group-hover:opacity-40 group-focus-within:opacity-40 max-[959px]:opacity-40"
+                : "opacity-0 hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 max-[959px]:opacity-100"
+            } ${focusRing}`}
+          >
+            {ready ? (
+              <ArrowLeft size={16} strokeWidth={1.75} aria-hidden="true" />
+            ) : (
+              <Check size={16} strokeWidth={1.75} aria-hidden="true" />
+            )}
+          </button>
+          {blocked && (
+            <span id={reasonId} className="sr-only">
+              {reason}
+            </span>
+          )}
+        </span>
+      </div>
+    </li>
+  );
+}
+
 function App() {
   const [updateNotice, setUpdateNotice] = useState<UpdateNotice>("idle");
   const updateInProgress = useRef(false);
@@ -196,6 +306,15 @@ function App() {
   const [confirmUndo, setConfirmUndo] = useState<string>();
   const [gallery, setGallery] = useState(false);
   const [navOpen, setNavOpen] = useState(false);
+  const [readyOpen, setReadyOpen] = useState(false);
+  const [readyNotice, setReadyNotice] = useState<{ seq: number; text: string }>();
+  const readyNoticeSeq = useRef(0);
+  // True while a «Listo» change waits for the server: a problem then belongs
+  // to that change and must not release a send in flight on another chat.
+  const readyRequest = useRef(false);
+  const [placeFocus, setPlaceFocus] = useState<{ id: string; ready: boolean }>();
+  const placedRef = useRef<HTMLButtonElement>(null);
+  const listosToggleRef = useRef<HTMLButtonElement>(null);
   const [deliverablesOpen, setDeliverablesOpen] = useState(false);
   const [focusedMessageId, setFocusedMessageId] = useState<string>();
   const [preview, setPreview] = useState<{ file: FileRef; list: FileRef[]; trackOpened?: boolean }>();
@@ -211,6 +330,7 @@ function App() {
   const fileInput = useRef<HTMLInputElement>(null);
   const composerInput = useRef<HTMLTextAreaElement>(null);
   const navToggleRef = useRef<HTMLButtonElement>(null);
+  const mainRef = useRef<HTMLElement>(null);
   const navCloseRef = useRef<HTMLButtonElement>(null);
   const deliverablesToggleRef = useRef<HTMLButtonElement>(null);
   const deliverablesCloseRef = useRef<HTMLButtonElement>(null);
@@ -225,6 +345,9 @@ function App() {
   const [online, setOnline] = useState(false);
   const [sessionSecret, setSessionSecret] = useState<string>();
   const [pending, setPending] = useState(false);
+  // The chat the send left from. It stays blocked if another chat is opened
+  // before the snapshot, instead of following the selection.
+  const [pendingWorkId, setPendingWorkId] = useState<string>();
   // The question whose answer was sent and not yet confirmed by a snapshot. The
   // ref stops a second click before the state updates.
   const [answering, setAnswering] = useState<string>();
@@ -259,6 +382,44 @@ function App() {
   const shownPanel = clampPanel(panelWidth, viewport);
   const panelLimits = panelBounds(viewport);
   const work = state.works.find((w) => w.id === selected);
+  // «Listos» keeps its own section at the end of the sidebar, in the same
+  // activity order the server sends (issue #88).
+  const readyWorks = state.works.filter((w) => w.ready);
+  const activeWorks = state.works.filter((w) => !w.ready);
+  // Entering a ready chat opens «Listos». After that the person can fold it;
+  // the click is not ignored while that chat stays open (issue #88).
+  const listosOpen = readyOpen;
+  // Block the chat that was sent, not whichever one is open now.
+  const sendingId = pending ? pendingWorkId : undefined;
+  useLayoutEffect(() => {
+    if (!gallery && work?.ready) setReadyOpen(true);
+  }, [gallery, selected, work?.ready]);
+  useEffect(() => {
+    if (!readyNotice) return;
+    const timer = window.setTimeout(() => setReadyNotice(undefined), 4000);
+    return () => window.clearTimeout(timer);
+  }, [readyNotice]);
+  useLayoutEffect(() => {
+    if (!placeFocus) return;
+    const target = state.works.find((item) => item.id === placeFocus.id);
+    if (!target || !!target.ready !== placeFocus.ready) return;
+    // The row is inside «Listos». Open that section before focusing, and
+    // announce only once the snapshot shows the chat there.
+    if (placeFocus.ready && !readyOpen) {
+      setReadyOpen(true);
+      return;
+    }
+    readyRequest.current = false;
+    if (placeFocus.ready) {
+      readyNoticeSeq.current += 1;
+      setReadyNotice({ seq: readyNoticeSeq.current, text: "Pasó a Listos" });
+    } else setReadyNotice(undefined);
+    const destination = placedRef.current ?? listosToggleRef.current;
+    if (isOnScreen(destination)) destination.focus();
+    else if (isOnScreen(navToggleRef.current)) navToggleRef.current.focus();
+    else mainRef.current?.focus();
+    setPlaceFocus(undefined);
+  }, [placeFocus, state.works, readyOpen]);
   const dictationToken =
     online && state.account.connected && state.engine.available && !gallery ? sessionSecret : undefined;
   const dictation = useDictation({
@@ -336,6 +497,7 @@ function App() {
             setRenaming(false);
             setSavingName(undefined);
             setPending(false);
+            setPendingWorkId(undefined);
             answeringRef.current = undefined;
             setAnswering(undefined);
             setGallery(false);
@@ -345,6 +507,9 @@ function App() {
             setProblem(undefined);
             setFolderProblem(undefined);
             setCodexImportMessage(undefined);
+            setReadyOpen(false);
+            setReadyNotice(undefined);
+            setPlaceFocus(undefined);
           }
           displayedWorkspace.current = message.state.workspace;
           setState(message.state);
@@ -396,10 +561,17 @@ function App() {
             );
           } else setSelected(message.workId);
           setPending(false);
+          setPendingWorkId(undefined);
         }
         if (message.type === "problem") {
           setProblem(message);
-          setPending(false);
+          setReadyNotice(undefined);
+          setPlaceFocus(undefined);
+          if (readyRequest.current) readyRequest.current = false;
+          else {
+            setPending(false);
+            setPendingWorkId(undefined);
+          }
           answeringRef.current = undefined;
           setAnswering(undefined);
           // A rename that was refused keeps its form open with the message.
@@ -418,6 +590,10 @@ function App() {
         setSessionSecret(undefined);
         setFolderAction((action) => action === "changing" ? undefined : action);
         setPending(false);
+        setPendingWorkId(undefined);
+        setReadyNotice(undefined);
+        setPlaceFocus(undefined);
+        readyRequest.current = false;
         setWelcomeSending(false);
         // An answer in flight may never arrive: the card can send it again.
         answeringRef.current = undefined;
@@ -551,6 +727,14 @@ function App() {
     socket.current.send(JSON.stringify({ ...command, workspace: state.workspace }));
   }
 
+  function placeReady(workId: string, ready: boolean) {
+    // The notice and the open section wait until a snapshot shows this chat
+    // as ready. A rejection must not announce a move that did not happen.
+    setPlaceFocus({ id: workId, ready });
+    readyRequest.current = true;
+    send({ type: "setReady", workId, ready });
+  }
+
   /** For preferences: a problem on screen stays, it is not about them. */
   function sendQuietly(command: ClientCommand) {
     if (!updateInProgress.current && socket.current?.readyState === WebSocket.OPEN)
@@ -607,6 +791,7 @@ function App() {
       return;
     }
     setPending(true);
+    setPendingWorkId(selected);
     sentDraft.current = {
       workId: selected,
       text,
@@ -1004,54 +1189,96 @@ function App() {
           <h2 id="works-heading" className="px-[10px] pb-1.5 text-[13px] text-muted">
             Trabajos
           </h2>
-          <ul className={`flex flex-col ${state.works.length ? "border-t border-line" : ""}`}>
-            {state.works.map((w) => {
+          <ul className={`flex flex-col ${activeWorks.length ? "border-t border-line" : ""}`}>
+            {activeWorks.map((w) => {
               const active = !gallery && selected === w.id;
               return (
-                <li key={w.id} className="border-b border-line py-[3px]">
-                  <button
-                    type="button"
-                    className={`grid grid-cols-[minmax(0,1fr)_16px] items-center gap-2 px-[10px] py-[7px] text-left w-full text-ink border-l-2 cursor-pointer transition-colors duration-150 ${focusRing} ${
-                      active
-                        ? "bg-surface font-bold border-accent rounded-r-[6px] rounded-l-none"
-                        : "border-transparent rounded-[6px] hover:bg-soft"
-                    }`}
-                    aria-current={active ? "page" : undefined}
-                    onClick={() => {
-                      setGallery(false);
-                      setRenaming(false);
-                      setNavOpen(false);
-                      setFocusedMessageId(undefined);
-                      setSelected(w.id);
-                      setProblem(undefined);
-                    }}
-                  >
-                    <span className="min-w-0 flex flex-col items-start gap-0.5">
-                      <span className="w-full truncate text-[15px]">{w.title}</span>
-                      <span className="flex items-center gap-1.5 text-[13px] font-normal tabular-nums text-muted">
-                        {w.busy && (
-                          <PenLine
-                            size={13}
-                            strokeWidth={1.75}
-                            className="text-accent-ink shrink-0"
-                            aria-hidden="true"
-                          />
-                        )}
-                        {formatWorkDate(w.updatedAt)}
-                      </span>
-                    </span>
-                    {!active && (
-                      <ChevronRight size={16} strokeWidth={1.75} className="text-muted" aria-hidden="true" />
-                    )}
-                  </button>
-                </li>
+                <WorkRow
+                  key={w.id}
+                  work={w}
+                  active={active}
+                  ready={false}
+                  online={online}
+                  sending={sendingId === w.id}
+                  actionRef={placeFocus?.id === w.id && !placeFocus.ready ? placedRef : undefined}
+                  onOpen={() => {
+                    setGallery(false);
+                    setRenaming(false);
+                    setNavOpen(false);
+                    setFocusedMessageId(undefined);
+                    setSelected(w.id);
+                    setProblem(undefined);
+                  }}
+                  onToggleReady={() => placeReady(w.id, true)}
+                />
               );
             })}
           </ul>
-          {!state.works.length && (
+          {!activeWorks.length && !readyWorks.length && (
             <p className="px-[10px] py-2 text-[13px] text-muted leading-relaxed">
               Acá van a aparecer tus trabajos.
             </p>
+          )}
+          {!activeWorks.length && readyWorks.length > 0 && (
+            <p className="px-[10px] py-2 text-[13px] text-muted leading-relaxed">
+              Todos están en Listos.
+            </p>
+          )}
+          {/* The live region stays mounted: screen readers skip a region that
+              appears with its text already in it. A new inner node per notice
+              makes a repeated «Pasó a Listos» speak again. */}
+          <p
+            role="status"
+            className={readyNotice ? "px-[10px] pt-2 text-[13px] text-muted" : "sr-only"}
+          >
+            {readyNotice && <span key={readyNotice.seq}>{readyNotice.text}</span>}
+          </p>
+          {readyWorks.length > 0 && (
+            <div className="mt-3 border-t border-line">
+              <button
+                ref={listosToggleRef}
+                type="button"
+                aria-expanded={listosOpen}
+                className={`flex w-full items-center gap-2 rounded-[6px] px-[10px] py-[8px] text-left text-[13px] text-muted hover:bg-soft hover:text-ink cursor-pointer transition-colors duration-150 ${focusRing}`}
+                onClick={() => setReadyOpen((open) => !open)}
+              >
+                <ChevronRight
+                  size={14}
+                  strokeWidth={1.75}
+                  className={`shrink-0 transition-transform duration-150 ${listosOpen ? "rotate-90" : ""}`}
+                  aria-hidden="true"
+                />
+                <span>Listos</span>
+                <span className="tabular-nums">{readyWorks.length}</span>
+              </button>
+              {listosOpen && (
+                <ul className="flex flex-col border-t border-line">
+                  {readyWorks.map((w) => {
+                    const active = !gallery && selected === w.id;
+                    return (
+                      <WorkRow
+                        key={w.id}
+                        work={w}
+                        active={active}
+                        ready
+                        online={online}
+                        sending={false}
+                        actionRef={placeFocus?.id === w.id && placeFocus.ready ? placedRef : undefined}
+                        onOpen={() => {
+                          setGallery(false);
+                          setRenaming(false);
+                          setNavOpen(false);
+                          setFocusedMessageId(undefined);
+                          setSelected(w.id);
+                          setProblem(undefined);
+                        }}
+                        onToggleReady={() => placeReady(w.id, false)}
+                      />
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
           )}
         </nav>
 
@@ -1109,7 +1336,7 @@ function App() {
       </aside>
 
       {/* Center column: header, notices, conversation/gallery, composer */}
-      <main tabIndex={-1} className="flex flex-col min-w-0 min-h-0 bg-paper outline-none">
+      <main ref={mainRef} tabIndex={-1} className="flex flex-col min-w-0 min-h-0 bg-paper outline-none">
         <header inert={updating} className="px-5 min-[960px]:px-7 py-[18px] border-b border-line flex items-center justify-between gap-4">
           {renaming && work ? (
             <form
@@ -1229,6 +1456,28 @@ function App() {
                   >
                     <Pencil size={18} strokeWidth={1.75} aria-hidden="true" />
                   </button>
+                )}
+                {!gallery && work?.ready && (
+                  <button
+                    type="button"
+                    className={`${buttonQuiet} aria-disabled:opacity-40 aria-disabled:cursor-default aria-disabled:hover:bg-surface`}
+                    title={online ? "Volver a la lista" : OFFLINE_READY}
+                    aria-label={`Volver a la lista: ${work.title}`}
+                    aria-disabled={!online || undefined}
+                    aria-describedby={online ? undefined : `return-reason-${work.id}`}
+                    onClick={() => {
+                      if (!online) return;
+                      placeReady(work.id, false);
+                    }}
+                  >
+                    <ArrowLeft size={16} strokeWidth={1.75} aria-hidden="true" />
+                    <span className="max-[720px]:hidden">Volver a la lista</span>
+                  </button>
+                )}
+                {!gallery && work?.ready && !online && (
+                  <span id={`return-reason-${work.id}`} className="sr-only">
+                    {OFFLINE_READY}
+                  </span>
                 )}
                 {!gallery && (
                   <button
