@@ -24,7 +24,7 @@ import { CodexHistory, type ImportedChat } from "../src/codex/history";
 import type { ThreadStartResponse } from "../src/codex/generated/v2/ThreadStartResponse";
 import type { ThreadResumeResponse } from "../src/codex/generated/v2/ThreadResumeResponse";
 import { codexEnvironmentArgs } from "../src/codex/environment";
-import { registerKit } from "../src/codex/kit";
+import { BITACORA_TOOLS, registerKit } from "../src/codex/kit";
 import { initializeKit } from "../src/tools/kit";
 import { codexBinary } from "../../scripts/codex-runtime.mjs";
 import { WorkspaceFiles } from "../src/workspace-files";
@@ -680,7 +680,7 @@ test(
       const bitacora = mcp.data.find((server) => server.name === "bitacora");
       assert.ok(bitacora, "bitacora MCP server missing");
       assert.equal(bitacora.toolsError, null);
-      assert.deepEqual(Object.keys(bitacora.tools).sort(), ["controlar", "dibujar", "traer"]);
+      assert.deepEqual(Object.keys(bitacora.tools).sort(), [...BITACORA_TOOLS].sort());
 
       // Non-vacuous check: prove the uncurated control creates `.tmp/plugins` (or
       // at least begins the `.tmp/plugins-clone-*/.git` checkout on slow networks)

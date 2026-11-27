@@ -3,7 +3,7 @@ import { join, relative, isAbsolute, dirname, basename } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import type { Stats } from 'node:fs';
 import { BackupTrash } from './backup-trash';
-import { WorkspaceFiles, SCAN_LIMITS, excludedFromCopy, type FileScan, type Fingerprint } from './workspace-files';
+import { WorkspaceFiles, SCAN_LIMITS, excludedCopyPath, isTemplateStorage, type FileScan, type Fingerprint } from './workspace-files';
 export type UndoTarget = { id: string; workId: string; title: string; request: string; messageId?: string; retry?: boolean };
 type Copy = UndoTarget & { before: FileScan; after?: FileScan };
 type Value = { kind: 'file'; entry: Fingerprint } | { kind: 'directory' } | { kind: 'missing' };
@@ -22,6 +22,9 @@ const value = (m: FileScan, p: string): Value => {
   return name ? { kind: 'file', entry: m.entries[name] } : m.directories?.some(n => pathKey(n) === pathKey(p)) ? { kind: 'directory' } : { kind: 'missing' };
 };
 const names = (paths: string[]) => [...new Set(paths)].map(p => basename(p));
+const scanStopped = (path: string) => /^\.bitacora$/i.test(path) || path === 'parte de la carpeta';
+const catalogueIndex = (path: string) => /^\.bitacora[\\/]plantillas[\\/]index\.json$/i.test(path);
+const restoringCatalogue = (plan: Plan) => plan.actions.some(action => !action.done && !plan.skipped.includes(action.path) && isTemplateStorage(action.path) && action.to.kind !== 'missing');
 export class RestoreProblem extends Error {
   constructor(path: string, reason: string) { super(`No pude deshacer todavía: ${reason}${path ? ` (${basename(path)})` : ''}. Podés volver a intentar Deshacer.`); }
 }
@@ -82,7 +85,7 @@ export class Backups {
     }
   }
   private validPath(path: string) {
-    if (typeof path !== 'string' || !path || isAbsolute(path) || path.split(/[\\/]/).some(p => !p || p === '..' || excludedFromCopy(p) || /[:\x00-\x1f]|[. ]$/.test(p) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(p))) throw new Error('Unsafe backup path');
+    if (typeof path !== 'string' || !path || isAbsolute(path) || excludedCopyPath(path) || path.split(/[\\/]/).some(p => !p || p === '..' || /[:\x00-\x1f]|[. ]$/.test(p) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(p))) throw new Error('Unsafe backup path');
   }
   private validate() {
     if (this.state.root !== this.root || !Array.isArray(this.state.notices) || this.state.notices.some(p => typeof p !== 'string')) throw new Error('Invalid backup state');
@@ -135,7 +138,7 @@ export class Backups {
       target = join(target, part);
       try {
         const resolved = await realpath(target);
-        if ((await lstat(target)).isSymbolicLink() || !inside(this.root, resolved) || relative(this.root, resolved).split(/[\\/]/).some(excludedFromCopy)) throw new RestoreProblem(path, 'hay un enlace o una carpeta excluida en el camino');
+        if ((await lstat(target)).isSymbolicLink() || !inside(this.root, resolved) || excludedCopyPath(relative(this.root, resolved))) throw new RestoreProblem(path, 'hay un enlace o una carpeta excluida en el camino');
       }
       catch (e) { if (!(missing && ['ENOENT', 'ENOTDIR'].includes((e as NodeJS.ErrnoException).code || ''))) throw e; }
     } return target;
@@ -372,6 +375,74 @@ export class Backups {
     try { for await (const chunk of h.createReadStream({ autoClose: false })) digest.update(chunk); return digest.digest('hex'); }
     finally { await h.close(); }
   }
+  private propagateSkips(plan: Plan) {
+    let changed = true;
+    while (changed) {
+      changed = false;
+      const skip = (path: string) => {
+        if (plan.skipped.includes(path)) return;
+        plan.skipped.push(path);
+        changed = true;
+      };
+      for (const action of plan.actions) {
+        if (action.done || plan.skipped.includes(action.path)) continue;
+        // `.bitacora` is the app folder. Restoring a catalogue may recreate it;
+        // undoing an add must not remove it.
+        if (/^\.bitacora$/i.test(action.path) && action.to.kind === 'missing') skip(action.path);
+        if (action.to.kind === 'missing' && action.from.kind === 'directory' && plan.skipped.some(path => beneath(path, action.path)))
+          skip(action.path);
+      }
+      if ([...plan.skipped, ...plan.omitted].some(isTemplateStorage) || plan.omitted.some(scanStopped)) {
+        for (const action of plan.actions)
+          if (isTemplateStorage(action.path) && !action.done) skip(action.path);
+      }
+      // A cut-off scan, or a catalogue we are not putting back, must not recreate the app folder.
+      if (!restoringCatalogue(plan)) {
+        for (const action of plan.actions)
+          if (/^\.bitacora$/i.test(action.path) && action.to.kind === 'directory' && action.from.kind === 'missing' && !action.done) skip(action.path);
+      }
+    }
+  }
+  /** Create `.bitacora` only once the catalogue is actually going back, and count that action as done. */
+  private async createTemplateRoot(plan: Plan) {
+    if (!restoringCatalogue(plan)) return;
+    const action = plan.actions.find(item => /^\.bitacora$/i.test(item.path) && item.from.kind === 'missing' && item.to.kind === 'directory' && !item.done && !plan.skipped.includes(item.path));
+    const current = await this.current('.bitacora');
+    if (current.kind === 'directory') {
+      if (action) { action.started = true; action.done = true; plan.active = true; this.state.plan = plan; await this.save(); }
+      return;
+    }
+    if (current.kind !== 'missing') throw new RestoreProblem('.bitacora', 'la carpeta donde iba el archivo ya no está o fue reemplazada');
+    plan.active = true; this.state.plan = plan;
+    if (action) action.started = true;
+    await this.save();
+    await this.checkedDirectory('.bitacora', true);
+    if (action) action.done = true;
+    await this.save();
+  }
+  /** A catalogue is restored whole. One skipped path keeps every other catalogue path. */
+  private hold(plan: Plan, path: string) {
+    const own = plan.actions.find(action => action.path === path);
+    if ((!own || !own.done) && !plan.skipped.includes(path)) plan.skipped.push(path);
+    if (!isTemplateStorage(path)) return;
+    for (const action of plan.actions)
+      if (isTemplateStorage(action.path) && !action.done && !plan.skipped.includes(action.path))
+        plan.skipped.push(action.path);
+  }
+  private async catalogueDrift(plan: Plan) {
+    if (plan.omitted.some(path => isTemplateStorage(path) || scanStopped(path)) || plan.skipped.some(isTemplateStorage)) return true;
+    for (const [index, action] of plan.actions.entries()) {
+      if (!isTemplateStorage(action.path) || action.done || plan.skipped.includes(action.path)) continue;
+      const actual = await this.actualName(action.path);
+      if (actual && actual !== action.path.replaceAll('/', '\\')) return true;
+      const current = await this.current(action.path);
+      if (!actual && current.kind !== 'missing') return true;
+      if (action.started && equal(current, action.to)) continue;
+      const finishing = action.started && current.kind === 'file' && action.to.kind === 'file' && current.entry.hash === action.to.entry.hash;
+      if (!equal(current, action.from) && !finishing && !(await this.canResumeMissing(action, index, current))) return true;
+    }
+    return false;
+  }
   private async preflight(plan: Plan) {
     this.validate();
     if (this.renamed(this.state.undo!.before, this.state.undo!.after!)) throw new RestoreProblem('', 'el pedido cambió un nombre sólo por mayúsculas o por la forma de un acento; no toqué nada');
@@ -386,6 +457,11 @@ export class Backups {
       const spelling = await this.actualName(a.path);
       if (spelling && spelling !== a.path.replaceAll('/', '\\')) { plan.skipped.push(a.path); continue; }
       const current = await this.current(a.path);
+      // `.bitacora` may be absent until the catalogue is restored. A file in its place is not a folder.
+      if (/^\.bitacora$/i.test(a.path) && a.from.kind === 'missing' && a.to.kind === 'directory') {
+        if (current.kind === 'directory') { a.started = true; a.done = true; continue; }
+        if (current.kind !== 'missing') throw new RestoreProblem('.bitacora', 'la carpeta donde iba el archivo ya no está o fue reemplazada');
+      }
       if (!spelling && current.kind !== 'missing') throw new RestoreProblem(a.path, 'no pude confirmar el nombre real del archivo');
       if (a.started && equal(current, a.to)) { a.done = true; continue; }
       const finishing = a.started && current.kind === 'file' && a.to.kind === 'file' && current.entry.hash === a.to.entry.hash;
@@ -406,12 +482,17 @@ export class Backups {
       }
     }
     for (const a of plan.actions) if (a.to.kind === 'file' && a.from.kind === 'directory' && plan.skipped.some(p => beneath(p, a.path) && pathKey(p) !== pathKey(a.path))) throw new RestoreProblem(a.path, 'hay cambios posteriores dentro de esa carpeta');
-    for (const a of plan.actions) if (a.to.kind === 'missing' && a.from.kind === 'directory' && plan.skipped.some(p => beneath(p, a.path))) plan.skipped.push(a.path);
+    // Directory checks can skip a folder after the first pass. Repeat until a
+    // skipped child, a skipped catalogue path, or both, stop adding skips.
+    this.propagateSkips(plan);
     for (const a of plan.actions.filter(a => !a.done && !plan.skipped.includes(a.path) && a.to.kind !== 'missing')) {
       let parent = dirname(a.path);
       while (parent !== '.') {
         const current = await this.current(parent);
-        if (current.kind !== 'directory' && !plan.actions.some(p => pathKey(p.path) === pathKey(parent) && p.to.kind === 'directory' && !plan.skipped.includes(p.path))) throw new RestoreProblem(a.path, 'la carpeta donde iba el archivo ya no está o fue reemplazada');
+        const creating = plan.actions.some(p => pathKey(p.path) === pathKey(parent) && p.to.kind === 'directory' && !p.done && !plan.skipped.includes(p.path));
+        const absentRoot = /^\.bitacora$/i.test(parent) && current.kind === 'missing' && restoringCatalogue(plan);
+        if (/^\.bitacora$/i.test(parent) && current.kind !== 'directory' && current.kind !== 'missing') throw new RestoreProblem(a.path, 'la carpeta donde iba el archivo ya no está o fue reemplazada');
+        if (current.kind !== 'directory' && !creating && !absentRoot) throw new RestoreProblem(a.path, 'la carpeta donde iba el archivo ya no está o fue reemplazada');
         parent = dirname(parent);
       }
     }
@@ -511,22 +592,32 @@ export class Backups {
   }
   private async applyPlan(plan: Plan) {
     const copy = this.state.undo!;
+    if (await this.catalogueDrift(plan)) {
+      const seed = plan.actions.find(action => isTemplateStorage(action.path));
+      if (seed) this.hold(plan, seed.path);
+    }
+    await this.createTemplateRoot(plan);
     const ordered = plan.actions.map((a, i) => ({ a, i })).sort((x, y) => {
       const priority = (a: Action) => a.to.kind === 'missing' ? 0 : a.to.kind === 'directory' ? 1 : 2;
-      return priority(x.a) - priority(y.a) || (priority(x.a) === 0 ? y.a.path.length - x.a.path.length : x.a.path.length - y.a.path.length);
+      const rank = (a: Action) => catalogueIndex(a.path) && a.to.kind === 'file' ? 3 : priority(a);
+      return rank(x.a) - rank(y.a) || (rank(x.a) === 0 ? y.a.path.length - x.a.path.length : x.a.path.length - y.a.path.length);
     });
     for (const { a, i } of ordered) {
       if (a.done || plan.skipped.includes(a.path)) continue;
+      if (/^\.bitacora$/i.test(a.path) && a.to.kind === 'missing') { this.hold(plan, a.path); continue; }
+      if (/^\.bitacora$/i.test(a.path) && a.to.kind === 'directory' && !restoringCatalogue(plan)) { this.hold(plan, a.path); continue; }
+      if (isTemplateStorage(a.path) && (plan.skipped.some(isTemplateStorage) || plan.omitted.some(path => isTemplateStorage(path) || scanStopped(path)))) { this.hold(plan, a.path); continue; }
+      if (catalogueIndex(a.path) && a.to.kind === 'file' && plan.skipped.some(path => isTemplateStorage(path) && pathKey(path) !== pathKey(a.path))) { this.hold(plan, a.path); continue; }
       const actual = await this.actualName(a.path);
-      if (actual && actual !== a.path.replaceAll('/', '\\')) { plan.skipped.push(a.path); continue; }
+      if (actual && actual !== a.path.replaceAll('/', '\\')) { this.hold(plan, a.path); continue; }
       const current = await this.current(a.path);
       if (!actual && current.kind !== 'missing') throw new RestoreProblem(a.path, 'no pude confirmar el nombre real del archivo');
       if (a.started && equal(current, a.to)) { a.done = true; await this.save(); continue; }
       const finishing = a.started && current.kind === 'file' && a.to.kind === 'file' && current.entry.hash === a.to.entry.hash;
-      if (!equal(current, a.from) && !finishing && !(await this.canResumeMissing(a, i, current))) { plan.skipped.push(a.path); await this.save(); continue; }
+      if (!equal(current, a.from) && !finishing && !(await this.canResumeMissing(a, i, current))) { this.hold(plan, a.path); await this.save(); continue; }
       const destination = await this.path(a.path, true);
       a.started = true; this.state.plan = plan; await this.save();
-      if (!equal(await this.current(a.path), current)) { plan.skipped.push(a.path); await this.save(); continue; }
+      if (!equal(await this.current(a.path), current)) { this.hold(plan, a.path); await this.save(); continue; }
       try {
         if (current.kind === 'file' && !finishing) {
           if (readonly(current.entry)) await this.attributes(a.path, 0o666);
@@ -542,7 +633,7 @@ export class Backups {
             if (current.kind === 'directory') { await this.checkedDirectory(a.path, false); a.removed = true; plan.active = true; await this.save(); }
             await this.stageFile(a, i);
             const expected: Value = a.removed ? { kind: 'missing' } : current;
-            if (!equal(await this.current(a.path), expected)) { plan.skipped.push(a.path); await this.save(); continue; }
+            if (!equal(await this.current(a.path), expected)) { this.hold(plan, a.path); await this.save(); continue; }
             const temporary = join(dirname(await this.path(a.path, true)), this.stage(a, i));
             if ((await lstat(temporary)).isSymbolicLink()) throw new Error('Link in temporary');
             await this.checkedRename(temporary, await this.path(a.path, true), a.path);
@@ -550,7 +641,7 @@ export class Backups {
           await this.attributes(a.path, readonly(a.to.entry) ? 0o444 : 0o666, a.to.entry.mtimeMs);
         }
       } catch (error) {
-        if (error instanceof LaterChange) { plan.skipped.push(a.path); await this.save(); continue; }
+        if (error instanceof LaterChange) { this.hold(plan, a.path); await this.save(); continue; }
         if (current.kind === 'file' && a.removed) {
           try {
             if (await this.restorePark(a, i, current)) {

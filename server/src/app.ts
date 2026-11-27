@@ -636,6 +636,13 @@ export class App {
     });
     this.publish({ type: "snapshot", state: this.snapshot() });
   }
+  filesChanged() {
+    this.fileRevision++;
+    this.publish({ type: "snapshot", state: this.snapshot() });
+  }
+  get undoPending() {
+    return !!this.backups?.target?.retry;
+  }
   file(id: string) {
     return this.works.flatMap(w => w.messages.flatMap(m => [...(m.attachments || []), ...(m.results || [])])).find(f => f.id === id);
   }

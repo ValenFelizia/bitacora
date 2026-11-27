@@ -175,8 +175,7 @@ van a `marca/voz.md` o a `AGENTS.md`. El kit no incluye
 marca ni tono de una agencia: eso corresponde a #7.
 
 La app registra un servidor MCP por stdio en **su propio** `CODEX_HOME`.
-`server/src/codex/kit.ts` configura exclusivamente `traer`, `controlar` y
-`dibujar` con `approval_mode = "approve"`, compatible con Codex 0.168.0 y
+`server/src/codex/kit.ts` configura las herramientas del kit y las de plantillas con `approval_mode = "approve"`, compatible con Codex 0.168.0 y
 `approvalPolicy: never`. No habilita red del shell ni otros permisos.
 El servidor MCP es un envoltorio de los módulos neutrales de `server/src/tools/`.
 
@@ -345,6 +344,25 @@ capturas en `docs/verification/issue5/` y limpia sus datos y procesos al termina
 Requiere libres los puertos 5173 y 4317. La evidencia y los límites están en
 [la verificación del issue #5](docs/verification/issue5/verification.md).
 
+## Plantillas
+
+En el panel derecho podés pasar de **Para mandar** a **Plantillas**. Desde ahí
+podés sumar un PDF, una imagen, un HTML o un archivo de texto, darle un nombre,
+describir para qué sirve, verlo, editar sus datos, reemplazar el archivo
+principal o quitarlo. Las plantillas viven en `.bitacora/plantillas/` dentro de
+la carpeta de trabajo elegida.
+
+También podés pedirle al agente que guarde un adjunto o que convierta un PDF
+en una plantilla editable. `mirar_pdf` le muestra texto y páginas como imágenes
+con PDF.js y el motor de dibujo incluido en Node, incluso si el texto del PDF
+es una imagen. Para conversiones, el agente compara el HTML dibujado con el
+original y guarda el PDF de referencia junto al HTML. Antes de crear una pieza,
+consulta la lista, avisa cuál usa y pregunta cuando hay más de una que serviría.
+
+Los archivos de las plantillas entran en las copias del agente y quedan fuera
+de la galería. Si cambiás el catálogo después de un pedido, Deshacer conserva
+las plantillas de ese catálogo para que sus archivos y sus nombres sigan juntos.
+
 ## Copias y Deshacer
 
 Antes de cada pedido se guarda una copia en `backups/` dentro de la carpeta de
@@ -393,7 +411,8 @@ agrega al mensaje guardado de la usuaria ni a las instrucciones de la conversaci
 Los resultados del pedido revertido muestran «Este archivo ya no está disponible»
 en conversación y galería; otros resultados anteriores recuperados siguen accesibles.
 
-Se excluyen componentes que empiezan con punto, `node_modules` y `adjuntos`
+Salvo `.bitacora/plantillas/`, se excluyen componentes que empiezan con punto,
+`node_modules` y `adjuntos`
 (sin distinguir mayúsculas), enlaces simbólicos y junctions. Deshacer nunca borra
 ni pisa esos elementos, incluidos enlaces creados por el agente y adjuntos originales.
 Se guarda el atributo de sólo lectura de los archivos incluidos.

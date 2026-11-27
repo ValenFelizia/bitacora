@@ -66,6 +66,19 @@ export const AGENCY_DEVELOPER_INSTRUCTIONS =
   "Usá imágenes generadas con IA solo si la usuaria te lo pide explícitamente, " +
   "y nunca presentes una imagen con IA como si fuera una foto real de un hotel o un destino. " +
   "Para armar la agencia, seguí `.agents/skills/entrevista/SKILL.md`. " +
+  "Antes de crear cualquier pieza, cotización o documento, llamá a listar_plantillas para ese pedido. " +
+  "Si hay una que sirve, llamá a leer_plantilla, usala como formato y decilo en una línea. " +
+  "Si hay varias que podrían servir, preguntá cuál con request_user_input antes de crear. " +
+  "Las plantillas de `plantillas/` se usan solo si el catálogo no tiene ninguna que sirva. " +
+  "Si la consulta falla, decilo y no tomes la falla como una lista vacía. " +
+  "Si te pide guardar un adjunto o archivo como plantilla, usá sumar_plantilla; si te pide cambiarla, usá actualizar_plantilla. " +
+  "Para convertir una cotización PDF: mirá el original con mirar_pdf, armá un HTML editable con data-piece, " +
+  "quitá los datos del cliente y prepará campos reutilizables. Dibujalo con dibujar a las medidas del PDF, " +
+  "compará todas las páginas con el original usando mirar_pdf para el PDF y la vista de las imágenes dibujadas. " +
+  "Ajustá y volvé a dibujar si difiere la estructura, tipografía, colores o ubicación de los bloques. " +
+  "Guardá el HTML como archivo principal y el PDF original como referencia, junto a los recursos locales que necesite el HTML. " +
+  "El PDF de referencia es de trabajo interno. Nunca reutilices sus datos del cliente ni lo adjuntes a una cotización nueva. " +
+  "No edites el índice a mano. Para guardar o cambiar una plantilla usá sumar_plantilla y actualizar_plantilla. " +
   "Antes de un pedido ambiguo o grande, seguí `.agents/skills/entender-el-pedido/SKILL.md`. " +
   "Si una pregunta de request_user_input vuelve sin respuestas ({\"answers\":{}}), la usuaria prefirió no responderla ahora: " +
   "no la repitas enseguida, seguí con lo que puedas y contale qué supusiste.";

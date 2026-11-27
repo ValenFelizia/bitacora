@@ -80,6 +80,11 @@ confirme.
 
 ## Guardar lo elegido
 
+Consultá primero `listar_plantillas`. Si ya hay una para el formato elegido,
+leela con `leer_plantilla` y usala como punto de partida; si hay varias,
+preguntá cuál con `request_user_input`. Las plantillas de `plantillas/` se usan
+solo si el catálogo no tiene ninguna que sirva. No edites el índice a mano.
+
 Después de la elección creá estos archivos editables dentro de la agencia:
 
 - `marca/datos.md`: texto simple, una línea por dato confirmado (nombre, firma,
@@ -92,15 +97,17 @@ Después de la elección creá estos archivos editables dentro de la agencia:
 - `marca/voz.md`: vos o usted, tono, emojis, frases que usa y que evita, firma.
 - `marca/logo.*`: copiá el adjunto de `adjuntos/` si lo dio. No inventes otro.
 - `plantillas/vertical.html`: HTML estático de 1080 × 1920, con portada,
-  detalle y precio como secciones `data-piece`. Partí de
+  detalle y precio como secciones `data-piece`. Es el formato de reserva, para
+  cuando el catálogo no tiene ninguna que sirva. Partí de
   `ejemplo/plantilla-vertical.html`, adaptá lo visual a lo elegido y poné los
   contactos confirmados, con citas `m:` a `marca/datos.md`. Si no hay un dato,
   sacalo de la pieza, sin inventarlo. Si hay logo usalo con ruta relativa.
 
 Las plantillas no leen JSON al abrirse: vos volcás los valores de estilo y los
-datos en el HTML. Para usarlas, copiá el HTML a la carpeta de la propuesta,
-editá textos y citas, y corregí las rutas relativas a fuentes y logo según la
-profundidad nueva. No crees un JSON intermedio ni un programa que las rellene.
+datos en el HTML. Si el catálogo no tiene ninguna que sirva, copiá el HTML a la
+carpeta de la propuesta, editá textos y citas, y corregí las rutas relativas a
+fuentes y logo según la profundidad nueva. No crees un JSON intermedio ni un
+programa que las rellene. No edites el índice a mano.
 Si cambia una línea de marca, actualizá las citas de los HTML que modifiques.
 No reescribas fuentes de ofertas ni resultados viejos sin que te lo pidan.
 
@@ -112,7 +119,10 @@ como ficticios en cada sección. Citá las líneas reales de esa fuente y las de
 marca. Llamá `controlar` con `html`, `source`, `brand: "marca/datos.md"`,
 `rules: "ejemplo/rules.json"` (adaptadas al operador y al tono) y `report`.
 Corregí todos los errores y revisá el sentido de las citas antes de `dibujar`.
-Mirá cada imagen y ofrecé ajustar lo que no le guste.
+Mirá cada imagen y ofrecé ajustar lo que no le guste. Guardá la versión que
+quede con `sumar_plantilla` o `actualizar_plantilla`, con el HTML primero.
+Si necesita recursos, guardalos junto al HTML y pasá también sus rutas,
+o incluilos dentro del HTML cuando corresponda.
 
 Cerrá en palabras simples, sin rutas: «Quedaron guardados tu marca, tu forma de
 hablar y una plantilla para tus propuestas. Podés cambiar cualquier cosa

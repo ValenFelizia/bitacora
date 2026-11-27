@@ -30,7 +30,7 @@ export async function verifyKitIntegration(evidence?: string) {
   await new Promise<void>(r=>operator.listen(0,'127.0.0.1',r));
   const operatorOrigin=`http://127.0.0.1:${(operator.address() as {port:number}).port}`, url=operatorOrigin+'/oferta';
   const engine=new FakeEngine();
-  engine.start=async()=>{assert.match(await files.read('AGENTS.md'),/Las tres herramientas/);};
+  engine.start=async()=>{assert.match(await files.read('AGENTS.md'),/listar_plantillas/);};
   let client:Client|undefined, ws:WebSocket|undefined;
   let server:Awaited<ReturnType<typeof serve>>|undefined;
   let browser:import('playwright-core').Browser|undefined, vite:import('vite').ViteDevServer|undefined;

@@ -17,6 +17,13 @@ export type ScanCopy = {
   capture(path: string, stat: Stats): Promise<string>;
 };
 export const excludedFromCopy = (name: string) => name.startsWith('.') || ['adjuntos', 'node_modules'].includes(name.toLowerCase());
+export const isTemplateStorage = (path: string) =>
+  /^\.bitacora[\\/]plantillas(?:[\\/]|$)/i.test(path);
+export function excludedCopyPath(path: string) {
+  const parts = path.split(/[\\/]/);
+  const firstAllowed = isTemplateStorage(path) || /^\.bitacora$/i.test(path) ? 1 : 0;
+  return parts.slice(firstAllowed).some(excludedFromCopy);
+}
 const kitInput = (path: string) => {
   const parts = path.toLowerCase().split(/[\\/]/);
   return parts[0] === 'ejemplo' || parts.some((part, i) => part === 'fotos' && parts[i + 1] === 'operador');
@@ -116,12 +123,18 @@ export class WorkspaceFiles {
         if (rel.startsWith('..') || isAbsolute(rel)) throw new Error('directory outside workspace');
         for await (const entry of await opendir(target)) {
           if (++found.visited > limits.entries) { warn(folder, 'entry limit'); found.incomplete!.push(folder); break; }
-          if (excludedFromCopy(entry.name)) continue;
           const path = join(folder, entry.name);
+          const templateParent = /^\.bitacora$/i.test(folder);
+          if (templateParent && !isTemplateStorage(path)) continue;
+          if (copy ? excludedCopyPath(path) : excludedFromCopy(entry.name)) continue;
+          if (/^\.bitacora$/i.test(path) && !entry.isDirectory()) continue;
           // Tourism inputs and the editable starter example are not produced results.
           if (!copy && kitInput(path)) continue;
           if (entry.isSymbolicLink()) { warn(path, 'link skipped'); continue; }
-          if (entry.isDirectory()) { found.directories!.push(path); await walk(path, depth + 1); }
+          if (entry.isDirectory()) {
+            if (!/^\.bitacora$/i.test(path)) found.directories!.push(path);
+            await walk(path, depth + 1);
+          }
           else if (entry.isFile() && (copy || media[extname(entry.name).toLowerCase()])) {
             if (++files > limits.files && !copy) { warn(path, 'file limit'); break; }
             try {
@@ -205,7 +218,7 @@ export class WorkspaceFiles {
   result(path: string): FileRef {
     return { id: randomUUID(), path, name: basename(path), mime: media[extname(path).toLowerCase()], createdAt: new Date().toISOString() };
   }
-  isResult(path: string) { return !kitInput(path) && !!media[extname(path).toLowerCase()]; }
+  isResult(path: string) { return !isTemplateStorage(path) && !kitInput(path) && !!media[extname(path).toLowerCase()]; }
   async read(ref: FileRef) {
     const { handle } = await this.openResult(ref);
     try { return await handle.readFile(); } finally { await handle.close(); }

@@ -113,8 +113,23 @@ test("changing folders keeps legacy works, profiles, results and undo with their
   const send = (workspace: string, command: ClientCommand) => socket.send(JSON.stringify({ ...command, workspace }));
   const file = (id: string) => fetch(`http://127.0.0.1:${server.port}/files?id=${id}`, { headers: screenHeaders });
 
+  const templates = (workspace: string, body?: unknown) => fetch(
+    `http://127.0.0.1:${server.port}/templates?` + new URLSearchParams({ workspace }),
+    body ? { method: "POST", headers: { ...screenHeaders, "Content-Type": "application/json" }, body: JSON.stringify(body) }
+      : { headers: screenHeaders },
+  );
+  async function templateNames(workspace: string) {
+    const response = await templates(workspace);
+    assert.equal(response.status, 200, await response.clone().text());
+    return (await response.json()).templates.map((template: { name: string }) => template.name);
+  }
   try {
     const first = await snapshot(f.home);
+    assert.deepEqual(await templateNames(f.home), []);
+    const added = await templates(f.home, { kind: "add", name: "Folletos", purpose: "Viajes",
+      file: { name: "folleto.html", data: Buffer.from("<h1>Viajes</h1>").toString("base64") } });
+    assert.equal(added.status, 200, await added.clone().text());
+    assert.deepEqual(await templateNames(f.home), ["Folletos"]);
     assert.equal(first.works[0]?.id, "legacy-work");
     assert.equal(first.welcome, "skipped");
 
@@ -144,6 +159,8 @@ test("changing folders keeps legacy works, profiles, results and undo with their
     send(f.home, { type: "chooseWorkspace", path: f.other });
     const inOther = await snapshot(f.other, (state) => state.engine.available);
     assert.deepEqual(inOther.works, []);
+    assert.deepEqual(await templateNames(f.other), []);
+    assert.equal((await templates(f.home)).status, 409);
     assert.equal(inOther.hasBrand, true);
     assert.equal(inOther.welcome, "done");
     assert.deepEqual(inOther.uses, ["orden"]);
@@ -169,6 +186,7 @@ test("changing folders keeps legacy works, profiles, results and undo with their
     const back = await snapshot(f.home, (state) => state.engine.available);
     assert.deepEqual(back.works.map(({ id }) => id), ["legacy-work"]);
     assert.equal(back.welcome, "skipped");
+    assert.deepEqual(await templateNames(f.home), ["Folletos"]);
     assert.equal((await file(result.id)).status, 404);
 
     send(f.home, { type: "chooseWorkspace", path: f.other });

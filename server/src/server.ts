@@ -5,7 +5,10 @@ import { createServer } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
 import type { Engine } from "./engine";
 import { problemText, EngineFailure } from "./engine";
-import type { ClientCommand, ServerMessage } from "./contracts";
+import { TEMPLATES_PATH, type ClientCommand, type ServerMessage } from "./contracts";
+import { Templates } from "./templates";
+import { AgencyFiles } from "./tools/paths";
+import { handleTemplates, templateReply } from "./templates-http";
 import { App } from "./app";
 import type { CodexHistory } from "./codex/history";
 import { HistoryProblem } from "./codex/history-snapshot";
@@ -37,6 +40,7 @@ export async function serve(
     recoveryDelayMs?: number;
   },
   codexHistory?: CodexHistory,
+  templatesFor?: (files: AgencyFiles) => Templates,
 ) {
   if (!isScreenSecret(screenSecret)) throw new Error("Invalid screen session");
   const expectedSecret = Buffer.from(screenSecret, "hex");
@@ -50,7 +54,7 @@ export async function serve(
         res.writeHead(403); res.end(); return;
       }
       if (sendAsset && sendAsset(url.pathname, req.method, res, boundPort())) return;
-      if (sendAsset && url.pathname !== "/files" && url.pathname !== DICTATION_PATH) {
+      if (sendAsset && url.pathname !== "/files" && url.pathname !== DICTATION_PATH && url.pathname !== TEMPLATES_PATH) {
         res.writeHead(404); res.end(); return;
       }
       // Vite proxies this development-only bootstrap through its existing /ws route.
@@ -76,6 +80,33 @@ export async function serve(
         commands++;
         try { await handleDictation(req, res, active.engine); }
         finally { commands--; }
+        return;
+      }
+      if (url.pathname === TEMPLATES_PATH) {
+        const { app, files, templates } = active;
+        if (closing || switching || !templates || files?.root !== url.searchParams.get("workspace")) {
+          templateReply(res, 409, { error: "La carpeta de trabajo cambió. Probá de nuevo." });
+          return;
+        }
+        const writing = req.method === "POST";
+        // A preview launches Edge against this folder. Count it so a folder
+        // change cannot start while that read is still open.
+        const previewing = req.method === "GET" && url.searchParams.has("preview") && url.searchParams.get("file") !== null;
+        if (writing && (updating || commands || app.workspaceBusy || app.undoPending)) {
+          templateReply(res, 409, { error: "Esperá a que termine lo que está en curso para cambiar las plantillas." });
+          return;
+        }
+        if (previewing && (updating || app.workspaceBusy || templateWriting)) {
+          templateReply(res, 409, { error: "Esperá a que termine lo que está en curso para ver la plantilla." });
+          return;
+        }
+        if (writing) templateWriting = true;
+        if (writing || previewing) commands++;
+        try { await handleTemplates(req, res, url, templates, () => app.filesChanged()); }
+        finally {
+          if (writing) templateWriting = false;
+          if (writing || previewing) commands--;
+        }
         return;
       }
       const { app, files } = active;
@@ -125,11 +156,15 @@ export async function serve(
       key: choice.key,
       notice,
     }, codexHistory);
-    return { app, engine, files, choice };
+    return {
+      app, engine, files, choice,
+      templates: workspace ? (templatesFor ?? (agencyFiles => new Templates(agencyFiles)))(new AgencyFiles(workspace)) : undefined,
+    };
   }
 
   let active = runtime(engine, workspace, folders?.initial, folders?.notice);
   let commands = 0;
+  let templateWriting = false;
   let switching: Promise<void> | undefined;
   let closing = false;
   let updating = false;
@@ -364,6 +399,10 @@ export async function serve(
               send(ws, { type: "codexImportProblem", text });
             else
               send(ws, { type: "problem", text });
+            return;
+          }
+          if (templateWriting && ["send", "undo", "discardUndo"].includes(command.type)) {
+            send(ws, { type: "problem", text: "Esperá a que termine el cambio de plantilla y probá de nuevo." });
             return;
           }
           if (command.type === "listCodexChats") {

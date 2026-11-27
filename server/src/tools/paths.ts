@@ -1,9 +1,13 @@
-import { lstat, mkdir, realpath, open, rename, unlink, link, stat, type FileHandle } from 'node:fs/promises';
+import { lstat, mkdir, realpath, open, rename, unlink, rmdir, link, stat, type FileHandle } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { resolve, relative, isAbsolute, dirname, join } from 'node:path';
 import { lockDirectory, lockTemporaryFile } from './directory-lock';
 
 type WriteStage = 'beforeDirectoryCreate' | 'beforeTempOpen' | 'afterTempOpen' | 'afterTempWrite';
+
+export class FileTooLarge extends Error {
+  constructor() { super("El archivo es demasiado grande."); }
+}
 
 // Reject links, junctions and Windows alternate streams, including existing ancestors.
 export class AgencyFiles {
@@ -95,10 +99,43 @@ export class AgencyFiles {
     const actual = await stat(path, {bigint:true}), opened = await handle.stat({bigint:true});
     if (!opened.isFile() || actual.dev !== opened.dev || actual.ino !== opened.ino || opened.nlink !== 1n) throw new Error('El archivo cambió mientras se abría. Volvé a intentarlo.');
   }
-  async readBuffer(input: string) {
+  async remove(input: string, directory = false) {
+    const target = await this.path(input);
+    const root = await this.path(".");
+    if (target === root) throw new Error("No se puede quitar la carpeta de trabajo.");
+    const releases: (() => void)[] = [];
+    try {
+      let current = root;
+      releases.push(lockDirectory(current));
+      for (const part of relative(root, dirname(target)).split(/[\\/]/).filter(Boolean)) {
+        current = join(current, part);
+        releases.push(lockDirectory(current));
+      }
+      await this.path(input);
+      if (directory) await rmdir(target);
+      else await unlink(target);
+    } finally {
+      for (const release of releases.reverse()) release();
+    }
+  }
+  async readBuffer(input: string, maxBytes?: number) {
     const handle = await open(await this.path(input), 'r');
     try {
       await this.verifyOpen(input, handle);
+      if (maxBytes !== undefined) {
+        const { size } = await handle.stat();
+        if (size > maxBytes) throw new FileTooLarge();
+        const data = Buffer.alloc(size + 1);
+        let offset = 0;
+        while (offset < data.length) {
+          const { bytesRead } = await handle.read(data, offset, data.length - offset, offset);
+          if (!bytesRead) break;
+          offset += bytesRead;
+        }
+        await this.verifyOpen(input, handle);
+        if (offset !== size) throw new Error("El archivo cambió mientras se leía.");
+        return data.subarray(0, size);
+      }
       const data = await handle.readFile();
       await this.verifyOpen(input, handle);
       return data;
