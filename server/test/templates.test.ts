@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { execFile } from "node:child_process";
+import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { join, relative, resolve } from "node:path";
+import { promisify } from "node:util";
 import { test } from "node:test";
 import { BACKUP_LIMITS, Backups } from "../src/backups";
 import { AGENCY_DEVELOPER_INSTRUCTIONS } from "../src/agency-environment";
@@ -21,6 +23,7 @@ async function fixture() {
   const backups = new Backups(workspace, join(base, "data"));
   return { files, templates, backups, close: () => rm(base, { recursive: true, force: true }) };
 }
+const execFileAsync = promisify(execFile);
 const metadata = { name: "Cotización", purpose: "Viajes", origin: "manual" as const };
 const upload = (name: string, text: string) => ({ name, data: Buffer.from(text).toString("base64") });
 
@@ -315,5 +318,165 @@ test("a catalogue conflict is a 409, not a generic failure", async () => {
     assert.equal(status, 409);
     assert.match(body, /otro cambio/);
     assert.doesNotMatch(body, /No pude abrir las plantillas/);
+  } finally { await close(); }
+});
+
+test("restoring the catalogue creates .bitacora and counts that action as done", async () => {
+  const { files, templates, backups, close } = await fixture();
+  const root = join(files.root, ".bitacora");
+  const request = { workId: "work", title: "Cotización", request: "Sumar plantilla" };
+  try {
+    await backups.initialize();
+    assert.equal(await backups.before(request), true);
+    const saved = await templates.add(metadata, [templates.fromUpload(upload("modelo.txt", "modelo"))]);
+    assert.equal(await backups.finish(), true);
+    assert.equal(await backups.before(request), true);
+    await rm(root, { recursive: true, force: true });
+    assert.equal(await backups.finish(), true);
+    const statePath = join(files.root, "..", "data", "backups", "state.json");
+    const state = JSON.parse(await readFile(statePath, "utf8"));
+    state.undo.before.directories.push(".bitacora");
+    await writeFile(statePath, JSON.stringify(state));
+    const again = new Backups(files.root, join(files.root, "..", "data"));
+    await again.initialize(backups.receipt);
+    const undo = await again.undo(again.target!.id);
+    assert.ok(undo.restored.some(path => path.replaceAll("\\", "/").toLowerCase() === ".bitacora"));
+    assert.equal(undo.skipped.includes(".bitacora"), false);
+    assert.equal((await lstat(root)).isDirectory(), true);
+    assert.equal((await templates.open(saved.id, saved.version, "modelo.txt")).bytes.toString(), "modelo");
+  } finally { await close(); }
+});
+
+test("a file named .bitacora blocks restoring the catalogue and is left in place", async () => {
+  const { files, templates, backups, close } = await fixture();
+  const root = join(files.root, ".bitacora");
+  const request = { workId: "work", title: "Cotización", request: "Sumar plantilla" };
+  try {
+    await backups.initialize();
+    assert.equal(await backups.before(request), true);
+    await templates.add(metadata, [templates.fromUpload(upload("modelo.txt", "modelo"))]);
+    assert.equal(await backups.finish(), true);
+    assert.equal(await backups.before(request), true);
+    await rm(root, { recursive: true, force: true });
+    assert.equal(await backups.finish(), true);
+    await writeFile(root, "no es carpeta");
+    await assert.rejects(backups.undo(backups.target!.id), /carpeta donde iba/);
+    assert.equal(await readFile(root, "utf8"), "no es carpeta");
+    assert.deepEqual(await templates.list(), []);
+  } finally { await close(); }
+});
+
+test("a cut-off scan skips the whole catalogue and does not create .bitacora", async () => {
+  const { files, templates, backups, close } = await fixture();
+  const root = join(files.root, ".bitacora");
+  const request = { workId: "work", title: "Cotización", request: "Sumar plantilla" };
+  try {
+    await backups.initialize();
+    assert.equal(await backups.before(request), true);
+    await templates.add(metadata, [templates.fromUpload(upload("modelo.txt", "modelo"))]);
+    assert.equal(await backups.finish(), true);
+    assert.equal(await backups.before(request), true);
+    await rm(root, { recursive: true, force: true });
+    assert.equal(await backups.finish(), true);
+    const statePath = join(files.root, "..", "data", "backups", "state.json");
+    const state = JSON.parse(await readFile(statePath, "utf8"));
+    state.undo.after.omitted["parte de la carpeta"] = "cut";
+    await writeFile(statePath, JSON.stringify(state));
+    const again = new Backups(files.root, join(files.root, "..", "data"));
+    await again.initialize(backups.receipt);
+    const undo = await again.undo(again.target!.id);
+    await assert.rejects(lstat(root), { code: "ENOENT" });
+    assert.ok(undo.omitted.includes("parte de la carpeta"));
+    assert.ok(undo.skipped.includes("index.json"));
+    assert.ok(undo.skipped.some(name => name.endsWith("modelo.txt")));
+    assert.deepEqual(await templates.list(), []);
+  } finally { await close(); }
+});
+
+test("an omitted .bitacora folder skips the catalogue instead of recreating it", async () => {
+  const { files, templates, backups, close } = await fixture();
+  const root = join(files.root, ".bitacora");
+  const request = { workId: "work", title: "Cotización", request: "Sumar plantilla" };
+  try {
+    await backups.initialize();
+    assert.equal(await backups.before(request), true);
+    await templates.add(metadata, [templates.fromUpload(upload("modelo.txt", "modelo"))]);
+    assert.equal(await backups.finish(), true);
+    assert.equal(await backups.before(request), true);
+    await rm(root, { recursive: true, force: true });
+    assert.equal(await backups.finish(), true);
+    const statePath = join(files.root, "..", "data", "backups", "state.json");
+    const state = JSON.parse(await readFile(statePath, "utf8"));
+    state.undo.before.omitted[".bitacora"] = "unreadable directory";
+    state.undo.after.omitted[".bitacora"] = "unreadable directory";
+    await writeFile(statePath, JSON.stringify(state));
+    const again = new Backups(files.root, join(files.root, "..", "data"));
+    await again.initialize(backups.receipt);
+    const undo = await again.undo(again.target!.id);
+    await assert.rejects(lstat(root), { code: "ENOENT" });
+    assert.ok(undo.omitted.includes(".bitacora"));
+    assert.deepEqual(await templates.list(), []);
+  } finally { await close(); }
+});
+
+test("the catalogue index is restored after its files and stays put if one file is skipped", async () => {
+  const { files, templates, close } = await fixture();
+  let notes = "";
+  let model = "";
+  let templateId = "";
+  let indexWhileFileReturned = "";
+  let spoil = false;
+  const backups = new Backups(files.root, join(files.root, "..", "indice"), BACKUP_LIMITS, undefined, {
+    rename,
+    afterStep: async () => {
+      if (!notes) return;
+      try { await lstat(join(files.root, notes)); }
+      catch { return; }
+      if (!indexWhileFileReturned)
+        indexWhileFileReturned = await readFile(join(files.root, ".bitacora", "plantillas", "index.json"), "utf8");
+      if (spoil) return;
+      spoil = true;
+      await writeFile(join(files.root, model), "tocado");
+    },
+  });
+  try {
+    await backups.initialize();
+    const request = { workId: "work", title: "Cotización", request: "Sumar plantilla" };
+    assert.equal(await backups.before(request), true);
+    const bundle = await templates.add(metadata, [
+      templates.fromUpload(upload("modelo.html", "<h1>Modelo</h1>")),
+      templates.fromUpload(upload("notas.txt", "notas")),
+    ]);
+    assert.equal(await backups.finish(), true);
+    const described = await templates.describe(bundle.id);
+    notes = described.paths.find(path => path.endsWith("notas.txt")) ?? "";
+    model = described.paths.find(path => path.endsWith("modelo.html")) ?? "";
+    templateId = bundle.id;
+    assert.ok(notes && model);
+    assert.equal(await backups.before(request), true);
+    await templates.remove(bundle.id);
+    assert.equal(await backups.finish(), true);
+    const undo = await backups.undo(backups.target!.id);
+    assert.equal(indexWhileFileReturned.includes(templateId), false);
+    assert.ok(undo.skipped.includes("index.json"));
+    assert.equal((await files.read(".bitacora/plantillas/index.json")).includes(templateId), false);
+    assert.equal(await files.read(notes), "notas");
+    assert.equal(await files.read(model), "tocado");
+    assert.equal((await templates.list()).some(item => item.id === templateId), false);
+  } finally { await close(); }
+});
+
+test("a resolved short name inside .bitacora cannot be registered", async () => {
+  const { files, templates, close } = await fixture();
+  try {
+    await files.write(".bitacora/plantillas/nota.txt", "secreto");
+    const folder = await realpath(await files.path(".bitacora"));
+    const root = await realpath(await files.path("."));
+    const { stdout } = await execFileAsync("cmd.exe", ["/d", "/c", `for %I in ("${folder}") do @echo %~sI`]);
+    const short = stdout.trim();
+    const input = relative(root, join(short, "plantillas", "nota.txt"));
+    await assert.rejects(templates.fromPaths([input]), /carpeta interna/);
+    if (!input.split(/[\\/]/).some(part => part.toLowerCase() === ".bitacora"))
+      assert.equal(input.toLowerCase().includes("bitaco~"), true);
   } finally { await close(); }
 });

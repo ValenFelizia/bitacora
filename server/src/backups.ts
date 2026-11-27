@@ -22,6 +22,9 @@ const value = (m: FileScan, p: string): Value => {
   return name ? { kind: 'file', entry: m.entries[name] } : m.directories?.some(n => pathKey(n) === pathKey(p)) ? { kind: 'directory' } : { kind: 'missing' };
 };
 const names = (paths: string[]) => [...new Set(paths)].map(p => basename(p));
+const scanStopped = (path: string) => /^\.bitacora$/i.test(path) || path === 'parte de la carpeta';
+const catalogueIndex = (path: string) => /^\.bitacora[\\/]plantillas[\\/]index\.json$/i.test(path);
+const restoringCatalogue = (plan: Plan) => plan.actions.some(action => !action.done && !plan.skipped.includes(action.path) && isTemplateStorage(action.path) && action.to.kind !== 'missing');
 export class RestoreProblem extends Error {
   constructor(path: string, reason: string) { super(`No pude deshacer todavía: ${reason}${path ? ` (${basename(path)})` : ''}. Podés volver a intentar Deshacer.`); }
 }
@@ -389,19 +392,33 @@ export class Backups {
         if (action.to.kind === 'missing' && action.from.kind === 'directory' && plan.skipped.some(path => beneath(path, action.path)))
           skip(action.path);
       }
-      if ([...plan.skipped, ...plan.omitted].some(isTemplateStorage)) {
+      if ([...plan.skipped, ...plan.omitted].some(isTemplateStorage) || plan.omitted.some(scanStopped)) {
         for (const action of plan.actions)
           if (isTemplateStorage(action.path) && !action.done) skip(action.path);
       }
+      // A cut-off scan, or a catalogue we are not putting back, must not recreate the app folder.
+      if (!restoringCatalogue(plan)) {
+        for (const action of plan.actions)
+          if (/^\.bitacora$/i.test(action.path) && action.to.kind === 'directory' && action.from.kind === 'missing' && !action.done) skip(action.path);
+      }
     }
   }
-  private async ensureTemplateRoot(plan: Plan) {
-    const restoring = plan.actions.some(action => !action.done && !plan.skipped.includes(action.path) && isTemplateStorage(action.path) && action.to.kind !== 'missing');
-    if (!restoring) return;
+  /** Create `.bitacora` only once the catalogue is actually going back, and count that action as done. */
+  private async createTemplateRoot(plan: Plan) {
+    if (!restoringCatalogue(plan)) return;
+    const action = plan.actions.find(item => /^\.bitacora$/i.test(item.path) && item.from.kind === 'missing' && item.to.kind === 'directory' && !item.done && !plan.skipped.includes(item.path));
     const current = await this.current('.bitacora');
-    if (current.kind === 'directory') return;
+    if (current.kind === 'directory') {
+      if (action) { action.started = true; action.done = true; plan.active = true; this.state.plan = plan; await this.save(); }
+      return;
+    }
     if (current.kind !== 'missing') throw new RestoreProblem('.bitacora', 'la carpeta donde iba el archivo ya no está o fue reemplazada');
+    plan.active = true; this.state.plan = plan;
+    if (action) action.started = true;
+    await this.save();
     await this.checkedDirectory('.bitacora', true);
+    if (action) action.done = true;
+    await this.save();
   }
   /** A catalogue is restored whole. One skipped path keeps every other catalogue path. */
   private hold(plan: Plan, path: string) {
@@ -413,7 +430,7 @@ export class Backups {
         plan.skipped.push(action.path);
   }
   private async catalogueDrift(plan: Plan) {
-    if (plan.omitted.some(isTemplateStorage) || plan.skipped.some(isTemplateStorage)) return true;
+    if (plan.omitted.some(path => isTemplateStorage(path) || scanStopped(path)) || plan.skipped.some(isTemplateStorage)) return true;
     for (const [index, action] of plan.actions.entries()) {
       if (!isTemplateStorage(action.path) || action.done || plan.skipped.includes(action.path)) continue;
       const actual = await this.actualName(action.path);
@@ -440,6 +457,11 @@ export class Backups {
       const spelling = await this.actualName(a.path);
       if (spelling && spelling !== a.path.replaceAll('/', '\\')) { plan.skipped.push(a.path); continue; }
       const current = await this.current(a.path);
+      // `.bitacora` may be absent until the catalogue is restored. A file in its place is not a folder.
+      if (/^\.bitacora$/i.test(a.path) && a.from.kind === 'missing' && a.to.kind === 'directory') {
+        if (current.kind === 'directory') { a.started = true; a.done = true; continue; }
+        if (current.kind !== 'missing') throw new RestoreProblem('.bitacora', 'la carpeta donde iba el archivo ya no está o fue reemplazada');
+      }
       if (!spelling && current.kind !== 'missing') throw new RestoreProblem(a.path, 'no pude confirmar el nombre real del archivo');
       if (a.started && equal(current, a.to)) { a.done = true; continue; }
       const finishing = a.started && current.kind === 'file' && a.to.kind === 'file' && current.entry.hash === a.to.entry.hash;
@@ -463,12 +485,14 @@ export class Backups {
     // Directory checks can skip a folder after the first pass. Repeat until a
     // skipped child, a skipped catalogue path, or both, stop adding skips.
     this.propagateSkips(plan);
-    await this.ensureTemplateRoot(plan);
     for (const a of plan.actions.filter(a => !a.done && !plan.skipped.includes(a.path) && a.to.kind !== 'missing')) {
       let parent = dirname(a.path);
       while (parent !== '.') {
         const current = await this.current(parent);
-        if (current.kind !== 'directory' && !plan.actions.some(p => pathKey(p.path) === pathKey(parent) && p.to.kind === 'directory' && !plan.skipped.includes(p.path))) throw new RestoreProblem(a.path, 'la carpeta donde iba el archivo ya no está o fue reemplazada');
+        const creating = plan.actions.some(p => pathKey(p.path) === pathKey(parent) && p.to.kind === 'directory' && !p.done && !plan.skipped.includes(p.path));
+        const absentRoot = /^\.bitacora$/i.test(parent) && current.kind === 'missing' && restoringCatalogue(plan);
+        if (/^\.bitacora$/i.test(parent) && current.kind !== 'directory' && current.kind !== 'missing') throw new RestoreProblem(a.path, 'la carpeta donde iba el archivo ya no está o fue reemplazada');
+        if (current.kind !== 'directory' && !creating && !absentRoot) throw new RestoreProblem(a.path, 'la carpeta donde iba el archivo ya no está o fue reemplazada');
         parent = dirname(parent);
       }
     }
@@ -572,14 +596,18 @@ export class Backups {
       const seed = plan.actions.find(action => isTemplateStorage(action.path));
       if (seed) this.hold(plan, seed.path);
     }
+    await this.createTemplateRoot(plan);
     const ordered = plan.actions.map((a, i) => ({ a, i })).sort((x, y) => {
       const priority = (a: Action) => a.to.kind === 'missing' ? 0 : a.to.kind === 'directory' ? 1 : 2;
-      return priority(x.a) - priority(y.a) || (priority(x.a) === 0 ? y.a.path.length - x.a.path.length : x.a.path.length - y.a.path.length);
+      const rank = (a: Action) => catalogueIndex(a.path) && a.to.kind === 'file' ? 3 : priority(a);
+      return rank(x.a) - rank(y.a) || (rank(x.a) === 0 ? y.a.path.length - x.a.path.length : x.a.path.length - y.a.path.length);
     });
     for (const { a, i } of ordered) {
       if (a.done || plan.skipped.includes(a.path)) continue;
       if (/^\.bitacora$/i.test(a.path) && a.to.kind === 'missing') { this.hold(plan, a.path); continue; }
-      if (isTemplateStorage(a.path) && (plan.skipped.some(isTemplateStorage) || plan.omitted.some(isTemplateStorage))) { this.hold(plan, a.path); continue; }
+      if (/^\.bitacora$/i.test(a.path) && a.to.kind === 'directory' && !restoringCatalogue(plan)) { this.hold(plan, a.path); continue; }
+      if (isTemplateStorage(a.path) && (plan.skipped.some(isTemplateStorage) || plan.omitted.some(path => isTemplateStorage(path) || scanStopped(path)))) { this.hold(plan, a.path); continue; }
+      if (catalogueIndex(a.path) && a.to.kind === 'file' && plan.skipped.some(path => isTemplateStorage(path) && pathKey(path) !== pathKey(a.path))) { this.hold(plan, a.path); continue; }
       const actual = await this.actualName(a.path);
       if (actual && actual !== a.path.replaceAll('/', '\\')) { this.hold(plan, a.path); continue; }
       const current = await this.current(a.path);
