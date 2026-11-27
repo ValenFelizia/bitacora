@@ -257,7 +257,7 @@ checksum = "72503af1e72be411d74ca45cd6b309878fcb35354e252fc2a3a8bda3a97082a0"
 
 [[package]]
 name = "bitacora"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde_json",
  "tauri",
